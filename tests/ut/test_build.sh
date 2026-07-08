@@ -2,7 +2,6 @@
 # UT：验证 build.sh 关键常量
 set -u
 
-# shellcheck disable=SC1091
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/build/build.sh" >/dev/null 2>&1
 
 [ "${JIUWENSWARM_VERSION}" = "0.2.2" ]   && echo "[PASS] JIUWENSWARM_VERSION"   || { echo "[FAIL] JIUWENSWARM_VERSION"; exit 1; }
