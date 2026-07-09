@@ -153,7 +153,8 @@ yr_install_packages() {
     local cp_tag="cp${python_version//./}"
 
     local packages=(
-        "openyuanrong-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+        "openyuanrong-${yr_version}-py3-none-manylinux_2_34_${arch}.whl"
+        "openyuanrong_sdk-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
         "openyuanrong_runtime-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
         "openyuanrong_datasystem-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
         "openyuanrong_functionsystem-${yr_version}-py3-none-manylinux_2_34_${arch}.whl"
@@ -506,7 +507,6 @@ Examples:
   - 部署机器到所有目标主机需配置SSH免密登录
   - 目标主机需预装指定版本的Python
   - up/restart 不再安装whl包，请先在各目标主机执行 install（多机时每台主机都需安装）
-  - 本脚本仅负责 openyuanrong 集群部署，jiuwenswarm 安装和 gateway 部署请使用 deploy.sh
 EOF
     exit 0
 }
