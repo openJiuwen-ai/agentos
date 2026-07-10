@@ -48,8 +48,8 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  height: 56px;
-  padding: 0 24px;
+  height: 48px;
+  padding: 0 18px;
   background: var(--bg-top-nav);
   border-bottom: 1px solid var(--border-color);
 }
@@ -57,8 +57,9 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
 .top-nav__brand {
   justify-self: start;
   font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-weight: 500;
+  line-height: 26px;
+  color: #000;
   white-space: nowrap;
 }
 
@@ -66,30 +67,44 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 48px;
 }
 
 .top-nav__item {
-  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 0 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
   cursor: pointer;
-  transition:
-    background-color 0.2s,
-    color 0.2s;
+  transition: color 0.2s;
 }
 
 .top-nav__item:hover {
-  background: var(--bg-hover);
   color: var(--text-primary);
+  background: transparent;
 }
 
 .top-nav__item--active {
-  background: var(--bg-active);
+  padding-bottom: 2px;
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 400;
+  background: transparent;
+}
+
+.top-nav__item--active::after {
+  content: '';
+  width: 100%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-primary);
 }
 </style>

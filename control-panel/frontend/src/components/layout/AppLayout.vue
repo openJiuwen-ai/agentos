@@ -13,7 +13,7 @@ const activeTopMenu = computed(() => {
 });
 
 const sideMenus = computed(() => activeTopMenu.value?.sideMenus ?? []);
-const showSideMenu = computed(() => sideMenus.value.length > 0);
+const showSideMenu = computed(() => !route.meta.hideSideMenu && sideMenus.value.length > 0);
 </script>
 
 <template>

@@ -5,16 +5,16 @@
 }
 
 :root {
-  --color-primary: #2563eb;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  --bg-page: #f8fafc;
+  --color-primary: #0067d1;
+  --text-primary: #191919;
+  --text-secondary: #777777;
+  --text-muted: #aeaeae;
+  --bg-page: #f6f7f7;
   --bg-top-nav: #ffffff;
   --bg-side-nav: #ffffff;
-  --bg-hover: #f1f5f9;
-  --bg-active: #eff6ff;
-  --border-color: #e2e8f0;
+  --bg-hover: rgb(25 25 25 / 5%);
+  --bg-active: #e6f2fd;
+  --border-color: #dfdfdf;
 }
 
 html,

@@ -6,11 +6,15 @@
 - 资源管理
   - 一体机 → `/resources/appliance`
   - 推理模型 → `/resources/inference-model`
+    - 推理模型调用分析 → `/resources/inference-model/call-analysis`（隐藏侧栏）
+    - 推理模型详情 → `/resources/inference-model/:id`（隐藏侧栏）
   - 智能体
     - 智能体监控 → `/resources/agent/monitor`
     - 框架管理 → `/resources/agent/framework`
   - 技能库 → `/resources/skill-store`
-- 系统设置 → `/settings`
+- 系统设置
+  - 用户管理 → `/system/user-management`
+  - 日志中心 → `/system/log-center`
 
 ## 目录结构
 
@@ -33,13 +37,19 @@ frontend/
 │   │   │   └── OverviewPage.vue     # 总览
 │   │   ├── resources/
 │   │   │   ├── AppliancePage.vue    # 一体机
-│   │   │   ├── InferenceModelPage.vue # 推理模型
+│   │   │   ├── inference-model/                    # 推理模型
+│   │   │   │   ├── InferenceModelListPage.vue      # 列表页
+│   │   │   │   ├── InferenceModelCallAnalysisPage.vue # 调用分析页
+│   │   │   │   ├── InferenceModelDetailPage.vue  # 详情页
+│   │   │   │   ├── PerformanceMonitor.vue        # 性能监控
+│   │   │   │   └── CallAnalysis.vue              # 调用分析内容
 │   │   │   ├── SkillStorePage.vue   # 技能库
 │   │   │   └── agent/               # 智能体
 │   │   │       ├── AgentMonitorPage.vue  # 智能体监控
 │   │   │       └── FrameworkPage.vue     # 框架管理
-│   │   └── settings/
-│   │       └── SettingsPage.vue     # 系统设置
+│   │   └── system/
+│   │       ├── UserManagementPage.vue # 用户管理
+│   │       └── LogCenterPage.vue      # 日志中心
 │   ├── App.vue
 │   ├── main.ts
 │   ├── style.css                    # 全局样式与 CSS 变量

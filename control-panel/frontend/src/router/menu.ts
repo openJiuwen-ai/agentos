@@ -3,6 +3,8 @@ import applianceIcon from '@/assets/icons/appliance.svg';
 import inferenceModelIcon from '@/assets/icons/inference-model.svg';
 import agentIcon from '@/assets/icons/agent.svg';
 import skillStoreIcon from '@/assets/icons/skill-store.svg';
+import userManagementIcon from '@/assets/icons/user-management.svg';
+import logCenterIcon from '@/assets/icons/log-center.svg';
 
 export interface AppRouteNode {
   key: string;
@@ -13,6 +15,8 @@ export interface AppRouteNode {
   component?: RouteRecordRaw['component'];
   icon?: string;
   defaultChildKey?: string;
+  hideInMenu?: boolean;
+  hideSideMenu?: boolean;
   children?: AppRouteNode[];
 }
 
@@ -48,7 +52,29 @@ export const appRouteTree: AppRouteNode[] = [
         path: '/resources/inference-model',
         name: 'inference-model',
         icon: inferenceModelIcon,
-        component: () => import('@/views/resources/InferenceModelPage.vue'),
+        component: () => import('@/views/resources/inference-model/InferenceModelListPage.vue'),
+        children: [
+          {
+            key: 'inference-model-call-analysis',
+            label: '推理模型调用分析',
+            order: 1,
+            path: '/resources/inference-model/call-analysis',
+            name: 'inference-model-call-analysis',
+            component: () => import('@/views/resources/inference-model/InferenceModelCallAnalysisPage.vue'),
+            hideInMenu: true,
+            hideSideMenu: true,
+          },
+          {
+            key: 'inference-model-detail',
+            label: '推理模型详情',
+            order: 2,
+            path: '/resources/inference-model/:id',
+            name: 'inference-model-detail',
+            component: () => import('@/views/resources/inference-model/InferenceModelDetailPage.vue'),
+            hideInMenu: true,
+            hideSideMenu: true,
+          },
+        ],
       },
       {
         key: 'agent',
@@ -86,12 +112,30 @@ export const appRouteTree: AppRouteNode[] = [
     ],
   },
   {
-    key: 'settings',
+    key: 'system',
     label: '系统设置',
     order: 3,
-    path: '/settings',
-    name: 'settings',
-    component: () => import('@/views/settings/SettingsPage.vue'),
+    defaultChildKey: 'user-management',
+    children: [
+      {
+        key: 'user-management',
+        label: '用户管理',
+        order: 1,
+        path: '/system/user-management',
+        name: 'user-management',
+        icon: userManagementIcon,
+        component: () => import('@/views/system/UserManagementPage.vue'),
+      },
+      {
+        key: 'log-center',
+        label: '日志中心',
+        order: 2,
+        path: '/system/log-center',
+        name: 'log-center',
+        icon: logCenterIcon,
+        component: () => import('@/views/system/LogCenterPage.vue'),
+      },
+    ],
   },
 ];
 
@@ -129,6 +173,7 @@ export function buildRouterRoutes(tree: AppRouteNode[]): RouteRecordRaw[] {
           meta: {
             title: node.label,
             topMenu: topMenuKey,
+            hideSideMenu: node.hideSideMenu,
           },
         });
       }
@@ -148,6 +193,7 @@ export function buildRouterRoutes(tree: AppRouteNode[]): RouteRecordRaw[] {
         meta: {
           title: topNode.label,
           topMenu: topNode.key,
+          hideSideMenu: topNode.hideSideMenu,
         },
       });
     }
@@ -177,13 +223,18 @@ export interface TopMenuItem {
 }
 
 function buildSideMenus(nodes: AppRouteNode[]): SideMenuItem[] {
-  return sortNodes(nodes).map((node) => ({
-    key: node.key,
-    label: node.label,
-    icon: node.icon,
-    routeName: node.name,
-    children: node.children ? buildSideMenus(node.children) : undefined,
-  }));
+  return sortNodes(nodes)
+    .filter((node) => !node.hideInMenu)
+    .map((node) => {
+      const menuChildren = node.children?.filter((child) => !child.hideInMenu);
+      return {
+        key: node.key,
+        label: node.label,
+        icon: node.icon,
+        routeName: node.name,
+        children: menuChildren?.length ? buildSideMenus(menuChildren) : undefined,
+      };
+    });
 }
 
 export function buildTopMenus(tree: AppRouteNode[]): TopMenuItem[] {
@@ -235,4 +286,3 @@ export function findSideMenuParentKey(tree: AppRouteNode[], routeName: string | 
   return null;
 }
 export const topMenus = buildTopMenus(appRouteTree);
-

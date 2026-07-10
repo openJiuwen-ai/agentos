@@ -122,9 +122,9 @@ watch(
 
 <style scoped>
 .side-menu {
-  width: 220px;
+  width: 216px;
   flex-shrink: 0;
-  padding: 16px 12px;
+  padding: 8px 0 0;
   background: var(--bg-side-nav);
   border-right: 1px solid var(--border-color);
   overflow-y: auto;
@@ -138,7 +138,7 @@ watch(
 }
 
 .side-menu__item + .side-menu__item {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .side-menu__level2,
@@ -156,11 +156,13 @@ watch(
 .side-menu__level2 {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  color: var(--text-secondary);
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 0;
+  color: var(--text-primary);
   font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
 }
 
 .side-menu__level2:hover,
@@ -173,21 +175,21 @@ watch(
 .side-menu__level3--active {
   background: var(--bg-active);
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .side-menu__icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
 .side-menu__icon img {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   object-fit: contain;
 }
 
@@ -195,7 +197,7 @@ watch(
   display: block;
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--border-color);
 }
 
@@ -205,7 +207,7 @@ watch(
 
 .side-menu__arrow {
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 10px;
   line-height: 1;
   transform: rotate(0deg);
   transition: transform 0.2s;
@@ -216,14 +218,16 @@ watch(
 }
 
 .side-menu__sublist {
-  margin-top: 4px;
-  padding-left: 42px;
+  margin-top: 0;
+  padding-left: 44px;
 }
 
 .side-menu__level3 {
-  padding: 8px 12px;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
 }
 </style>
