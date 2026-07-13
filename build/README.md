@@ -1,65 +1,141 @@
 # AgentOS 构建说明
 
-`build.sh` 用于下载 JiuwenSwarm、openYuanrong 发布包，并与 `deploy/` 目录一起打包为可分发的 tar 包。
+`build.sh` 用于下载 JiuwenSwarm、openYuanrong 依赖包，并与 `deploy/` 目录一起打包为可分发的 tar 包。
+
+支持两种构建模式：
+
+- **daily**（默认）：从 OBS 拉取每日构建产物
+- **release**：从 gitcode / OBS release 路径拉取固定版本发布包
 
 ## 前置条件
 
-- Bash
-- `curl` 或 `wget`（用于下载发布包）
-- 可访问外网（gitcode.com、华为云 OBS）
+- Bash 4.3+（并行下载使用 `wait -n`）
+- `curl` 或 `wget`
+- 可访问外网（华为云 OBS、gitcode.com）
 
 ## 使用方法
 
-在仓库根目录或 `build/` 目录下执行：
+```bash
+./build/build.sh [daily|release] [options]
+```
+
+常用示例：
 
 ```bash
+# 每日构建（默认）
 ./build/build.sh
+./build/build.sh daily
+
+# 发布包构建
+./build/build.sh release
+./build/build.sh release --cp-tag cp311 --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.2
+
+# 指定 yuanrong 每日构建时间、包版本，降低并行数（网络不稳定时）
+./build/build.sh daily --yr-schedule-time 202607101255 --yuanrong-daily-version 9.9.9 --download-jobs 1
 ```
 
-或：
+查看全部参数：
 
 ```bash
-cd build && ./build.sh
+./build/build.sh --help
 ```
+
+## 构建参数
+
+| 参数 | 命令行选项 | 默认值 | 说明 |
+|------|-----------|--------|------|
+| 构建模式 | `daily` / `release` | `daily` | 每日构建或发布包 |
+| Python ABI | `--cp-tag` | `cp311` | yuanrong wheel 的 cp tag |
+| 架构 | （脚本内 `ARCH`） | `uname -m` | 影响 openyuanrong 包路径与文件名 |
+| yuanrong 发布版本 | `--yuanrong-release-version` | `0.9.0` | 仅 `release` 模式 |
+| jiuwenswarm 发布版本 | `--jiuwenswarm-release-version` | `0.2.2` | 仅 `release` 模式 |
+| yuanrong 每日包版本 | `--yuanrong-daily-version` | `9.9.9` | 仅 `daily` 模式，wheel 文件名中的版本号 |
+| yuanrong 每日构建时间 | `--yr-schedule-time` | 自动获取 | 仅 `daily` 模式，OBS 路径中的时间戳 |
+| 并行下载数 | `--download-jobs` | `3` | 同时下载的最大文件数 |
+
+也可在 `build.sh` 顶部 `# build parameters` 区域直接修改默认值。
 
 ## 构建流程
 
-脚本按以下顺序执行：
-
 | 步骤 | 函数 | 说明 |
 |------|------|------|
-| 1 | `clean` | 清理 `build/dist/` 及中间产物 |
-| 2 | `build_manager_app` | 预留步骤（当前为空） |
-| 3 | `build_jiuwenswarm` | 下载 JiuwenSwarm 发布包 |
-| 4 | `build_openyuanrong` | 下载 openYuanrong 发布包（linux/aarch64） |
-| 5 | `build_conch` | 预留步骤（当前为空） |
-| 6 | `pack` | 打包生成 `AgentOS-Client.tgz` 与 `AgentOS-Server.tgz` |
+| 1 | `parse_args` | 解析命令行参数 |
+| 2 | `configure_build` | 按模式生成下载 URL 与包列表 |
+| 3 | `clean` | 清理 `build/dist/` |
+| 4 | `build_manager_app` | 预留步骤（当前为空） |
+| 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
+| 6 | `build_jiuwenswarm` | 下载 JiuwenSwarm 包 |
+| 7 | `build_conch` | 预留步骤（当前为空） |
+| 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server.tgz` |
 
 任一步骤失败时，脚本会因 `set -e` 立即退出。
 
-## 下载内容
+## daily 模式
 
-### JiuwenSwarm（版本 0.2.2）
+### JiuwenSwarm
 
-来源：`https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/JiuwenSwarm0.2.2/`
-
-| 文件 | 用途 |
-|------|------|
-| `jiuwenswarm-0.2.2-py3-none-any.whl` | 服务端通用包 |
-| `jiuwenswarm_tui-0.2.2-py3-none-macosx_11_0_arm64.whl` | macOS ARM64 客户端 TUI |
-| `jiuwenswarm_tui-0.2.2-py3-none-win_amd64.whl` | Windows 客户端 TUI |
-
-### openYuanrong（版本 0.8.0，linux/aarch64）
-
-来源：`https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/0.8.0/linux/aarch64/`
+- 版本号：`YYYYMMDD02`（当天日期 + `02`）
+- 来源：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm/package/daily/dist/<version>/`
 
 | 文件 |
 |------|
-| `openyuanrong_functionsystem-0.8.0-py3-none-manylinux_2_34_aarch64.whl` |
-| `openyuanrong-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl` |
-| `openyuanrong_datasystem-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl` |
-| `openyuanrong_faas-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl` |
-| `openyuanrong_runtime-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl` |
+| `jiuwenswarm-<version>-py3-none-any.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-linux_aarch64.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-linux_x86_64.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-win_amd64.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-macosx_11_0_arm64.whl` |
+
+### openYuanrong
+
+- 包版本（`yr_ver`）：默认 `9.9.9`，可通过 `--yuanrong-daily-version` 修改
+- 构建时间（`yr_schedule_time`）：
+  - 默认从 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 解析 **openeuler** 最新 `Latest Build`
+  - 也可通过 `--yr-schedule-time` 手动指定，如 `202607101255`
+- 来源：`https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/<yr_schedule_time>/openeuler/<arch>/`
+
+| 文件 |
+|------|
+| `openyuanrong-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_sdk-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_runtime-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_datasystem-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_functionsystem-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_faas-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+
+## release 模式
+
+### JiuwenSwarm
+
+- 版本：默认 `0.2.2`，可通过 `--jiuwenswarm-release-version` 修改
+- 来源：`https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/JiuwenSwarm<version>/`
+
+| 文件 |
+|------|
+| `jiuwenswarm-<version>-py3-none-any.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-macosx_11_0_arm64.whl` |
+| `jiuwenswarm_tui-<version>-py3-none-win_amd64.whl` |
+
+### openYuanrong
+
+- 版本：默认 `0.9.0`，可通过 `--yuanrong-release-version` 修改
+- 来源：`https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/<version>/openeuler/<arch>/`
+
+| 文件 |
+|------|
+| `openyuanrong-<version>-py3-none-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_sdk-<version>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_runtime-<version>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_datasystem-<version>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_functionsystem-<version>-py3-none-manylinux_2_34_<arch>.whl` |
+| `openyuanrong_faas-<version>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl` |
+
+## 下载机制
+
+- **并行下载**：同一模块内多个 wheel 并行拉取，并发数由 `--download-jobs` 控制（默认 3）
+- **断点续传**：使用 `.part` 临时文件，curl `-C -` / wget `-c` 支持续传
+- **自动重试**：单文件最多重试 5 次，递增等待
+- **跳过已存在**：本地已有同名文件时输出 `skip (exists)`
+- **静默下载**：curl 使用 `--no-progress-meter`，不显示进度条
 
 下载文件保存在：
 
@@ -68,30 +144,30 @@ build/dist/downloads/jiuwenswarm/
 build/dist/downloads/openyuanrong/
 ```
 
-已存在的文件会跳过下载（输出 `skip (exists)`）。
-
 ## 输出产物
 
 产物位于 `build/dist/`：
 
 ### `AgentOS-Client.tgz`
 
-客户端安装包，包含两个 TUI wheel：
+客户端 TUI 包：
 
-- `jiuwenswarm_tui-0.2.2-py3-none-macosx_11_0_arm64.whl`
-- `jiuwenswarm_tui-0.2.2-py3-none-win_amd64.whl`
+| 模式 | 包含内容 |
+|------|----------|
+| daily | macOS / Windows / linux aarch64 / linux x86_64 共 4 个 TUI wheel |
+| release | macOS / Windows 共 2 个 TUI wheel |
 
 ### `AgentOS-Server.tgz`
 
-服务端安装包（aarch64），包含：
+服务端包，包含：
 
-- `jiuwenswarm-0.2.2-py3-none-any.whl`
-- 上述 5 个 openYuanrong wheel
+- `jiuwenswarm-<version>-py3-none-any.whl`
+- 上述 openYuanrong wheel（daily 6 个 / release 6 个）
 - `deploy/` 目录（来自仓库 `deploy/`）
 
 ## 目录结构示例
 
-构建完成后：
+### 构建工作区
 
 ```
 build/
@@ -108,30 +184,137 @@ build/
         └── server/
 ```
 
+### `AgentOS-Server.tgz` 解压后结构
+
+#### daily 模式
+
+`<jw_ver>` = `YYYYMMDD02`，`<yr_ver>` 默认 `9.9.9`（`--yuanrong-daily-version`），`<arch>` = `uname -m`，`<cp_tag>` 默认 `cp311`。
+
+```
+AgentOS-Server/
+├── jiuwenswarm-<jw_ver>-py3-none-any.whl
+├── openyuanrong-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
+├── openyuanrong_sdk-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_runtime-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_datasystem-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_functionsystem-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
+├── openyuanrong_faas-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+└── deploy/
+    ├── agentos.sh
+    ├── deploy.sh
+    ├── README.md
+    ├── jiuwenswarm/
+    │   ├── module.sh
+    │   └── .env.custom
+    └── yuanrong/
+        ├── module.sh
+        └── yuanrong_deploy.sh
+```
+
+示例（`jw_ver=2026071002`，`arch=aarch64`，`cp_tag=cp311`）：
+
+```
+AgentOS-Server/
+├── jiuwenswarm-2026071002-py3-none-any.whl
+├── openyuanrong-9.9.9-py3-none-manylinux_2_34_aarch64.whl
+├── openyuanrong_sdk-9.9.9-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_runtime-9.9.9-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_datasystem-9.9.9-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_functionsystem-9.9.9-py3-none-manylinux_2_34_aarch64.whl
+├── openyuanrong_faas-9.9.9-cp311-cp311-manylinux_2_34_aarch64.whl
+└── deploy/
+    └── ...
+```
+
+#### release 模式
+
+`<jw_ver>` 默认 `0.2.2`，`<yr_ver>` 默认 `0.8.0`。
+
+```
+AgentOS-Server/
+├── jiuwenswarm-<jw_ver>-py3-none-any.whl
+├── openyuanrong-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_sdk-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_runtime-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_datasystem-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong_functionsystem-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
+├── openyuanrong_faas-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+└── deploy/
+    ├── agentos.sh
+    ├── deploy.sh
+    ├── README.md
+    ├── jiuwenswarm/
+    │   ├── module.sh
+    │   └── .env.custom
+    └── yuanrong/
+        ├── module.sh
+        └── yuanrong_deploy.sh
+```
+
+示例（默认版本，`arch=aarch64`，`cp_tag=cp311`）：
+
+```
+AgentOS-Server/
+├── jiuwenswarm-0.2.2-py3-none-any.whl
+├── openyuanrong-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_sdk-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_runtime-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_datasystem-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_functionsystem-0.8.0-py3-none-manylinux_2_34_aarch64.whl
+├── openyuanrong_faas-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+└── deploy/
+    └── ...
+```
+
 `build/dist/` 已加入 `.gitignore`，不会提交到 Git。
 
 ## 下载失败时的报错
 
-下载失败时终端会输出：
+失败时终端会输出：
 
 1. 正在下载的文件名与 URL
-2. `curl` / `wget` 的原始错误（如 HTTP 404、超时）
-3. 脚本汇总信息：`error: failed to download <文件名>` 及对应 `url:`
+2. `curl` / `wget` 原始错误（如 HTTP 404、`transfer closed`）
+3. 重试信息：`retry (n/5): <文件名>`
+4. 汇总错误：`error: failed to download <文件名>` 及 `url:`
 
 若下载到空文件，会报：`error: downloaded file is empty: <文件名>`。
 
-失败时不会保留损坏的 `.part` 临时文件。
-
 ## 常见问题
+
+**并行下载大文件时出现 `curl: (18) transfer closed`**
+
+OBS 大包（如 `openyuanrong_runtime`）并行过多时容易断连。可降低并发：
+
+```bash
+./build/build.sh daily --download-jobs 1
+```
 
 **怀疑本地 wheel 已损坏，想重新下载**
 
-删除对应文件或整个 `build/dist/` 后重新执行 `./build.sh`（脚本开头会 `clean` 整个 `build/dist/`）。
+脚本每次构建会 `clean` 整个 `build/dist/`。若中途中断，可手动删除损坏文件：
+
+```bash
+rm -f build/dist/downloads/openyuanrong/*.part
+```
 
 **打包时报 `deploy directory not found`**
 
 确认仓库根目录存在 `deploy/` 目录。
 
-**修改依赖版本**
+**手动指定 yuanrong 每日构建时间**
 
-在 `build.sh` 顶部修改 `JIUWENSWARM_VERSION`、`OPENYUANRONG_VERSION` 及对应包列表。
+在 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 查找 openeuler 对应的 `Latest Build` 时间戳后：
+
+```bash
+./build/build.sh daily --yr-schedule-time 202607101255
+```
+
+**手动指定 yuanrong 每日包版本**
+
+daily 构建的 wheel 文件名版本号（如 `openyuanrong-9.9.9-...`）可通过：
+
+```bash
+./build/build.sh daily --yuanrong-daily-version 9.9.9
+```
+
+或在 `build.sh` 顶部修改 `YUANRONG_DAILY_VERSION`。
