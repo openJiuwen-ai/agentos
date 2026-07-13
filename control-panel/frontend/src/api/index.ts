@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AxiosRequestConfig } from 'axios';
+import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import type { ApiResponse } from './types';
 
 const instance = axios.create({
@@ -9,26 +9,116 @@ const instance = axios.create({
   },
 });
 
+// ── request: attach access token ──
 instance.interceptors.request.use(
-  (config) => config,
+  (config: InternalAxiosRequestConfig) => {
+    const token = localStorage.getItem('access_token');
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
   (error) => Promise.reject(error),
 );
+
+// ── response: handle 401 with token refresh ──
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+}> = [];
+
+function processQueue(error: unknown, token: string | null = null) {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) {
+      reject(error);
+    } else {
+      resolve(token);
+    }
+  });
+  failedQueue = [];
+}
 
 instance.interceptors.response.use(
   (response) => {
     const payload = response.data as ApiResponse;
 
-    if (payload && typeof payload === 'object' && 'code' in payload && payload.code !== 0) {
+    if (payload && typeof payload === 'object' && 'code' in payload && payload.code >= 400) {
       return Promise.reject(new Error(payload.message || '请求失败'));
     }
 
     return response;
   },
-  (error) => {
-    const message = error.response?.data?.message || error.message || '网络异常';
+  async (error) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+    // Only attempt refresh on 401, not on the refresh/login endpoints themselves
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/refresh') &&
+      !originalRequest.url?.includes('/auth/login')
+    ) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        }).then((token) => {
+          if (originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+          }
+          return instance(originalRequest);
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (!refreshToken) {
+        isRefreshing = false;
+        clearAuth();
+        window.location.href = '/login';
+        return Promise.reject(new Error('请重新登录'));
+      }
+
+      try {
+        const { data } = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken });
+        const newAccess = data.data?.access_token || data.access_token;
+        const newRefresh = data.data?.refresh_token || data.refresh_token;
+
+        localStorage.setItem('access_token', newAccess);
+        if (newRefresh) {
+          localStorage.setItem('refresh_token', newRefresh);
+        }
+
+        if (originalRequest.headers) {
+          originalRequest.headers.Authorization = `Bearer ${newAccess}`;
+        }
+
+        processQueue(null, newAccess);
+        return instance(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        clearAuth();
+        window.location.href = '/login';
+        return Promise.reject(new Error('登录已过期，请重新登录'));
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    const message = error.response?.data?.detail || error.response?.data?.message || error.message || '网络异常';
     return Promise.reject(new Error(message));
   },
 );
+
+function clearAuth() {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  localStorage.removeItem('username');
+  localStorage.removeItem('role');
+  localStorage.removeItem('workspace');
+}
 
 function unwrap<T>(response: { data: ApiResponse<T> | T }): T {
   const { data } = response;

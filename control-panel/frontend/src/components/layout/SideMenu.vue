@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { appRouteTree, findSideMenuParentKey, type SideMenuItem } from '@/router/menu';
+import { useAuth } from '@/composables/useAuth';
 
 const props = defineProps<{
   menus: SideMenuItem[];
@@ -9,6 +10,18 @@ const props = defineProps<{
 
 const route = useRoute();
 const router = useRouter();
+const { isAdmin } = useAuth();
+
+const visibleMenus = computed(() =>
+  isAdmin
+    ? props.menus
+    : props.menus
+        .filter((m) => !m.adminOnly)
+        .map((m) => ({
+          ...m,
+          children: m.children?.filter((c) => !c.adminOnly),
+        })),
+);
 
 const expandedKeys = ref<string[]>([]);
 
@@ -82,7 +95,7 @@ watch(
 <template>
   <aside class="side-menu">
     <ul class="side-menu__list">
-      <li v-for="item in menus" :key="item.key" class="side-menu__item">
+      <li v-for="item in visibleMenus" :key="item.key" class="side-menu__item">
         <button
           type="button"
           class="side-menu__level2"

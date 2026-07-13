@@ -159,13 +159,18 @@ class LocalUsersBackend(AbstractUserBackend):
             user = await _get_user_by_username(session, username)
             return self._to_record(user) if user else None
 
-    async def list_users(self, page=1, page_size=20, sort="created_at", order="desc") -> PaginatedUsers:
+    async def list_users(self, page=1, page_size=20, sort="created_at", order="desc", search=None) -> PaginatedUsers:
         async with self._session_maker() as session:
             sort_col = getattr(User, sort, User.created_at)
             order_clause = sort_col.desc() if order == "desc" else sort_col.asc()
-            total = (await session.execute(select(func.count(User.id)))).scalar()
+
+            base_query = select(User)
+            if search:
+                base_query = base_query.where(User.username.ilike(f"%{search}%"))
+
+            total = (await session.execute(select(func.count()).select_from(base_query.subquery()))).scalar()
             result = await session.execute(
-                select(User).order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
+                base_query.order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
             )
             return PaginatedUsers(
                 items=[self._to_record(u) for u in result.scalars().all()],

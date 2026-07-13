@@ -57,8 +57,9 @@ class AbstractUserBackend(ABC):
         page_size: int = 20,
         sort: str = "created_at",
         order: str = "desc",
+        search: str | None = None,
     ) -> PaginatedUsers:
-        """Paginated user list."""
+        """Paginated user list, optionally filtered by username search."""
         ...
 
     @abstractmethod

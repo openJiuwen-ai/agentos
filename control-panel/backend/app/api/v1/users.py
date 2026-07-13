@@ -67,8 +67,8 @@ async def list_users(
     backend: AbstractUserBackend = Depends(get_user_backend),
     _admin: TokenData = Depends(require_admin),
 ):
-    """Admin: paginated user list."""
-    result = await backend.list_users(q.page, q.page_size, q.sort, q.order)
+    """Admin: paginated user list with optional username search."""
+    result = await backend.list_users(q.page, q.page_size, q.sort, q.order, q.search)
     items = [
         {
             "user_id": u.user_id, "username": u.username,
@@ -77,11 +77,7 @@ async def list_users(
         }
         for u in result.items
     ]
-    # Client-side search filter
-    if q.search:
-        kw = q.search.lower()
-        items = [i for i in items if kw in i["username"].lower()]
-    return {"code": 200, "data": {"total": len(items), "items": items}}
+    return {"code": 200, "data": {"total": result.total, "items": items}}
 
 
 @router.patch("/{user_id}")

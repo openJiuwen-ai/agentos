@@ -17,6 +17,8 @@ export interface AppRouteNode {
   defaultChildKey?: string;
   hideInMenu?: boolean;
   hideSideMenu?: boolean;
+  /** When true, only admins see this item in menus and can access its route. */
+  adminOnly?: boolean;
   children?: AppRouteNode[];
 }
 
@@ -116,6 +118,7 @@ export const appRouteTree: AppRouteNode[] = [
     label: '系统设置',
     order: 3,
     defaultChildKey: 'user-management',
+    adminOnly: true,
     children: [
       {
         key: 'user-management',
@@ -124,18 +127,37 @@ export const appRouteTree: AppRouteNode[] = [
         path: '/system/user-management',
         name: 'user-management',
         icon: userManagementIcon,
+        adminOnly: true,
         component: () => import('@/views/system/UserManagementPage.vue'),
       },
       {
         key: 'log-center',
         label: '日志中心',
-        order: 2,
+        order: 3,
         path: '/system/log-center',
         name: 'log-center',
         icon: logCenterIcon,
         component: () => import('@/views/system/LogCenterPage.vue'),
       },
     ],
+  },
+  {
+    key: 'profile',
+    label: '个人中心',
+    order: 10,
+    path: '/profile',
+    name: 'profile',
+    component: () => import('@/views/personal/ProfilePage.vue'),
+    hideInMenu: true,
+  },
+  {
+    key: 'forbidden',
+    label: '403',
+    order: 11,
+    path: '/403',
+    name: 'forbidden',
+    component: () => import('@/views/ForbiddenPage.vue'),
+    hideInMenu: true,
   },
 ];
 
@@ -161,7 +183,7 @@ function findRouteNameByKey(nodes: AppRouteNode[], key: string): string | undefi
 }
 
 export function buildRouterRoutes(tree: AppRouteNode[]): RouteRecordRaw[] {
-  const routes: RouteRecordRaw[] = [{ path: '/', redirect: '/overview' }];
+  const routes: RouteRecordRaw[] = [{ path: '/', redirect: '/login' }];
 
   function walk(nodes: AppRouteNode[], topMenuKey: string) {
     for (const node of nodes) {
@@ -211,6 +233,7 @@ export interface SideMenuItem {
   label: string;
   icon?: string;
   routeName?: string;
+  adminOnly?: boolean;
   children?: SideMenuItem[];
 }
 
@@ -219,6 +242,7 @@ export interface TopMenuItem {
   label: string;
   routeName?: string;
   defaultRouteName?: string;
+  adminOnly?: boolean;
   sideMenus?: SideMenuItem[];
 }
 
@@ -232,17 +256,21 @@ function buildSideMenus(nodes: AppRouteNode[]): SideMenuItem[] {
         label: node.label,
         icon: node.icon,
         routeName: node.name,
+        adminOnly: node.adminOnly,
         children: menuChildren?.length ? buildSideMenus(menuChildren) : undefined,
       };
     });
 }
 
 export function buildTopMenus(tree: AppRouteNode[]): TopMenuItem[] {
-  return sortNodes(tree).map((node) => ({
+  return sortNodes(tree)
+    .filter((node) => !node.hideInMenu)
+    .map((node) => ({
     key: node.key,
     label: node.label,
     routeName: node.name,
     defaultRouteName: node.defaultChildKey ? findRouteNameByKey(node.children ?? [], node.defaultChildKey) : undefined,
+    adminOnly: node.adminOnly,
     sideMenus: node.children ? buildSideMenus(node.children) : undefined,
   }));
 }
@@ -285,4 +313,23 @@ export function findSideMenuParentKey(tree: AppRouteNode[], routeName: string | 
 
   return null;
 }
+
+export function findAdminOnlyRouteNames(tree: AppRouteNode[]): string[] {
+  const names: string[] = [];
+
+  function walk(nodes: AppRouteNode[]) {
+    for (const node of nodes) {
+      if (node.adminOnly && node.name) {
+        names.push(node.name);
+      }
+      if (node.children) {
+        walk(node.children);
+      }
+    }
+  }
+
+  walk(tree);
+  return names;
+}
+
 export const topMenus = buildTopMenus(appRouteTree);

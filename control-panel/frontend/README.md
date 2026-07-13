@@ -63,9 +63,14 @@ frontend/
 ## 开发命令
 
 ```bash
-npm run dev          # 启动开发服务器
+# 启动开发服务器（需先启动后端，通过环境变量代理 /api 请求）
+export VITE_PROXY_TARGET=http://{HOST}:{PORT} && npm run dev
+
+npm run dev          # 启动开发服务器（不带代理）
 npm run build        # 生产构建
 npm run lint         # ESLint 检查
 npm run format       # Prettier 格式化
 npm run check        # 类型 + lint + 格式 一键检查
 ```
+
+`VITE_PROXY_TARGET` 未设置时不启用代理，请求直接发往同源地址。
