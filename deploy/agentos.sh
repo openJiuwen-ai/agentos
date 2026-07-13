@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
-MODULES=("yuanrong" "jiuwenswarm")
+MODULES=("jiuwenbox" "yuanrong" "jiuwenswarm")
 
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
@@ -232,6 +232,8 @@ Options:
   -h, --help      显示帮助信息
 
 Config:
+  jiuwenbox   配置文件: deploy/jiuwenbox/default-policy.yaml (含 extensions 目录占位符)
+              jiuwenbox-server 随 jiuwenswarm whl 包安装，无需单独 install
   yuanrong    环境变量直接通过命令行/环境变量传入（见 yuanrong_deploy.sh -h）
   jiuwenswarm 配置文件: deploy/jiuwenswarm/.env.custom (基于 .env.example)
   whl 包来源  install 时从 agentos 根目录（deploy 的同级目录）读取
@@ -239,6 +241,7 @@ Config:
 Prerequisites:
   - 部署机器到所有目标主机需配置 SSH 免密登录
   - 目标主机需预装指定版本的 Python
+  - jiuwenbox 部署前需确保 jiuwenswarm whl 包已安装（jiuwenbox-server 入口随 jiuwenswarm 安装）
   - jiuwenswarm/gateway 部署前需确保 openyuanrong 已在所有目标主机上安装并启动
 
 Examples:
