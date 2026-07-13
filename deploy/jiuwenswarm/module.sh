@@ -4,21 +4,20 @@
 # 钩子函数: jiuwenswarm_up / jiuwenswarm_down / jiuwenswarm_install / jiuwenswarm_uninstall
 # ============================================================
 
-JIUWENSWARM_DEPLOY_DIR="${AGENTOS_ROOT}/jiuwenswarm/deploy/yuanrong"
-JIUWENSWARM_CONFIG_DIR="${SCRIPT_DIR}/jiuwenswarm"
+# 构建时已将 jiuwenswarm submodule 中部署相关脚本文件拷贝到当前脚本执行目录中，故 deploy.sh 与 module.sh 同目录
+JIUWENSWARM_DEPLOY_DIR="${SCRIPT_DIR}/jiuwenswarm"
 
-# ===== up/down: 调用 submodule 的 deploy.sh =====
-# jiuwenswarm 的 deploy.sh 使用相对路径 source，必须在子模块的 deploy/yuanrong 目录下执行
-# 配置文件统一放在 agentos/deploy/jiuwenswarm/.env.custom，执行前拷贝到子模块目录，执行后清理
+# ===== up/down: 调用 deploy.sh =====
+# deploy.sh 使用相对路径 source，需在其所在目录下执行
 jiuwenswarm_up() {
-    jiuwenswarm_run_submodule_deploy up "$@"
+    jiuwenswarm_run_deploy up "$@"
 }
 
 jiuwenswarm_down() {
-    jiuwenswarm_run_submodule_deploy down "$@"
+    jiuwenswarm_run_deploy down "$@"
 }
 
-jiuwenswarm_run_submodule_deploy() {
+jiuwenswarm_run_deploy() {
     local sub_cmd="$1"
     shift
     local jw_script="${JIUWENSWARM_DEPLOY_DIR}/deploy.sh"
@@ -26,19 +25,9 @@ jiuwenswarm_run_submodule_deploy() {
         error "jiuwenswarm deploy script not found: ${jw_script}"
     fi
 
-    local custom_env_src="${JIUWENSWARM_CONFIG_DIR}/.env.custom"
-    local custom_env_dst="${JIUWENSWARM_DEPLOY_DIR}/.env.custom"
-    local copied=false
-
-    if [ -f "${custom_env_src}" ]; then
-        if [ "$(realpath -m "${custom_env_src}" 2>/dev/null || echo "${custom_env_src}")" != \
-           "$(realpath -m "${custom_env_dst}" 2>/dev/null || echo "${custom_env_dst}")" ]; then
-            cp -f "${custom_env_src}" "${custom_env_dst}"
-            copied=true
-            info "Copied jiuwenswarm config: ${custom_env_src} -> ${custom_env_dst}"
-        fi
-    else
-        warning "No .env.custom found at ${custom_env_src}, using defaults in submodule"
+    local custom_env="${JIUWENSWARM_DEPLOY_DIR}/.env.custom"
+    if [ ! -f "${custom_env}" ]; then
+        warning "No .env.custom found at ${custom_env}, deploy.sh will use defaults"
     fi
 
     info "Deploying jiuwenswarm in ${JIUWENSWARM_DEPLOY_DIR}: ${sub_cmd} $*"
@@ -46,12 +35,6 @@ jiuwenswarm_run_submodule_deploy() {
         cd "${JIUWENSWARM_DEPLOY_DIR}"
         bash ./deploy.sh ${sub_cmd} "$@"
     )
-
-    # 清理临时拷贝到子模块目录的配置文件，避免污染 submodule 工作区
-    if [ "${copied}" = "true" ] && [ -f "${custom_env_dst}" ]; then
-        rm -f "${custom_env_dst}"
-        info "Cleaned up temporary config in submodule: ${custom_env_dst}"
-    fi
 }
 
 # ===== install/uninstall: 本机 pip 操作 =====
