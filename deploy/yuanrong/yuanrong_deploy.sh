@@ -13,7 +13,7 @@ set -euo >/dev/null 2>&1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
-YR_VERSION="${YR_VERSION:-0.8.0}"
+YR_VERSION="${YR_VERSION:-0.9.0}"
 CLUSTER_HOSTS=""
 CMD=""
 
@@ -485,12 +485,12 @@ Options:
 
 Environment Variables:
   YR_PYTHON_VERSION  Python版本（默认 3.11）
-  YR_VERSION         openyuanrong release版本号（默认 0.8.0）
+  YR_VERSION         openyuanrong release版本号（默认 0.9.0）
   YR_PKG_BASE        whl包来源，可为远程URL基址或本地目录路径。
                      不指定时默认使用华为云OBS地址。
                      本地目录：目录下需包含与命名格式匹配的whl文件，远程主机会自动拷贝whl到目标机再安装。
                      本地目录示例: YR_PKG_BASE=/data/yr_whls
-                     远程URL示例: YR_PKG_BASE=https://my-mirror/yr/0.8.0/linux/x86_64
+                     远程URL示例: YR_PKG_BASE=https://my-mirror/yr/0.9.0/linux/x86_64
 
 Examples:
   # 典型流程：先在各主机安装whl包，再启动集群
@@ -500,7 +500,7 @@ Examples:
   ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2,192.168.1.3  # 多机启动集群
   ./$(basename "$0") up                                              # 默认本机启动集群
   ./$(basename "$0") down --hosts 192.168.1.1                        # 停止集群
-  YR_VERSION=0.8.0 ./$(basename "$0") install                        # 指定版本安装
+  YR_VERSION=0.9.0 ./$(basename "$0") install                        # 指定版本安装
   ./$(basename "$0") uninstall                                        # 本机卸载whl包
 
 注意:

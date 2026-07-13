@@ -94,7 +94,7 @@ deploy/
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
 | `YR_PYTHON_VERSION` | Python 版本 | `3.11` |
-| `YR_VERSION` | openyuanrong release 版本号 | `0.8.0` |
+| `YR_VERSION` | openyuanrong release 版本号 | `0.9.0` |
 | `YR_PKG_BASE` | whl 包来源（远程 URL 基址或本地目录路径） | `install` 时默认指向 agentos 根目录 |
 
 详见 `yuanrong_deploy.sh -h`。
