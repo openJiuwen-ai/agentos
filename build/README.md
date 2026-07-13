@@ -28,7 +28,7 @@
 
 # 发布包构建
 ./build/build.sh release
-./build/build.sh release --cp-tag cp311 --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.2
+./build/build.sh release --cp-tag cp311 --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.2 --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
 
 # 指定 yuanrong 每日构建时间、包版本，降低并行数（网络不稳定时）
 ./build/build.sh daily --yr-schedule-time 202607101255 --yuanrong-daily-version 9.9.9 --download-jobs 1
@@ -48,7 +48,8 @@
 | Python ABI | `--cp-tag` | `cp311` | yuanrong wheel 的 cp tag |
 | 架构 | （脚本内 `ARCH`） | `uname -m` | 影响 openyuanrong 包路径与文件名 |
 | yuanrong 发布版本 | `--yuanrong-release-version` | `0.9.0` | 仅 `release` 模式 |
-| jiuwenswarm 发布版本 | `--jiuwenswarm-release-version` | `0.2.2` | 仅 `release` 模式 |
+| jiuwenswarm 发布版本 | `--jiuwenswarm-release-version` | `0.2.2` | 仅 `release` 模式，wheel 文件名中的版本号 |
+| jiuwenswarm release git tag | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | 仅 `release` 模式，对应 `JIUWENSWARM_RELEASE_GIT_TAG` |
 | yuanrong 每日包版本 | `--yuanrong-daily-version` | `9.9.9` | 仅 `daily` 模式，wheel 文件名中的版本号 |
 | yuanrong 每日构建时间 | `--yr-schedule-time` | 自动获取 | 仅 `daily` 模式，OBS 路径中的时间戳 |
 | 并行下载数 | `--download-jobs` | `3` | 同时下载的最大文件数 |
@@ -64,7 +65,7 @@
 | 3 | `clean` | 清理 `build/dist/` |
 | 4 | `build_manager_app` | 预留步骤（当前为空） |
 | 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
-| 6 | `build_jiuwenswarm` | 下载 JiuwenSwarm 包 |
+| 6 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
 | 7 | `build_conch` | 预留步骤（当前为空） |
 | 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server.tgz` |
 
@@ -74,8 +75,9 @@
 
 ### JiuwenSwarm
 
-- 版本号：`YYYYMMDD02`（当天日期 + `02`）
-- 来源：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm/package/daily/dist/<version>/`
+- wheel 版本号：`YYYYMMDD02`（当天日期 + `02`）
+- 源码分支：`develop`（clone 到 `build/dist/downloads/jiuwenswarm_src/`）
+- wheel 来源：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm/package/daily/dist/<version>/`
 
 | 文件 |
 |------|
@@ -106,8 +108,11 @@
 
 ### JiuwenSwarm
 
-- 版本：默认 `0.2.2`，可通过 `--jiuwenswarm-release-version` 修改
-- 来源：`https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/JiuwenSwarm<version>/`
+- wheel 版本：默认 `0.2.2`，可通过 `--jiuwenswarm-release-version` 修改
+- release git tag：默认 `JiuwenSwarm0.2.2`，可通过 `--jiuwenswarm-release-git-tag` 修改（对应构建参数 `JIUWENSWARM_RELEASE_GIT_TAG`）
+- 源码 clone：按 `JIUWENSWARM_RELEASE_GIT_TAG` checkout 到 `build/dist/downloads/jiuwenswarm_src/`
+- wheel 来源：`https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/<release_git_tag>/`
+- 打包时，`jiuwenswarm_src/deploy/yuanrong/` 会拷贝到 `AgentOS-Server.tgz` 的 `jiuwenswarm/deploy/yuanrong/`（供 `deploy/jiuwenswarm/module.sh` 调用）
 
 | 文件 |
 |------|
@@ -137,11 +142,12 @@
 - **跳过已存在**：本地已有同名文件时输出 `skip (exists)`
 - **静默下载**：curl 使用 `--no-progress-meter`，不显示进度条
 
-下载文件保存在：
+下载与源码保存在：
 
 ```
-build/dist/downloads/jiuwenswarm/
-build/dist/downloads/openyuanrong/
+build/dist/downloads/jiuwenswarm/       # wheel 包
+build/dist/downloads/jiuwenswarm_src/   # jiuwenswarm git 源码
+build/dist/downloads/openyuanrong/      # openyuanrong wheel 包
 ```
 
 ## 输出产物
@@ -164,6 +170,7 @@ build/dist/downloads/openyuanrong/
 - `jiuwenswarm-<version>-py3-none-any.whl`
 - 上述 openYuanrong wheel（daily 6 个 / release 6 个）
 - `deploy/` 目录（来自仓库 `deploy/`）
+- `jiuwenswarm/deploy/yuanrong/` 部署脚本（来自 `jiuwenswarm_src/deploy/yuanrong/`）
 
 ## 目录结构示例
 
@@ -177,7 +184,8 @@ build/
     ├── AgentOS-Client.tgz
     ├── AgentOS-Server.tgz
     ├── downloads/
-    │   ├── jiuwenswarm/
+    │   ├── jiuwenswarm/        # wheel 包
+    │   ├── jiuwenswarm_src/    # jiuwenswarm git 源码
     │   └── openyuanrong/
     └── staging/          # 打包中间目录，可忽略
         ├── client/
@@ -199,12 +207,17 @@ AgentOS-Server/
 ├── openyuanrong_datasystem-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
 ├── openyuanrong_functionsystem-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
 ├── openyuanrong_faas-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── jiuwenswarm/
+│   └── deploy/
+│       └── yuanrong/         # 来自 jiuwenswarm_src/deploy/yuanrong/
+│           ├── deploy.sh
+│           └── ...
 └── deploy/
     ├── agentos.sh
     ├── deploy.sh
     ├── README.md
     ├── jiuwenswarm/
-    │   ├── module.sh
+    │   ├── module.sh           # 来自 agentos/deploy/jiuwenswarm/
     │   └── .env.custom
     └── yuanrong/
         ├── module.sh
@@ -228,23 +241,28 @@ AgentOS-Server/
 
 #### release 模式
 
-`<jw_ver>` 默认 `0.2.2`，`<yr_ver>` 默认 `0.8.0`。
+`<jw_ver>` 默认 `0.2.2`，`<yr_ver>` 默认 `0.9.0`。
 
 ```
 AgentOS-Server/
 ├── jiuwenswarm-<jw_ver>-py3-none-any.whl
-├── openyuanrong-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── openyuanrong-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
 ├── openyuanrong_sdk-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
 ├── openyuanrong_runtime-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
 ├── openyuanrong_datasystem-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
 ├── openyuanrong_functionsystem-<yr_ver>-py3-none-manylinux_2_34_<arch>.whl
 ├── openyuanrong_faas-<yr_ver>-<cp_tag>-<cp_tag>-manylinux_2_34_<arch>.whl
+├── jiuwenswarm/
+│   └── deploy/
+│       └── yuanrong/         # 来自 jiuwenswarm_src/deploy/yuanrong/
+│           ├── deploy.sh
+│           └── ...
 └── deploy/
     ├── agentos.sh
     ├── deploy.sh
     ├── README.md
     ├── jiuwenswarm/
-    │   ├── module.sh
+    │   ├── module.sh           # 来自 agentos/deploy/jiuwenswarm/
     │   └── .env.custom
     └── yuanrong/
         ├── module.sh
@@ -256,12 +274,12 @@ AgentOS-Server/
 ```
 AgentOS-Server/
 ├── jiuwenswarm-0.2.2-py3-none-any.whl
-├── openyuanrong-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
-├── openyuanrong_sdk-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
-├── openyuanrong_runtime-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
-├── openyuanrong_datasystem-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
-├── openyuanrong_functionsystem-0.8.0-py3-none-manylinux_2_34_aarch64.whl
-├── openyuanrong_faas-0.8.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong-0.9.0-py3-none-manylinux_2_34_aarch64.whl
+├── openyuanrong_sdk-0.9.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_runtime-0.9.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_datasystem-0.9.0-cp311-cp311-manylinux_2_34_aarch64.whl
+├── openyuanrong_functionsystem-0.9.0-py3-none-manylinux_2_34_aarch64.whl
+├── openyuanrong_faas-0.9.0-cp311-cp311-manylinux_2_34_aarch64.whl
 └── deploy/
     └── ...
 ```
@@ -318,3 +336,15 @@ daily 构建的 wheel 文件名版本号（如 `openyuanrong-9.9.9-...`）可通
 ```
 
 或在 `build.sh` 顶部修改 `YUANRONG_DAILY_VERSION`。
+
+**手动指定 jiuwenswarm release git tag**
+
+wheel 版本号（`--jiuwenswarm-release-version`）与 release git tag（`--jiuwenswarm-release-git-tag` / `JIUWENSWARM_RELEASE_GIT_TAG`）可能不同，例如：
+
+```bash
+./build/build.sh release \
+  --jiuwenswarm-release-version 0.2.2 \
+  --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
+```
+
+或在 `build.sh` 顶部修改 `JIUWENSWARM_RELEASE_GIT_TAG`。

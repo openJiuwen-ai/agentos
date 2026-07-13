@@ -13,6 +13,7 @@ CP_TAG="cp311"
 ARCH="$(uname -m)"
 YUANRONG_RELEASE_VERSION="0.9.0"
 JIUWENSWARM_RELEASE_VERSION="0.2.2"
+JIUWENSWARM_RELEASE_GIT_TAG="JiuwenSwarm0.2.2"
 YUANRONG_DAILY_VERSION="9.9.9"
 YR_SCHEDULE_TIME=""
 DOWNLOAD_JOBS=3
@@ -44,8 +45,9 @@ Arguments:
 
 Options:
   --cp-tag TAG                        Python ABI tag for yuanrong wheels (default: cp311)
-  --yuanrong-release-version VER      Yuanrong release version (default: 0.8.0) for release mode
+  --yuanrong-release-version VER      Yuanrong release version (default: 0.9.0) for release mode
   --jiuwenswarm-release-version VER   JiuwenSwarm release version (default: 0.2.2) for release mode
+  --jiuwenswarm-release-git-tag TAG   JiuwenSwarm git release tag (default: JiuwenSwarm0.2.2) for release mode
   --yuanrong-daily-version VER        Yuanrong daily package version (default: 9.9.9) for daily mode
   --yr-schedule-time TIME             Yuanrong daily build schedule time (default: latest openeuler from index) for daily mode
   --download-jobs N                   Max parallel downloads (default: 3)
@@ -58,7 +60,7 @@ Examples:
   $(basename "$0") daily --yuanrong-daily-version 9.9.9
   $(basename "$0") daily --download-jobs 1
   $(basename "$0") release --cp-tag cp311
-  $(basename "$0") release --yuanrong-release-version 0.8.0 --jiuwenswarm-release-version 0.2.2
+  $(basename "$0") release --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.2 --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
 EOF
 }
 
@@ -99,6 +101,14 @@ parse_args() {
         ;;
       --jiuwenswarm-release-version=*)
         JIUWENSWARM_RELEASE_VERSION="${1#*=}"
+        shift
+        ;;
+      --jiuwenswarm-release-git-tag)
+        JIUWENSWARM_RELEASE_GIT_TAG="$2"
+        shift 2
+        ;;
+      --jiuwenswarm-release-git-tag=*)
+        JIUWENSWARM_RELEASE_GIT_TAG="${1#*=}"
         shift
         ;;
       --yr-schedule-time)
@@ -218,13 +228,15 @@ configure_daily() {
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
     "${OPENYUANRONG_PACKAGES[@]}"
   )
+
+  JIUWENSWARM_GIT_TAG="develop"
 }
 
 configure_release() {
   JIUWENSWARM_VERSION="${JIUWENSWARM_RELEASE_VERSION}"
   OPENYUANRONG_VERSION="${YUANRONG_RELEASE_VERSION}"
 
-  JIUWENSWARM_BASE="https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/JiuwenSwarm${JIUWENSWARM_VERSION}"
+  JIUWENSWARM_BASE="https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/${JIUWENSWARM_RELEASE_GIT_TAG}"
 
   JIUWENSWARM_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
@@ -252,6 +264,8 @@ configure_release() {
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
     "${OPENYUANRONG_PACKAGES[@]}"
   )
+
+  JIUWENSWARM_GIT_TAG="${JIUWENSWARM_RELEASE_GIT_TAG}"
 }
 
 configure_build() {
@@ -354,6 +368,8 @@ build_jiuwenswarm() {
   echo "==> build_jiuwenswarm (${BUILD_MODE})"
   mkdir -p "${DOWNLOAD_DIR}/jiuwenswarm"
 
+  git clone -b "${JIUWENSWARM_GIT_TAG}" https://gitcode.com/openJiuwen/jiuwenswarm.git "${DOWNLOAD_DIR}/jiuwenswarm_src"
+
   download_packages \
     "${JIUWENSWARM_BASE}" \
     "${DOWNLOAD_DIR}/jiuwenswarm" \
@@ -406,6 +422,7 @@ pack() {
   done
 
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
+  cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
   local client_tgz="${BUILD_DIR}/AgentOS-Client.tgz"
   local server_tgz="${BUILD_DIR}/AgentOS-Server.tgz"
@@ -432,7 +449,7 @@ main() {
     yr_version="${YUANRONG_RELEASE_VERSION}"
   fi
 
-  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, download_jobs=${DOWNLOAD_JOBS})"
+  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
   clean
   build_manager_app
   build_openyuanrong
