@@ -15,7 +15,7 @@ def setup_file_logging(
     if logger.handlers:
         return logger
 
-    log_dir = Path(settings.AGENTOS_HOME_BASE) / settings.LOG_DIR
+    log_dir = Path(settings.LOG_DIR)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     handler = RotatingFileHandler(

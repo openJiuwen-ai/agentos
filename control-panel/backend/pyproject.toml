@@ -1,7 +1,7 @@
 [project]
-name = "agentos-panel-backend-api"
+name = "agentos-control-panel-backend"
 version = "0.1.0"
-description = "AgentOS Panel — abstract user management + local-users backend"
+description = "AgentOS Control Panel backend"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "pwdlib[argon2,bcrypt]>=0.3.0",
     "cryptography>=42.0.0",
+    "python-jose[cryptography]>=3.3",
 ]
 
 [project.optional-dependencies]

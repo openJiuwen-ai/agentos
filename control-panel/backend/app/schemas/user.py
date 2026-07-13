@@ -7,6 +7,8 @@ the user-system backend, plus the HTTP contract for user CRUD endpoints.
 from dataclasses import dataclass
 from datetime import datetime
 
+from pydantic import BaseModel, Field
+
 
 # ── Interface DTOs (backend ↔ IAM) ──────────────────────────────────────
 
@@ -41,3 +43,38 @@ class PaginatedUsers:
     """Result of a paginated user listing."""
     items: list[UserRecord]
     total: int
+
+
+# ── HTTP request / response schemas ─────────────────────────────────────
+
+class BatchCreateRequest(BaseModel):
+    usernames: list[str] = Field(..., min_length=1, max_length=100)
+
+
+class BatchCreateUserItem(BaseModel):
+    username: str
+    user_id: str | None = None
+    password: str | None = None
+    error: str | None = None
+
+
+class UserItem(BaseModel):
+    user_id: str
+    username: str
+    role: str
+    is_active: bool
+    created_at: datetime | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class UpdateUserRequest(BaseModel):
+    is_active: bool | None = None
+
+
+class ResetPasswordResponse(BaseModel):
+    user_id: str
+    new_password: str

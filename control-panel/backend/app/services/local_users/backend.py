@@ -8,12 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.config import settings
 from app.schemas.user import PaginatedUsers, UserCredentials, UserRecord
@@ -68,11 +63,21 @@ async def _get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> User | N
 
 
 class LocalUsersBackend(AbstractUserBackend):
-    """User-system backend with no framework dependencies."""
+    """User-system backend with no framework dependencies.
+
+    Uses the shared database engine from ``app.database`` — does not create
+    its own connection pool.
+    """
 
     def __init__(self) -> None:
-        self._engine: AsyncEngine | None = None
-        self._session_maker: async_sessionmaker[AsyncSession] | None = None
+        pass
+
+    @property
+    def _session_maker(self):
+        import app.database as _db
+        if _db.async_session_maker is None:
+            raise RuntimeError("database.init_engine() must be called before backend use")
+        return _db.async_session_maker
 
     @staticmethod
     def _to_record(u: User) -> UserRecord:
@@ -92,20 +97,20 @@ class LocalUsersBackend(AbstractUserBackend):
     # ── Lifecycle ───────────────────────────────────────────────────
 
     async def on_startup(self) -> None:
-        self._engine = create_async_engine(settings.DATABASE_URL, echo=False)
-        self._session_maker = async_sessionmaker(
-            self._engine, class_=AsyncSession, expire_on_commit=False
-        )
-        async with self._engine.begin() as conn:
+        import app.database as _db
+        engine = _db.engine
+        if engine is None:
+            raise RuntimeError("database.init_engine() must be called before backend.on_startup()")
+        async with engine.begin() as conn:
             await conn.run_sync(User.metadata.create_all)
-        logger.info("LocalUsersBackend engine started, tables created.")
+        logger.info("LocalUsersBackend tables ensured on shared engine.")
 
     async def on_shutdown(self) -> None:
-        if self._engine:
-            await self._engine.dispose()
+        pass  # engine lifecycle is owned by app.database
 
     def get_engine(self) -> AsyncEngine | None:
-        return self._engine
+        import app.database as _db
+        return _db.engine
 
     async def seed_initial_admin(self) -> None:
         async with self._session_maker() as session:

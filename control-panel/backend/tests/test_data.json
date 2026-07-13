@@ -21,5 +21,9 @@
     "wrong_old": "wrong123",
     "too_short": "short",
     "wrong": "wrong"
+  },
+  "nonexistent_user": {
+    "username": "nobody",
+    "password": "x"
   }
 }

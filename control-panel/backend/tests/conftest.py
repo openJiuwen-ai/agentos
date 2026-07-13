@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from app.config import settings
 
@@ -28,19 +29,37 @@ def load_test_data() -> dict:
         return json.load(f)
 
 
-@pytest_asyncio.fixture
-async def backend():
-    """提供一个已启动的 LocalUsersBackend，使用内存 SQLite，测试后自动清理。"""
-    from app.services import get_user_backend, reset_user_backend
-
-    data = load_test_data()
-
-    # 覆盖配置：使用内存数据库 + 临时目录 + 测试管理员凭据
-    settings.DATABASE_URL = "sqlite+aiosqlite://"
+def _configure_for_test(data: dict) -> None:
+    """覆盖配置为测试环境（内存 SQLite + 临时目录 + 测试管理员）。"""
+    settings.AGENTOS_DATABASE_URL = "sqlite+aiosqlite://"
     settings.USER_SYSTEM_BACKEND = "local-users"
     settings.AGENTOS_HOME_BASE = TEST_HOME
     settings.AGENTOS_ADMIN_USERNAME = data["admin"]["username"]
     settings.AGENTOS_ADMIN_PASSWORD = data["admin"]["password"]
+    settings.AGENTOS_JWT_SECRET_KEY = "test-secret-key"
+
+
+def _cleanup_test_home() -> None:
+    """清理测试 home 目录。"""
+    if os.path.isdir(TEST_HOME):
+        shutil.rmtree(TEST_HOME, ignore_errors=True)
+
+
+# ── 后端 fixture（直接测试 backend 接口） ─────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def backend():
+    """提供一个已启动的 LocalUsersBackend，使用内存 SQLite，测试后自动清理。"""
+    from app.database import init_engine
+    from app.services import get_user_backend, reset_user_backend
+
+    data = load_test_data()
+    _configure_for_test(data)
+    _cleanup_test_home()
+
+    # 初始化共享数据库引擎
+    init_engine()
 
     # 重置单例缓存，确保每次测试使用新配置
     reset_user_backend()
@@ -53,11 +72,87 @@ async def backend():
     # 清理：关闭引擎、重置缓存、删除临时目录
     await b.on_shutdown()
     reset_user_backend()
-    if os.path.isdir(TEST_HOME):
-        shutil.rmtree(TEST_HOME, ignore_errors=True)
+    _cleanup_test_home()
+
+    import app.database as _db
+    if _db.engine is not None:
+        await _db.engine.dispose()
+        _db.engine = None
+        _db.async_session_maker = None
 
 
 @pytest_asyncio.fixture
 def test_data():
     """提供测试数据字典。"""
     return load_test_data()
+
+
+# ── HTTP client fixtures（API 集成测试） ──────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def client():
+    """HTTP 测试客户端，连线到完整的 FastAPI 应用（local_users backend + IAM）。
+
+    使用内存 SQLite，自动初始化数据库引擎、后端和 IAM 表。
+    测试结束后清理临时目录并重置所有单例状态。
+    """
+    from app.database import init_engine
+    from app.services import get_user_backend, reset_user_backend
+
+    data = load_test_data()
+    _configure_for_test(data)
+    _cleanup_test_home()
+
+    # 清理上一个测试可能残留的引擎
+    import app.database as _db
+    if _db.engine is not None:
+        await _db.engine.dispose()
+        _db.engine = None
+        _db.async_session_maker = None
+
+    # 1. 初始化共享数据库引擎
+    init_engine()
+
+    # 2. 启动后端（建表 + 种子管理员）
+    reset_user_backend()
+    backend_obj = get_user_backend()
+    await backend_obj.on_startup()
+    await backend_obj.seed_initial_admin()
+
+    # 3. 创建 IAM 表
+    from app.iam.engine import ensure_iam_tables
+    engine = backend_obj.get_engine()
+    if engine is not None:
+        await ensure_iam_tables(engine)
+
+    # 4. 构建 HTTP 客户端（ASGITransport, 进程内通信）
+    from app.main import app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="https://test") as ac:
+        yield ac
+
+    # 5. 清理
+    await backend_obj.on_shutdown()
+    reset_user_backend()
+    if _db.engine is not None:
+        await _db.engine.dispose()
+        _db.engine = None
+        _db.async_session_maker = None
+    _cleanup_test_home()
+
+
+@pytest_asyncio.fixture
+async def admin_tokens(request):
+    """以 admin 身份登录，返回 token 数据（access_token, refresh_token, user_id 等）。"""
+    data = load_test_data()
+    test_client = request.getfixturevalue("client")
+    resp = await test_client.post("/api/v1/auth/login", json={
+        "username": data["admin"]["username"],
+        "password": data["admin"]["password"],
+    })
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"admin_tokens fixture failed: expected 200, got {resp.status_code}"
+        )
+    return resp.json()["data"]

@@ -1,7 +1,7 @@
-"""SQLAlchemy async engine and session factory.
+"""SQLAlchemy async engine and session factory — single source of truth.
 
-The module-level ``engine`` and ``async_session_maker`` are set by the
-active user-system backend during ``on_startup()``.
+The app creates the engine once at startup via ``init_engine()``.
+All modules (backend, IAM, etc.) reuse it via ``get_async_session()``.
 """
 
 from collections.abc import AsyncGenerator
@@ -19,19 +19,21 @@ engine: AsyncEngine | None = None
 async_session_maker: async_sessionmaker[AsyncSession] | None = None
 
 
-def _ensure_engine() -> None:
+def init_engine(database_url: str | None = None) -> AsyncEngine:
+    """Create the async engine and session factory.  Called once at startup."""
     global engine, async_session_maker
-    if engine is None:
-        engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    if async_session_maker is None:
-        async_session_maker = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
+    settings.validate_required()
+    url = database_url or settings.AGENTOS_DATABASE_URL
+    engine = create_async_engine(url, echo=False)
+    async_session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    return engine
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
-    _ensure_engine()
+    """FastAPI dependency: yield a session from the shared engine."""
     if async_session_maker is None:
-        raise RuntimeError("Database session maker not initialized")
+        raise RuntimeError("database.init_engine() must be called before get_async_session()")
     async with async_session_maker() as session:
         yield session
