@@ -13,7 +13,7 @@ const router = useRouter();
 const { isAdmin } = useAuth();
 
 const visibleMenus = computed(() =>
-  isAdmin
+  isAdmin.value
     ? props.menus
     : props.menus
         .filter((m) => !m.adminOnly)

@@ -5,7 +5,7 @@ import CallAnalysis from './CallAnalysis.vue';
 const router = useRouter();
 
 function goBack() {
-  router.push({ name: 'inference-model' });
+  router.push({ name: 'inference-model-dashboard' });
 }
 </script>
 
