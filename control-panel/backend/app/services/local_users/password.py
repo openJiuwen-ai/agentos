@@ -40,10 +40,14 @@ _private_key = rsa.generate_private_key(
 
 
 def get_public_key_pem() -> str:
-    return _private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode()
+    return (
+        _private_key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
 
 
 def decrypt_password(encrypted_hex: str) -> str:

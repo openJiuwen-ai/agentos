@@ -54,6 +54,7 @@ def require_permission(resource: str, action: str):
         ):
             ...
     """
+
     async def checker(
         user: TokenData = Depends(get_current_user),
     ) -> TokenData:
@@ -63,6 +64,7 @@ def require_permission(resource: str, action: str):
                 detail=f"需要权限: {action} on {resource}",
             )
         return user
+
     return checker
 
 
@@ -72,4 +74,5 @@ async def get_user_backend() -> AbstractUserBackend:
     Uses lazy-loading factory so the backend is only instantiated once.
     """
     from app.services import get_user_backend as _get_backend
+
     return _get_backend()

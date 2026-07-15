@@ -20,9 +20,10 @@ class UserCredentials:
     Returned by ``AbstractUserBackend.authenticate()`` — the login flow uses
     this to issue tokens.
     """
-    user_id: str          # UUID as string (stable identifier)
+
+    user_id: str  # UUID as string (stable identifier)
     username: str
-    role: str             # "admin" | "user"
+    role: str  # "admin" | "user"
     token_version: int
     is_active: bool
 
@@ -30,6 +31,7 @@ class UserCredentials:
 @dataclass
 class UserRecord:
     """Full user record for CRUD operations.  No ORM coupling."""
+
     user_id: str
     username: str
     role: str
@@ -41,11 +43,13 @@ class UserRecord:
 @dataclass
 class PaginatedUsers:
     """Result of a paginated user listing."""
+
     items: list[UserRecord]
     total: int
 
 
 # ── HTTP request / response schemas ─────────────────────────────────────
+
 
 class BatchCreateRequest(BaseModel):
     usernames: list[str] = Field(..., min_length=1, max_length=100)

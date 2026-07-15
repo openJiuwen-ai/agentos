@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
+
 def _validate_username(username: str) -> str:
     username = username.strip().lower()
     if not re.match(r"^[a-z0-9_-]{3,32}$", username):
@@ -75,32 +76,44 @@ class LocalUsersBackend(AbstractUserBackend):
     @property
     def _session_maker(self):
         import app.database as _db
+
         if _db.async_session_maker is None:
-            raise RuntimeError("database.init_engine() must be called before backend use")
+            raise RuntimeError(
+                "database.init_engine() must be called before backend use"
+            )
         return _db.async_session_maker
 
     @staticmethod
     def _to_record(u: User) -> UserRecord:
         return UserRecord(
-            user_id=str(u.id), username=u.username,
-            role=u.role, is_active=u.is_active,
-            token_version=u.token_version, created_at=u.created_at,
+            user_id=str(u.id),
+            username=u.username,
+            role=u.role,
+            is_active=u.is_active,
+            token_version=u.token_version,
+            created_at=u.created_at,
         )
 
     @staticmethod
     def _to_credentials(u: User) -> UserCredentials:
         return UserCredentials(
-            user_id=str(u.id), username=u.username,
-            role=u.role, token_version=u.token_version, is_active=u.is_active,
+            user_id=str(u.id),
+            username=u.username,
+            role=u.role,
+            token_version=u.token_version,
+            is_active=u.is_active,
         )
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
     async def on_startup(self) -> None:
         import app.database as _db
+
         engine = _db.engine
         if engine is None:
-            raise RuntimeError("database.init_engine() must be called before backend.on_startup()")
+            raise RuntimeError(
+                "database.init_engine() must be called before backend.on_startup()"
+            )
         async with engine.begin() as conn:
             await conn.run_sync(User.metadata.create_all)
         logger.info("LocalUsersBackend tables ensured on shared engine.")
@@ -110,17 +123,21 @@ class LocalUsersBackend(AbstractUserBackend):
 
     def get_engine(self) -> AsyncEngine | None:
         import app.database as _db
+
         return _db.engine
 
     async def seed_initial_admin(self) -> None:
         async with self._session_maker() as session:
-            existing = await _get_user_by_username(session, settings.AGENTOS_ADMIN_USERNAME)
+            existing = await _get_user_by_username(
+                session, settings.AGENTOS_ADMIN_USERNAME
+            )
             if existing:
                 return
             admin = User(
                 username=settings.AGENTOS_ADMIN_USERNAME,
                 hashed_password=hash_password(settings.AGENTOS_ADMIN_PASSWORD),
-                role="admin", is_active=True,
+                role="admin",
+                is_active=True,
             )
             session.add(admin)
             await session.commit()
@@ -131,7 +148,9 @@ class LocalUsersBackend(AbstractUserBackend):
 
     # ── Authentication ──────────────────────────────────────────────
 
-    async def authenticate(self, username: str, password: str) -> UserCredentials | None:
+    async def authenticate(
+        self, username: str, password: str
+    ) -> UserCredentials | None:
         async with self._session_maker() as session:
             user = await _get_user_by_username(session, username)
             if user is None:
@@ -177,7 +196,9 @@ class LocalUsersBackend(AbstractUserBackend):
                 total=total,
             )
 
-    async def create_user(self, username: str, password: str | None = None) -> tuple[UserRecord, str | None]:
+    async def create_user(
+        self, username: str, password: str | None = None
+    ) -> tuple[UserRecord, str | None]:
         username = _validate_username(username)
         async with self._session_maker() as session:
             existing = await _get_user_by_username(session, username)
@@ -198,9 +219,26 @@ class LocalUsersBackend(AbstractUserBackend):
             session.add(user)
             await session.commit()
             await session.refresh(user)
+
+            # ── LiteLLM 用户同步（best-effort）──────────────────────────
+            try:
+                from app.services import get_litellm_svc
+
+                svc = get_litellm_svc()
+                if svc is not None:
+                    await svc.create_user(uid=str(user.id))
+            except Exception:
+                logger.warning(
+                    "Failed to create LiteLLM user for %s",
+                    username,
+                    exc_info=True,
+                )
+
             return self._to_record(user), generated
 
-    async def update_user(self, user_id: uuid.UUID, update_dict: dict[str, Any]) -> UserRecord:
+    async def update_user(
+        self, user_id: uuid.UUID, update_dict: dict[str, Any]
+    ) -> UserRecord:
         async with self._session_maker() as session:
             user = await _get_user_by_id(session, user_id)
             if not user:
@@ -231,11 +269,30 @@ class LocalUsersBackend(AbstractUserBackend):
             try:
                 _remove_home(user.username)
             except Exception as e:
-                logger.warning("Failed to remove home directory for user %s: %s", user.username, e)
+                logger.warning(
+                    "Failed to remove home directory for user %s: %s", user.username, e
+                )
+
+            # ── LiteLLM 用户清理（best-effort，提前执行确保 session 仍可用）──
+            try:
+                from app.services import get_litellm_svc
+
+                svc = get_litellm_svc()
+                if svc is not None:
+                    await svc.delete_user(session, uid=str(user.id))
+            except Exception:
+                logger.warning(
+                    "Failed to delete LiteLLM user for %s",
+                    user.username,
+                    exc_info=True,
+                )
+
             await session.delete(user)
             await session.commit()
 
-    async def change_password(self, user_id: uuid.UUID, old_password: str, new_password: str) -> None:
+    async def change_password(
+        self, user_id: uuid.UUID, old_password: str, new_password: str
+    ) -> None:
         async with self._session_maker() as session:
             user = await _get_user_by_id(session, user_id)
             if not user:

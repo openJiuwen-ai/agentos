@@ -36,6 +36,7 @@ class _ListUsersQuery:
 
 # ── Admin routes ────────────────────────────────────────────────────────
 
+
 @router.post("/batch")
 async def batch_create(
     body: BatchCreateRequest,
@@ -47,17 +48,23 @@ async def batch_create(
     for username in body.usernames:
         try:
             record, password = await backend.create_user(username)
-            results.append({
-                "username": record.username,
-                "user_id": record.user_id,
-                "password": password,
-                "error": None,
-            })
+            results.append(
+                {
+                    "username": record.username,
+                    "user_id": record.user_id,
+                    "password": password,
+                    "error": None,
+                }
+            )
         except ValueError as e:
-            results.append({
-                "username": username.strip().lower(),
-                "user_id": None, "password": None, "error": str(e),
-            })
+            results.append(
+                {
+                    "username": username.strip().lower(),
+                    "user_id": None,
+                    "password": None,
+                    "error": str(e),
+                }
+            )
     return {"code": 201, "message": "success", "data": results}
 
 
@@ -71,8 +78,10 @@ async def list_users(
     result = await backend.list_users(q.page, q.page_size, q.sort, q.order, q.search)
     items = [
         {
-            "user_id": u.user_id, "username": u.username,
-            "role": u.role, "is_active": u.is_active,
+            "user_id": u.user_id,
+            "username": u.username,
+            "role": u.role,
+            "is_active": u.is_active,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         }
         for u in result.items
@@ -111,8 +120,10 @@ async def update_user(
     return {
         "code": 200,
         "data": {
-            "user_id": user.user_id, "username": user.username,
-            "role": user.role, "is_active": user.is_active,
+            "user_id": user.user_id,
+            "username": user.username,
+            "role": user.role,
+            "is_active": user.is_active,
         },
     }
 
@@ -168,10 +179,18 @@ async def reset_password(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    return {"code": 200, "data": {"user_id": user_id, "username": user.username, "new_password": new_password}}
+    return {
+        "code": 200,
+        "data": {
+            "user_id": user_id,
+            "username": user.username,
+            "new_password": new_password,
+        },
+    }
 
 
 # ── Self-service routes ─────────────────────────────────────────────────
+
 
 @router.get("/me")
 async def get_me(
@@ -191,8 +210,10 @@ async def get_me(
     return {
         "code": 200,
         "data": {
-            "user_id": u.user_id, "username": u.username,
-            "role": u.role, "is_active": u.is_active,
+            "user_id": u.user_id,
+            "username": u.username,
+            "role": u.role,
+            "is_active": u.is_active,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         },
     }

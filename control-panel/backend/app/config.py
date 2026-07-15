@@ -30,17 +30,29 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
     LOG_BACKUP_COUNT: int = 5
 
+    # ── LiteLLM (必须从 .env 读取) ──
+    LITELLM_ADMIN_URL: str = ""
+    LITELLM_MASTER_KEY: str = ""
+    LITELLM_KEY_ENCRYPTION_KEY: str = (
+        ""  # 256-bit AES-GCM key (64 hex chars). Generate: openssl rand -hex 32
+    )
+    MAX_KEYS_PER_USER: int = 10
+    LITELLM_REQUEST_TIMEOUT: float = 30.0
+    LITELLM_DATABASE_URL: str = ""
+
     def validate_required(self) -> None:
         """校验必填配置项，启动时调用。"""
-        missing = []
-        if not self.AGENTOS_DATABASE_URL:
-            missing.append("AGENTOS_DATABASE_URL")
-        if not self.AGENTOS_JWT_SECRET_KEY:
-            missing.append("AGENTOS_JWT_SECRET_KEY")
-        if not self.AGENTOS_ADMIN_USERNAME:
-            missing.append("AGENTOS_ADMIN_USERNAME")
-        if not self.AGENTOS_ADMIN_PASSWORD:
-            missing.append("AGENTOS_ADMIN_PASSWORD")
+        required = [
+            "AGENTOS_DATABASE_URL",
+            "AGENTOS_JWT_SECRET_KEY",
+            "AGENTOS_ADMIN_USERNAME",
+            "AGENTOS_ADMIN_PASSWORD",
+            "LITELLM_ADMIN_URL",
+            "LITELLM_MASTER_KEY",
+            "LITELLM_KEY_ENCRYPTION_KEY",
+            "LITELLM_DATABASE_URL",
+        ]
+        missing = [name for name in required if not getattr(self, name)]
         if missing:
             raise ValueError(
                 f"缺少必填配置: {', '.join(missing)}。"

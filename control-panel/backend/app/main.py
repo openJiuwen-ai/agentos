@@ -1,4 +1,4 @@
-"""FastAPI entry point — wires backend, IAM, and API routes together."""
+"""FastAPI entry point — wires backend, IAM, LiteLLM, and API routes together."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -6,11 +6,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.litellm_key import router as litellm_key_router
+from app.api.v1.litellm_model import router as litellm_router
+from app.api.v1.litellm_usage import router as litellm_usage_router
 from app.api.v1.users import router as users_router
-from app.config import settings
+
 from app.core.logging import setup_file_logging
 from app.iam.engine import ensure_iam_tables
 from app.services import get_user_backend
+from app.services.litellm_service import LitellmService
 
 logger = logging.getLogger("app")
 
@@ -22,6 +26,7 @@ async def lifespan(fastapi_app: FastAPI):
 
     # 1. Create the shared database engine (single source of truth).
     import app.database as _db
+
     _db.init_engine()
 
     # 2. Start the user-system backend (uses the shared engine).
@@ -35,8 +40,21 @@ async def lifespan(fastapi_app: FastAPI):
         await ensure_iam_tables(engine)
 
     logger.info("backend-api started (backend: %s)", type(backend).__name__)
+
+    # 4. LiteLLM 模型管理服务
+    litellm_svc = LitellmService()
+    fastapi_app.state.litellm_svc = litellm_svc
+    from app.services import register_litellm_svc
+
+    register_litellm_svc(litellm_svc)
+    logger.info("LitellmService attached to app.state")
+
     yield
+
+    # ── 清理 ──────────────────────────────────────────────────────────────
+    await litellm_svc.close()
     await backend.on_shutdown()
+    await _db.dispose_engine()
     logger.info("backend-api shut down.")
 
 
@@ -46,8 +64,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── 注册路由 ──────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(litellm_router)
+app.include_router(litellm_key_router)
+app.include_router(litellm_usage_router)
 
 
 @app.get("/")

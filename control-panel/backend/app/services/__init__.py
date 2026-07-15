@@ -66,3 +66,22 @@ def reset_user_backend() -> None:
 def register_backend(name: str, class_path: str) -> None:
     """Register a new backend type at runtime (for plugins)."""
     _BACKEND_REGISTRY[name] = class_path
+
+
+# ── LitellmService 全局注册表 ────────────────────────────────────────────────
+
+_litellm_svc = None
+
+
+def register_litellm_svc(svc) -> None:
+    """注册 LitellmService 单例（由 main.py lifespan 调用）。"""
+    global _litellm_svc
+    _litellm_svc = svc
+
+
+def get_litellm_svc():
+    """获取 LitellmService 单例（由 LocalUsersBackend 生命周期钩子调用）。
+
+    返回 None 表示服务尚未初始化（如 lifespan 未触发）。
+    """
+    return _litellm_svc

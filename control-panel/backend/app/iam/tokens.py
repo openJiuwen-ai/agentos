@@ -21,7 +21,8 @@ from app.services.base import AbstractUserBackend
 @dataclass
 class TokenData:
     """Decoded access-token payload.  Zero-IO — extracted from JWT claims."""
-    user_id: str    # UUID
+
+    user_id: str  # UUID
     username: str
     role: str
 
@@ -34,27 +35,35 @@ class TokenService:
     @staticmethod
     def create_access_token(user_id: str, username: str, role: str) -> str:
         now = int(time.time())
-        return jwt.encode({
-            "sub": user_id,
-            "username": username,
-            "role": role,
-            "type": "access",
-            "jti": secrets.token_hex(16),
-            "iat": now,
-            "exp": now + settings.AGENTOS_JWT_ACCESS_EXPIRE_MINUTES * 60,
-        }, settings.AGENTOS_JWT_SECRET_KEY, algorithm=settings.AGENTOS_JWT_ALGORITHM)
+        return jwt.encode(
+            {
+                "sub": user_id,
+                "username": username,
+                "role": role,
+                "type": "access",
+                "jti": secrets.token_hex(16),
+                "iat": now,
+                "exp": now + settings.AGENTOS_JWT_ACCESS_EXPIRE_MINUTES * 60,
+            },
+            settings.AGENTOS_JWT_SECRET_KEY,
+            algorithm=settings.AGENTOS_JWT_ALGORITHM,
+        )
 
     @staticmethod
     def create_refresh_token(user_id: str, token_version: int) -> str:
         now = int(time.time())
-        return jwt.encode({
-            "sub": user_id,
-            "type": "refresh",
-            "tv": token_version,
-            "jti": secrets.token_hex(16),
-            "iat": now,
-            "exp": now + settings.AGENTOS_JWT_REFRESH_EXPIRE_DAYS * 86400,
-        }, settings.AGENTOS_JWT_SECRET_KEY, algorithm=settings.AGENTOS_JWT_ALGORITHM)
+        return jwt.encode(
+            {
+                "sub": user_id,
+                "type": "refresh",
+                "tv": token_version,
+                "jti": secrets.token_hex(16),
+                "iat": now,
+                "exp": now + settings.AGENTOS_JWT_REFRESH_EXPIRE_DAYS * 86400,
+            },
+            settings.AGENTOS_JWT_SECRET_KEY,
+            algorithm=settings.AGENTOS_JWT_ALGORITHM,
+        )
 
     # ── Verification (zero-IO) ──────────────────────────────────────
 
@@ -63,7 +72,8 @@ class TokenService:
         """Hot path.  Zero IO — pure JWT decode."""
         try:
             payload = jwt.decode(
-                token, settings.AGENTOS_JWT_SECRET_KEY,
+                token,
+                settings.AGENTOS_JWT_SECRET_KEY,
                 algorithms=[settings.AGENTOS_JWT_ALGORITHM],
                 options={"require_exp": True},
             )
@@ -82,7 +92,8 @@ class TokenService:
         """Decode and validate refresh token (signature + type check).  Zero IO."""
         try:
             payload = jwt.decode(
-                token, settings.AGENTOS_JWT_SECRET_KEY,
+                token,
+                settings.AGENTOS_JWT_SECRET_KEY,
                 algorithms=[settings.AGENTOS_JWT_ALGORITHM],
                 options={"require_exp": True},
             )

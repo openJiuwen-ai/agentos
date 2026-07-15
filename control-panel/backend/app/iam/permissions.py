@@ -3,6 +3,7 @@
 
 # ── Resource & Action constants ─────────────────────────────────────────
 
+
 class Resource:
     DASHBOARD = "dashboard"
     INFERENCE_MODELS = "inference.models"
@@ -41,11 +42,17 @@ _ROLE_PERMISSIONS: dict[str, dict[str, set[str]]] = {
 }
 
 _ALL_RESOURCES = [
-    Resource.DASHBOARD, Resource.INFERENCE_MODELS,
-    Resource.INFERENCE_API_KEYS, Resource.INFERENCE_USAGE,
-    Resource.INFERENCE_MONITOR, Resource.AGENT_GLOBAL,
-    Resource.LOGS, Resource.APPS, Resource.ALERTS,
-    Resource.HARDWARE, Resource.SETTINGS,
+    Resource.DASHBOARD,
+    Resource.INFERENCE_MODELS,
+    Resource.INFERENCE_API_KEYS,
+    Resource.INFERENCE_USAGE,
+    Resource.INFERENCE_MONITOR,
+    Resource.AGENT_GLOBAL,
+    Resource.LOGS,
+    Resource.APPS,
+    Resource.ALERTS,
+    Resource.HARDWARE,
+    Resource.SETTINGS,
 ]
 
 _ALL_ACTIONS = [Action.READ, Action.WRITE, Action.DELETE, Action.MANAGE]

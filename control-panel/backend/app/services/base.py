@@ -64,7 +64,9 @@ class AbstractUserBackend(ABC):
 
     @abstractmethod
     async def create_user(
-        self, username: str, password: str | None = None,
+        self,
+        username: str,
+        password: str | None = None,
     ) -> tuple[UserRecord, str | None]:
         """Create a user.  Returns ``(record, generated_password_or_None)``."""
         ...
