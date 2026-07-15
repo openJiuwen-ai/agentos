@@ -12,10 +12,11 @@ BUILD_MODE="daily"
 CP_TAG="cp311"
 ARCH="$(uname -m)"
 YUANRONG_RELEASE_VERSION="0.9.0"
-JIUWENSWARM_RELEASE_VERSION="0.2.2"
-JIUWENSWARM_RELEASE_GIT_TAG="JiuwenSwarm0.2.2"
+JIUWENSWARM_RELEASE_VERSION="0.2.3"
+JIUWENSWARM_RELEASE_GIT_TAG="release_0.2.3"
 YUANRONG_DAILY_VERSION="9.9.9"
 YR_SCHEDULE_TIME=""
+YR_RELEASE_DOWNLOAD_BASE=""
 DOWNLOAD_JOBS=3
 # ./ build parameters
 
@@ -50,6 +51,7 @@ Options:
   --jiuwenswarm-release-git-tag TAG   JiuwenSwarm git release tag (default: JiuwenSwarm0.2.2) for release mode
   --yuanrong-daily-version VER        Yuanrong daily package version (default: 9.9.9) for daily mode
   --yr-schedule-time TIME             Yuanrong daily build schedule time (default: latest openeuler from index) for daily mode
+  --yr-release-download-base URL      Yuanrong release download base URL (default: OBS release path from version/arch) for release mode
   --download-jobs N                   Max parallel downloads (default: 3)
   -h, --help                          Show this help
 
@@ -60,7 +62,8 @@ Examples:
   $(basename "$0") daily --yuanrong-daily-version 9.9.9
   $(basename "$0") daily --download-jobs 1
   $(basename "$0") release --cp-tag cp311
-  $(basename "$0") release --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.2 --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
+  $(basename "$0") release --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.3 --jiuwenswarm-release-git-tag release_0.2.3
+  $(basename "$0") release --yr-release-download-base https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/0.9.0/openeuler/aarch64
 EOF
 }
 
@@ -117,6 +120,14 @@ parse_args() {
         ;;
       --yr-schedule-time=*)
         YR_SCHEDULE_TIME="${1#*=}"
+        shift
+        ;;
+      --yr-release-download-base)
+        YR_RELEASE_DOWNLOAD_BASE="$2"
+        shift 2
+        ;;
+      --yr-release-download-base=*)
+        YR_RELEASE_DOWNLOAD_BASE="${1#*=}"
         shift
         ;;
       --download-jobs)
@@ -244,7 +255,12 @@ configure_release() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-win_amd64.whl"
   )
 
-  OPENYUANRONG_BASE="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/${OPENYUANRONG_VERSION}/openeuler/${ARCH}"
+   if [[ -n "${YR_RELEASE_DOWNLOAD_BASE}" ]]; then
+    OPENYUANRONG_BASE="${YR_RELEASE_DOWNLOAD_BASE}/openeuler/${ARCH}"
+  else
+    OPENYUANRONG_BASE="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/${OPENYUANRONG_VERSION}/openeuler/${ARCH}"
+  fi
+  echo "yuanrong release download base: ${OPENYUANRONG_BASE}"
 
   OPENYUANRONG_PACKAGES=(
     "openyuanrong-${OPENYUANRONG_VERSION}-py3-none-manylinux_2_34_${ARCH}.whl"
@@ -449,7 +465,7 @@ main() {
     yr_version="${YUANRONG_RELEASE_VERSION}"
   fi
 
-  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
+  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, yr_release_base=${YR_RELEASE_DOWNLOAD_BASE:-auto}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
   clean
   build_manager_app
   build_openyuanrong
