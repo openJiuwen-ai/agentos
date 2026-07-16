@@ -1,0 +1,5 @@
+scrape_configs:
+  - job_name: agent-metrics
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/vm/agent-metrics.json"]

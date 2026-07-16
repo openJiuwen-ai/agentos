@@ -11,6 +11,7 @@ export interface LiteLLMModelInfo {
   db_model?: boolean;
   blocked?: boolean;
   description?: string;
+  context_window?: number;
   key?: string;
   max_tokens?: number;
   max_input_tokens?: number;
@@ -36,6 +37,8 @@ export interface InferenceModelItem {
   model_info: LiteLLMModelInfo;
   instance_url?: string;
   max_concurrent?: number;
+  inference_engine?: string;
+  grafana_job_name?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -48,6 +51,8 @@ export interface ModelDetail {
   model_info: LiteLLMModelInfo;
   instance_url?: string;
   max_concurrent?: number;
+  inference_engine?: string;
+  grafana_job_name?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -111,7 +116,14 @@ export async function restartModel(model_name: string) {
 }
 
 /** 创建模型 */
-export async function createModel(data: { model_name: string; litellm_params: LiteLLMParams; instance_url?: string }) {
+export async function createModel(data: {
+  model_name: string;
+  litellm_params: LiteLLMParams;
+  instance_url?: string;
+  max_concurrent?: number;
+  inference_engine?: string;
+  model_info?: LiteLLMModelInfo;
+}) {
   return post<InferenceModelItem>('/api/v1/litellm/model', data);
 }
 
@@ -130,4 +142,115 @@ export async function createApiKey(data: { model?: string }) {
 /** 删除 API Key */
 export async function deleteApiKey(key_alias: string) {
   return del(`/api/v1/litellm/key/${key_alias}`);
+}
+
+// ==================== 使用统计 API 函数 ====================
+
+/** 使用统计概览响应 */
+export interface UsageOverviewResponse {
+  start_date: string;
+  end_date: string;
+  users: Array<{
+    user_id: string;
+    total_tokens: number;
+    total_requests: number;
+    total_cost: number;
+  }>;
+  daily: Array<{
+    date: string;
+    tokens: number;
+    requests: number;
+    cost: number;
+  }>;
+}
+
+/** 获取使用统计概览 */
+export async function fetchUsageOverview(params: {
+  start_date: string;
+  end_date: string;
+}): Promise<UsageOverviewResponse> {
+  return get<UsageOverviewResponse>('/api/v1/litellm/usage/overview', params);
+}
+
+/** 指定用户每日活动响应 */
+export interface UserUsageDetailResponse {
+  user_id: string;
+  start_date: string;
+  end_date: string;
+  daily_activity: Array<{
+    date: string;
+    tokens: number;
+    requests: number;
+    cost: number;
+  }>;
+}
+
+/** 获取指定用户每日活动（普通用户只能看自己） */
+export async function fetchUserUsage(params: {
+  user_id: string;
+  start_date: string;
+  end_date: string;
+}): Promise<UserUsageDetailResponse> {
+  return get<UserUsageDetailResponse>('/api/v1/litellm/usage/user', params);
+}
+
+/** 模型用量分布响应 */
+export interface ModelUsageResponse {
+  items: Array<{
+    model: string;
+    tokens: number;
+    requests: number;
+    cost: number;
+    pct: number;
+  }>;
+}
+
+/** 获取模型用量分布（管理员） */
+export async function fetchUsageByModel(params: {
+  start_date: string;
+  end_date: string;
+}): Promise<ModelUsageResponse> {
+  return get<ModelUsageResponse>('/api/v1/litellm/usage/by-model', params);
+}
+
+/** 用户用量排行响应 */
+export interface UserUsageRankResponse {
+  items: Array<{
+    user_id: string;
+    tokens: number;
+    requests: number;
+    cost: number;
+  }>;
+}
+
+/** 获取用户用量排行（管理员） */
+export async function fetchUsageByUser(params: {
+  start_date: string;
+  end_date: string;
+  top?: number;
+}): Promise<UserUsageRankResponse> {
+  return get<UserUsageRankResponse>('/api/v1/litellm/usage/by-user', params);
+}
+
+/** 趋势数据响应 */
+export interface TrendResponse {
+  start_date: string;
+  end_date: string;
+  granularity: string;
+  items: Array<{
+    time: string;
+    tokens: number;
+    requests: number;
+    cost: number;
+  }>;
+}
+
+/** 获取使用趋势（普通用户只能看自己） */
+export async function fetchUsageTrend(params: {
+  start_date: string;
+  end_date: string;
+  granularity?: string;
+  user_id?: string;
+}): Promise<TrendResponse> {
+  return get<TrendResponse>('/api/v1/litellm/usage/trend', { ...params, granularity: params.granularity || 'day' });
 }

@@ -141,6 +141,8 @@ class TestFetchModelDetail:
         local.model_name = "gpt-4o"
         local.instance_url = "https://x.example.com/v1"
         local.max_concurrent = None
+        local.inference_engine = "vLLM"
+        local.extra_params = {"grafana_job_name": "vllm-x.example.com:443"}
         local.created_at = None
         local.updated_at = None
         r = _fetch_model_detail(svc, m, local)
@@ -148,6 +150,7 @@ class TestFetchModelDetail:
         assert r["model_info"] == {"id": "hash-123"}
         assert r["id"] == "hash-123"
         assert r["instance_url"] == "https://x.example.com/v1"
+        assert r["grafana_job_name"] == "vllm-x.example.com:443"
 
     async def test_empty_model_name(self, svc):
         """

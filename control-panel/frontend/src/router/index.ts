@@ -33,7 +33,7 @@ router.beforeEach((to) => {
   }
 
   // admin-only routes (by route name): redirect to 403
-  if (to.name && adminOnlyNames.has(to.name) && isLoggedIn && !isAdmin) {
+  if (to.name && adminOnlyNames.has(to.name as string) && isLoggedIn && !isAdmin) {
     return { name: 'forbidden' };
   }
 

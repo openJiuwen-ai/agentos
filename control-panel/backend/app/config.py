@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
     LOG_BACKUP_COUNT: int = 5
 
+    # ── VictoriaMetrics agent metrics config ──
+    AGENT_METRICS_CONFIG_PATH: str = "/etc/vm/agent-metrics.json"
+
     # ── LiteLLM (必须从 .env 读取) ──
     LITELLM_ADMIN_URL: str = ""
     LITELLM_MASTER_KEY: str = ""

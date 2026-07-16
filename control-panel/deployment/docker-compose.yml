@@ -1,0 +1,136 @@
+networks:
+  agentos:
+    name: agentos
+    driver: bridge
+
+services:
+  # =========================================================================
+  # AgentOS Control Panel — frontend + backend + nginx (single container)
+  # =========================================================================
+  agentos:
+    image: agentos-control-panel:latest
+    ports: ["${FRONTEND_PORT:-8080}:80"]
+    environment:
+      # ── Database (auto-constructed from POSTGRES_*) ──
+      AGENTOS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/agentos
+      AGENTOS_JWT_SECRET_KEY: ${AGENTOS_JWT_SECRET_KEY}
+      AGENTOS_ADMIN_USERNAME: ${AGENTOS_ADMIN_USERNAME}
+      AGENTOS_ADMIN_PASSWORD: ${AGENTOS_ADMIN_PASSWORD}
+      LITELLM_ADMIN_URL: http://${LITELLM_HOST:-localhost}:${LITELLM_PORT:-4000}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_KEY_ENCRYPTION_KEY: ${LITELLM_KEY_ENCRYPTION_KEY}
+      LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+    volumes:
+      - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
+    networks:
+      - agentos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # PostgreSQL — shared by AgentOS & LiteLLM
+  # =========================================================================
+  postgres:
+    image: postgres:18.0
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/ensure-agentos-db.sh:/usr/local/bin/ensure-agentos-db.sh:ro
+    entrypoint: ["bash", "/usr/local/bin/ensure-agentos-db.sh"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_USER}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agentos
+    restart: unless-stopped
+
+  # =========================================================================
+  # LiteLLM Proxy
+  # =========================================================================
+  litellm:
+    image: ghcr.io/berriai/litellm-database:v1.91.1
+    ports: ["${LITELLM_PORT:-4000}:4000"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      STORE_MODEL_IN_DB: "True"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config=/app/config.yaml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import urllib.request; urllib.request.urlopen(''http://localhost:4000/health/liveliness'')"',
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - agentos
+    restart: unless-stopped
+
+  # =========================================================================
+  # VictoriaMetrics — scrape targets from agent-metrics.json
+  # =========================================================================
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.135.0
+    ports: ["127.0.0.1:${VICTORIAMETRICS_PORT:-8428}:8428"]
+    volumes:
+      - vm-data:/victoria-metrics-data
+      - ./victoriametrics:/etc/vm:ro
+    command:
+      - -storageDataPath=/victoria-metrics-data
+      - -retentionPeriod=30d
+      - -promscrape.config=/etc/vm/scrape.yml
+      - -promscrape.fileSDCheckInterval=30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agentos
+    restart: unless-stopped
+
+  # =========================================================================
+  # Grafana — dashboards
+  # =========================================================================
+  grafana:
+    image: grafana/grafana:12.4.2
+    depends_on: [victoriametrics]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: "http://localhost:3000/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/victoriametrics.yml:/etc/grafana/provisioning/datasources/victoriametrics.yml:ro
+      - ./grafana/default.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
+      - ./grafana/vllm-perf.json:/var/lib/grafana/dashboards/vllm-perf.json:ro
+      - ./grafana/sglang-perf.json:/var/lib/grafana/dashboards/sglang-perf.json:ro
+    networks:
+      - agentos
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  vm-data:
+  grafana-data:

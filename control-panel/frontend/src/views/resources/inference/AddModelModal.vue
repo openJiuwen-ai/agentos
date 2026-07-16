@@ -12,10 +12,9 @@ interface ModelFormData {
   description: string;
   deployName: string;
   deployFramework: string;
-  serverLocation: string;
   serviceIp: string;
   servicePort: number | null;
-  serviceUrl: string;
+  metricsUrl: string;
 }
 
 const props = defineProps<{
@@ -36,10 +35,9 @@ const defaultFormData: ModelFormData = {
   description: '',
   deployName: '',
   deployFramework: 'vLLM',
-  serverLocation: '',
   serviceIp: '',
   servicePort: null,
-  serviceUrl: '',
+  metricsUrl: '',
 };
 
 const formData = ref<ModelFormData>({ ...defaultFormData });
@@ -129,12 +127,8 @@ function handleSave() {
           <label class="form-label form-label--required">部署框架</label>
           <select v-model="formData.deployFramework" class="form-select">
             <option value="vLLM">vLLM</option>
-            <option value="TGI">TGI</option>
+            <option value="SGLang">SGLang</option>
           </select>
-        </div>
-        <div class="form-group" style="grid-column: span 2">
-          <label class="form-label form-label--required">服务器位置</label>
-          <input v-model="formData.serverLocation" class="form-input" placeholder="请输入服务器位置" />
         </div>
       </div>
     </div>
@@ -155,8 +149,8 @@ function handleSave() {
           <input v-model="formData.servicePort" class="form-input" type="number" placeholder="请输入服务端口" />
         </div>
         <div class="form-group" style="grid-column: span 2">
-          <label class="form-label form-label--required">实时访问URL</label>
-          <input v-model="formData.serviceUrl" class="form-input" placeholder="请输入实时访问URL" />
+          <label class="form-label form-label--required">模型监控URL</label>
+          <input v-model="formData.metricsUrl" class="form-input" placeholder="请输入模型监控URL" />
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElTag, ElDropdown, ElDropdownMenu, ElDropdownItem, ElIcon } from 'element-plus';
-import { Edit, Refresh, Delete, MoreFilled, ArrowUp, ArrowDown } from '@element-plus/icons-vue';
+import { Edit, Refresh, Delete, MoreFilled, Monitor } from '@element-plus/icons-vue';
 
 defineProps<{
   name: string;
@@ -13,6 +13,8 @@ defineProps<{
   todayCalls: string;
   todayTokens: string;
   meta?: string[];
+  contextWindow?: number | null;
+  isAdmin?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -35,7 +37,9 @@ function handleAction(action: string) {
       <div class="model-card__info">
         <div class="model-card__icon">
           <img v-if="iconSrc" :src="iconSrc" :alt="name" class="model-card__icon-img" />
-          <slot v-else name="icon" />
+          <slot v-else name="icon">
+            <el-icon :size="24" color="#6b7280"><Monitor /></el-icon>
+          </slot>
         </div>
         <div>
           <div class="model-card__name-row">
@@ -51,29 +55,15 @@ function handleAction(action: string) {
         {{ statusText }}
       </div>
     </div>
-    <div class="model-card__metrics">
-      <div class="model-metric">
-        <span class="model-metric__label">E2E_P95</span>
-        <span class="model-metric__value">
-          {{ e2eP95 }}<span class="model-metric__unit"> S</span>
-          <span v-if="e2eTrend" class="model-card__trend" :class="e2eTrend.startsWith('-') ? 'trend-down' : 'trend-up'">
-            <el-icon :size="12"><ArrowDown v-if="e2eTrend.startsWith('-')" /><ArrowUp v-else /></el-icon>
-            {{ e2eTrend }}
-          </span>
-        </span>
-      </div>
-      <div class="model-metric">
-        <span class="model-metric__label">今日调用次数</span>
-        <span class="model-metric__value">{{ todayCalls }}<span class="model-metric__unit"> 次</span></span>
-      </div>
-      <div class="model-metric">
-        <span class="model-metric__label">今日 Token 数</span>
-        <span class="model-metric__value">{{ todayTokens }}</span>
+    <div class="model-card__info-section">
+      <div class="model-info-item">
+        <span class="model-info-item__label">上下文长度</span>
+        <span class="model-info-item__value">{{ contextWindow ?? '-' }}</span>
       </div>
     </div>
     <div class="model-card__footer">
       <span v-if="meta?.length" class="model-card__meta">{{ meta.join(' · ') }}</span>
-      <ElDropdown trigger="click" @command="handleAction">
+      <ElDropdown v-if="isAdmin" trigger="click" @command="handleAction">
         <button class="model-card__more" title="更多" @click.stop>
           <el-icon :size="16"><MoreFilled /></el-icon>
         </button>
@@ -194,7 +184,7 @@ function handleAction(action: string) {
   background: #f59e0b;
 }
 
-.model-card__metrics {
+.model-card__info-section {
   display: flex;
   gap: 32px;
   padding: 16px 0;
@@ -213,47 +203,24 @@ function handleAction(action: string) {
   color: var(--text-secondary);
 }
 
-.model-metric {
+.model-info-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.model-metric__label {
+.model-info-item__label {
   font-size: 12px;
   color: #6b7280;
 }
 
-.model-metric__value {
+.model-info-item__value {
   font-size: 24px;
   font-weight: 600;
   color: #111827;
   display: flex;
   align-items: baseline;
   gap: 4px;
-}
-
-.model-metric__unit {
-  font-size: 12px;
-  font-weight: 400;
-  color: #6b7280;
-}
-
-.model-card__trend {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  font-weight: 500;
-  margin-left: 8px;
-}
-
-.trend-down {
-  color: #22c55e;
-}
-
-.trend-up {
-  color: #ef4444;
 }
 
 .model-card__more {

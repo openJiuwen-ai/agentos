@@ -2,17 +2,34 @@
 import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElInput, ElIcon, ElMessageBox } from 'element-plus';
-import { Search, Plus, ArrowUp, ArrowRight } from '@element-plus/icons-vue';
+import { Search, Plus, ArrowRight } from '@element-plus/icons-vue';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
-import { fetchModelList, fetchModelDetail, createModel, deleteModel, restartModel } from '@/api/inference';
-import type { InferenceModelItem, ModelDetail } from '@/api/inference';
+import { fetchModelList, fetchModelDetail, createModel, updateModel, deleteModel, restartModel, fetchUsageOverview, fetchUserUsage } from '@/api/inference';
+import type { ModelDetail, UsageOverviewResponse, UserUsageDetailResponse } from '@/api/inference';
 import { ElMessage } from 'element-plus';
+import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
+const { isAdmin, userId } = useAuth();
 const loading = ref(false);
-const models = ref<InferenceModelItem[]>([]);
+
+interface ModelCardData {
+  id: string;
+  name: string;
+  status: 'success' | 'error' | 'warning';
+  statusText: string;
+  tags: string[];
+  e2eP95: string;
+  todayCalls: string;
+  todayTokens: string;
+  meta: string[];
+  iconSrc: undefined;
+  contextWindow?: number | null;
+}
+
+const models = ref<ModelCardData[]>([]);
 const activeFilter = ref('all');
 const searchQuery = ref('');
 const showAddModal = ref(false);
@@ -21,16 +38,109 @@ const drawerMode = ref<'view' | 'edit'>('view');
 const selectedModel = ref<ModelDetail | null>(null);
 
 const filters = [
-  { key: 'all', label: '全部状态' },
-  { key: 'healthy', label: '健康' },
-  { key: 'error', label: '异常' },
-  { key: 'offline', label: '离线' },
+  { key: 'all', label: '全部模型' },
 ];
+
+// 调用概览数据
+const overviewData = ref({
+  today: { requests: 0, tokens: 0 },
+  week: { requests: 0, tokens: 0 },
+  total: { requests: 0, tokens: 0 },
+});
+const overviewError = ref('');
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getDateRange(days: number | string): { start_date: string; end_date: string } {
+  const end = new Date();
+  const start = typeof days === 'string' ? new Date(days) : new Date();
+  if (typeof days === 'number') {
+    start.setDate(end.getDate() - days);
+  }
+  return { start_date: formatDate(start), end_date: formatDate(end) };
+}
+
+function calculateTotals(data: UsageOverviewResponse) {
+  return (data.users ?? []).reduce(
+    (acc, user) => ({
+      requests: acc.requests + user.total_requests,
+      tokens: acc.tokens + user.total_tokens,
+    }),
+    { requests: 0, tokens: 0 }
+  );
+}
+
+function calculateUserTotals(data: UserUsageDetailResponse) {
+  return (data.daily_activity ?? []).reduce(
+    (acc, day) => ({
+      requests: acc.requests + day.requests,
+      tokens: acc.tokens + day.tokens,
+    }),
+    { requests: 0, tokens: 0 }
+  );
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return (tokens / 1_000_000).toFixed(2) + 'M';
+  }
+  if (tokens >= 1_000) {
+    return (tokens / 1_000).toFixed(1) + 'K';
+  }
+  return tokens.toString();
+}
+
+async function loadOverviewData() {
+  overviewError.value = '';
+  try {
+    if (isAdmin.value) {
+      // 管理员：使用 /overview 接口获取所有用户数据
+      const [todayRes, weekRes, totalRes] = await Promise.all([
+        fetchUsageOverview(getDateRange(0)),
+        fetchUsageOverview(getDateRange(7)),
+        fetchUsageOverview(getDateRange('2000-01-01')),
+      ]);
+
+      overviewData.value = {
+        today: calculateTotals(todayRes),
+        week: calculateTotals(weekRes),
+        total: calculateTotals(totalRes),
+      };
+    } else {
+      // 普通用户：使用 /user 接口获取自己的数据
+      const uid = userId.value;
+      if (!uid) {
+        overviewError.value = '无法获取用户信息';
+        return;
+      }
+
+      const [todayRes, weekRes, totalRes] = await Promise.all([
+        fetchUserUsage({ user_id: uid, ...getDateRange(0) }),
+        fetchUserUsage({ user_id: uid, ...getDateRange(7) }),
+        fetchUserUsage({ user_id: uid, ...getDateRange('2000-01-01') }),
+      ]);
+
+      overviewData.value = {
+        today: calculateUserTotals(todayRes),
+        week: calculateUserTotals(weekRes),
+        total: calculateUserTotals(totalRes),
+      };
+    }
+  } catch (e) {
+    console.error('加载调用概览数据失败:', e);
+    overviewError.value = e instanceof Error ? e.message : '加载调用概览数据失败';
+  }
+}
 
 async function loadModels() {
   loading.value = true;
   try {
-    const data = await fetchModelList({ status: activeFilter.value, keyword: searchQuery.value });
+    const data = await fetchModelList({ keyword: searchQuery.value });
     // 将后端数据转换为ModelCard期望的格式
     models.value = data.items.map(item => ({
       id: item.id,
@@ -43,6 +153,7 @@ async function loadModels() {
       todayTokens: '--',
       meta: [item.litellm_params.model],
       iconSrc: undefined,
+      contextWindow: item.model_info?.context_window,
     }));
   } catch (e) { console.error('加载模型列表失败:', e); } finally { loading.value = false; }
 }
@@ -64,10 +175,31 @@ async function handleDeleteModel(id: string) {
     }
   }
 }
-async function handleEditModel(id: string) { try { selectedModel.value = await fetchModelDetail(id); drawerMode.value = 'edit'; drawerVisible.value = true; } catch (e) { console.error(e); } }
+async function handleEditModel(id: string) {
+  try {
+    selectedModel.value = await fetchModelDetail(id);
+    drawerMode.value = 'edit';
+    drawerVisible.value = true;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function handleSaveModel(data: Partial<ModelDetail>) {
+  if (!selectedModel.value) return;
+  try {
+    await updateModel(selectedModel.value.id, data);
+    ElMessage.success('保存成功');
+    drawerVisible.value = false;
+    await loadModels();
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e instanceof Error ? e.message : '未知错误'));
+  }
+}
+
 async function handleRestartModel(id: string) { try { await restartModel(id); await loadModels(); } catch (e) { console.error(e); } }
 
-async function handleAddModel(formData: { name: string; type: string; contextLength: number | null; deployName: string; deployFramework: string; serverLocation: string; serviceIp: string; servicePort: number | null; serviceUrl: string; paramSize?: string; tags?: string; description?: string }) {
+async function handleAddModel(formData: { name: string; type: string; contextLength: number | null; deployName: string; deployFramework: string; serviceIp: string; servicePort: number | null; metricsUrl: string; paramSize?: string; tags?: string; description?: string }) {
   // 必填项验证
   if (!formData.name?.trim()) {
     ElMessage.warning('请输入模型名称');
@@ -77,22 +209,28 @@ async function handleAddModel(formData: { name: string; type: string; contextLen
     ElMessage.warning('请输入部署模型名称');
     return;
   }
-  if (!formData.serviceUrl?.trim()) {
-    ElMessage.warning('请输入服务URL');
+  if (!formData.serviceIp?.trim()) {
+    ElMessage.warning('请输入服务IP地址');
+    return;
+  }
+  if (!formData.servicePort) {
+    ElMessage.warning('请输入服务端口');
     return;
   }
 
   try {
     // 默认使用openai前缀
     const modelIdentifier = `openai/${formData.deployName}`;
-    
+    const serviceUrl = `http://${formData.serviceIp}:${formData.servicePort}`;
+
     await createModel({
       model_name: formData.name,
       litellm_params: {
         model: modelIdentifier,
-        api_base: formData.serviceUrl || undefined,
+        api_base: serviceUrl,
       },
-      instance_url: formData.serviceUrl ? `${formData.serviceIp}:${formData.servicePort}` : undefined,
+      instance_url: formData.metricsUrl || undefined,
+      inference_engine: formData.deployFramework || undefined,
     });
     ElMessage.success('模型创建成功');
     showAddModal.value = false;
@@ -103,7 +241,7 @@ async function handleAddModel(formData: { name: string; type: string; contextLen
 }
 
 watch([activeFilter, searchQuery], () => { loadModels(); });
-onMounted(() => { loadModels(); });
+onMounted(() => { loadModels(); loadOverviewData(); });
 </script>
 
 <template>
@@ -116,22 +254,23 @@ onMounted(() => { loadModels(); });
         <div class="overview-card__title"><span>调用概览</span></div>
         <button class="overview-card__detail" @click="router.push({ name: 'inference-model-call-analysis' })">查看详情 <el-icon :size="14"><ArrowRight /></el-icon></button>
       </div>
-      <div class="overview-card__content">
+      <div v-if="overviewError" class="overview-card__error">加载失败: {{ overviewError }}</div>
+      <div v-else class="overview-card__content">
         <div class="overview-card__section">
           <div class="overview-card__section-header"><span>调用次数</span></div>
           <div class="overview-card__metrics">
-            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">128<span class="overview-card__metric-unit">次</span></span><span class="overview-card__trend"><el-icon :size="12"><ArrowUp /></el-icon> +22%</span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">846<span class="overview-card__metric-unit">次</span></span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">12,436<span class="overview-card__metric-unit">次</span></span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">{{ overviewData.today.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">{{ overviewData.week.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">{{ overviewData.total.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
           </div>
         </div>
         <div class="overview-card__divider"></div>
         <div class="overview-card__section">
           <div class="overview-card__section-header"><span>Token数</span></div>
           <div class="overview-card__metrics">
-            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">279.1K</span><span class="overview-card__trend"><el-icon :size="12"><ArrowUp /></el-icon> +22%</span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">1.92M</span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">28.58M</span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.today.tokens) }}</span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.week.tokens) }}</span></div>
+            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.total.tokens) }}</span></div>
           </div>
         </div>
       </div>
@@ -150,12 +289,12 @@ onMounted(() => { loadModels(); });
         <ElInput v-model="searchQuery" placeholder="请输入搜索内容" :prefix-icon="Search" clearable style="width: 240px" />
       </div>
       <div class="model-grid">
-        <ModelCard v-for="model in models" :key="model.id" v-bind="model" :icon-src="model.iconSrc" @click="goToModel(model.id)" @delete="handleDeleteModel(model.id)" @edit="handleEditModel(model.id)" @restart="handleRestartModel(model.id)" />
+        <ModelCard v-for="model in models" :key="model.id" v-bind="model" :icon-src="model.iconSrc" :is-admin="isAdmin" @click="goToModel(model.id)" @delete="handleDeleteModel(model.id)" @edit="handleEditModel(model.id)" @restart="handleRestartModel(model.id)" />
       </div>
     </div>
 
     <AddModelModal :visible="showAddModal" @close="showAddModal = false" @save="handleAddModel" />
-    <ModelInfoDrawer :visible="drawerVisible" :mode="drawerMode" :model="selectedModel" @close="drawerVisible = false" @edit="drawerMode = 'edit'" @save="() => { drawerVisible = false; loadModels(); }" @export="() => {}" />
+    <ModelInfoDrawer :visible="drawerVisible" :mode="drawerMode" :model="selectedModel" @close="drawerVisible = false" @edit="drawerMode = 'edit'" @save="handleSaveModel" @export="() => {}" />
   </section>
 </template>
 
@@ -176,7 +315,7 @@ onMounted(() => { loadModels(); });
 .overview-card__metric-label { font-size: 12px; color: #9ca3af; }
 .overview-card__metric-value { font-size: 24px; font-weight: 600; color: #111827; }
 .overview-card__metric-unit { font-size: 12px; font-weight: 400; color: #6b7280; margin-left: 2px; }
-.overview-card__trend { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 500; color: #22c55e; margin-top: 4px; }
+.overview-card__error { padding: 16px; color: #dc2626; font-size: 14px; }
 .model-section__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .model-section__toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; }
 .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 28px; }

@@ -107,9 +107,14 @@ class LitellmModelParams(Base):
             created_at=now,
             updated_at=now,
         )
+        _ex_name = literal_column("excluded.model_name")
         stmt = stmt.on_conflict_do_update(
             index_elements=["id"],
             set_={
+                "model_name": case(
+                    (_ex_name.isnot(None), _ex_name),
+                    else_=LitellmModelParams.model_name,
+                ),
                 "instance_url": case(
                     (_ex_url.isnot(None), _ex_url),
                     else_=LitellmModelParams.instance_url,

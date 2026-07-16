@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { ElMessage } from 'element-plus';
 import {
   getUsers,
   batchCreateUsers,
@@ -254,7 +255,7 @@ function handleJump() {
     <div class="page-header">
       <h1 class="page-title">用户管理</h1>
       <div class="page-actions">
-        <button class="btn btn--secondary" @click="alert('批量管理功能开发中')">批量管理</button>
+        <button class="btn btn--secondary" @click="ElMessage.info('批量管理功能开发中')">批量管理</button>
         <button class="btn btn--primary" @click="openBatchModal">新增用户</button>
       </div>
     </div>

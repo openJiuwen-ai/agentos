@@ -79,6 +79,7 @@ class ModelCreate(BaseModel):
 class ModelUpdate(BaseModel):
     """更新模型请求"""
 
+    model_name: str | None = Field(None, description="模型名称")
     litellm_params: LitellmParams = Field(..., description="LiteLLM 模型参数")
     model_info: ModelInfo | None = Field(None, description="模型信息")
     instance_url: str | None = Field(
@@ -106,6 +107,7 @@ class ModelItem(BaseModel):
     instance_url: str | None = None
     max_concurrent: int | None = None
     inference_engine: str | None = None
+    grafana_job_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -127,6 +129,7 @@ class ModelCreated(BaseModel):
     instance_url: str | None = None
     max_concurrent: int | None = None
     inference_engine: str | None = None
+    grafana_job_name: str | None = None
     created_at: datetime | None = None
 
 
@@ -138,6 +141,7 @@ class ModelUpdated(BaseModel):
     instance_url: str | None = None
     max_concurrent: int | None = None
     inference_engine: str | None = None
+    grafana_job_name: str | None = None
     updated_at: datetime | None = None
 
 

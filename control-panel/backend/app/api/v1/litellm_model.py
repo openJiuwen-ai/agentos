@@ -5,6 +5,7 @@
 认证：使用 IAM ``require_admin``（JWT 验证 + 角色检查）。
 """
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,6 +32,8 @@ from app.schemas.litellm import (
     ModelCreated,
     OkResult,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/litellm/model", tags=["模型管理"])
 
@@ -144,10 +147,17 @@ async def update_model(
     svc: LitellmService = Depends(get_litellm_svc),
     _admin: TokenData = Depends(require_admin),
 ):
+    logger.info("Updating model: %s", model_id)
+    logger.info("Request body litellm_params: %s", body.litellm_params.model_dump())
+    logger.info("Request body model_info: %s", body.model_info.model_dump() if body.model_info else None)
+    logger.info("Request body instance_url: %s", body.instance_url)
+    logger.info("Request body max_concurrent: %s", body.max_concurrent)
+    logger.info("Request body inference_engine: %s", body.inference_engine)
     try:
         data = await svc.update_model(
             db,
             model_id=model_id,
+            model_name=body.model_name,
             litellm_params=body.litellm_params.model_dump(),
             extras=UpdateModelExtras(
                 model_info=body.model_info.model_dump() if body.model_info else None,

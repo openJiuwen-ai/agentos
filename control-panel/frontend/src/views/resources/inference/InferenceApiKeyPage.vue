@@ -57,12 +57,22 @@ async function handleDeleteKey(key_alias: string) {
 }
 
 // 复制Key
-function copyKey(key: string) {
-  navigator.clipboard.writeText(key).then(() => {
+async function copyKey(key: string) {
+  try {
+    await navigator.clipboard.writeText(key);
     ElMessage.success('已复制到剪贴板');
-  }).catch(() => {
-    ElMessage.error('复制失败');
-  });
+  } catch {
+    // fallback for non-secure contexts
+    const ta = document.createElement('textarea');
+    ta.value = key;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    ElMessage.success('已复制到剪贴板');
+  }
 }
 
 // 打开新建弹窗

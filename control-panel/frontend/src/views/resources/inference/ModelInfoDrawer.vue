@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { ElDrawer, ElTag, ElIcon } from 'element-plus';
+import { ElDrawer, ElIcon } from 'element-plus';
 import { ArrowDown, CopyDocument, Monitor } from '@element-plus/icons-vue';
 import ModelInfoRow from './ModelInfoRow.vue';
 import type { ModelDetail } from '@/api/inference';
@@ -18,12 +18,88 @@ const emit = defineEmits<{
   export: [];
 }>();
 
-const formData = ref({ ...props.model });
+interface FormData {
+  id: string;
+  model_name: string;
+  deployName: string;
+  deployFramework: string;
+  litellm_params: {
+    model: string;
+    api_base: string;
+    api_key?: string;
+    [key: string]: unknown;
+  };
+  model_info: {
+    id: string;
+    description: string;
+    context_window: number | null;
+    [key: string]: unknown;
+  };
+  instance_url?: string;
+  max_concurrent?: number;
+  inference_engine?: string;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+// 从litellm_params.model中解析出部署模型名称（去掉provider前缀）
+function parseDeployName(model: string): string {
+  if (!model) return '';
+  const slashIndex = model.indexOf('/');
+  return slashIndex >= 0 ? model.substring(slashIndex + 1) : model;
+}
+
+const formData = ref<FormData>({
+  id: props.model?.id ?? '',
+  model_name: props.model?.model_name ?? '',
+  deployName: parseDeployName(props.model?.litellm_params?.model ?? ''),
+  deployFramework: props.model?.inference_engine ?? 'vLLM',
+  model_info: {
+    ...props.model?.model_info,
+    id: props.model?.model_info?.id ?? props.model?.id ?? '',
+    description: props.model?.model_info?.description ?? '',
+    context_window: props.model?.model_info?.context_window ?? null,
+  },
+  litellm_params: {
+    ...props.model?.litellm_params,
+    model: props.model?.litellm_params?.model ?? '',
+    api_base: props.model?.litellm_params?.api_base ?? '',
+  },
+  instance_url: props.model?.instance_url,
+  max_concurrent: props.model?.max_concurrent,
+  inference_engine: props.model?.inference_engine,
+  created_at: props.model?.created_at,
+  updated_at: props.model?.updated_at,
+});
 
 watch(
   () => props.model,
   (val) => {
-    if (val) formData.value = { ...val };
+    if (val) {
+      formData.value = {
+        id: val.id,
+        model_name: val.model_name,
+        deployName: parseDeployName(val.litellm_params?.model ?? ''),
+        deployFramework: val.inference_engine ?? 'vLLM',
+        model_info: {
+          ...val.model_info,
+          id: val.model_info?.id ?? val.id,
+          description: val.model_info?.description ?? '',
+          context_window: val.model_info?.context_window ?? null,
+        },
+        litellm_params: {
+          ...val.litellm_params,
+          model: val.litellm_params?.model ?? '',
+          api_base: val.litellm_params?.api_base ?? '',
+        },
+        instance_url: val.instance_url,
+        max_concurrent: val.max_concurrent,
+        inference_engine: val.inference_engine,
+        created_at: val.created_at,
+        updated_at: val.updated_at,
+      };
+    }
   },
   { immediate: true },
 );
@@ -42,6 +118,28 @@ function copyModelName() {
   if (props.model?.model_name) {
     navigator.clipboard.writeText(props.model.model_name);
   }
+}
+
+function handleSave() {
+  // 根据部署模型名称和部署框架构建model字段
+  const modelIdentifier = `openai/${formData.value.deployName}`;
+
+  const saveData: Partial<ModelDetail> = {
+    model_name: formData.value.model_name,
+    litellm_params: {
+      model: modelIdentifier,
+      api_base: formData.value.litellm_params.api_base,
+    },
+    model_info: {
+      id: formData.value.model_info.id,
+      description: formData.value.model_info.description,
+      context_window: formData.value.model_info.context_window,
+    } as any,
+    instance_url: formData.value.instance_url,
+    max_concurrent: formData.value.max_concurrent,
+    inference_engine: formData.value.deployFramework,
+  };
+  emit('save', saveData);
 }
 </script>
 
@@ -66,14 +164,14 @@ function copyModelName() {
           <ModelInfoRow label="模型名称" :value="model.model_name" />
           <ModelInfoRow label="模型类型" :value="model.litellm_params?.model" />
           <ModelInfoRow label="API Base" :value="model.litellm_params?.api_base" />
+          <ModelInfoRow label="模型描述" :value="model.model_info?.description" />
         </div>
       </div>
 
       <div class="info-section">
         <h3 class="info-section__title">服务信息</h3>
         <div class="info-grid">
-          <ModelInfoRow label="实例URL" :value="model.instance_url" />
-          <ModelInfoRow label="最大并发数" :value="model.max_concurrent?.toString()" />
+          <ModelInfoRow label="模型监控URL" :value="model.instance_url" />
           <ModelInfoRow label="创建时间" :value="model.created_at" />
           <ModelInfoRow label="更新时间" :value="model.updated_at" />
         </div>
@@ -93,12 +191,37 @@ function copyModelName() {
             <input v-model="formData.model_name" class="form-input" />
           </div>
           <div class="form-group">
-            <label class="form-label">模型类型</label>
-            <input v-model="formData.litellm_params.model" class="form-input" />
+            <label class="form-label form-label--required">部署模型名称</label>
+            <input v-model="formData.deployName" class="form-input" placeholder="例如: gpt-4" />
+            <span class="form-hint">仅支持Openai API格式，模型名将自动添加前缀: openai/</span>
           </div>
           <div class="form-group">
             <label class="form-label">API Base</label>
-            <input v-model="formData.litellm_params.api_base" class="form-input" />
+            <input v-model="formData.litellm_params.api_base" class="form-input" placeholder="例如: http://localhost:8000" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">上下文长度</label>
+            <input v-model="formData.model_info.context_window" class="form-input" type="number" placeholder="例如: 4096" />
+          </div>
+          <div class="form-group" style="grid-column: span 2">
+            <label class="form-label">模型描述</label>
+            <textarea v-model="formData.model_info.description" class="form-textarea" placeholder="简要描述该模型的用途和特点..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
+          <el-icon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+          部署信息
+        </h3>
+        <div v-show="sections.deploy" class="form-grid">
+          <div class="form-group">
+            <label class="form-label form-label--required">部署框架</label>
+            <select v-model="formData.deployFramework" class="form-select">
+              <option value="vLLM">vLLM</option>
+              <option value="SGLang">SGLang</option>
+            </select>
           </div>
         </div>
       </div>
@@ -110,12 +233,8 @@ function copyModelName() {
         </h3>
         <div v-show="sections.service" class="form-grid">
           <div class="form-group">
-            <label class="form-label">实例URL</label>
-            <input v-model="formData.instance_url" class="form-input" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">最大并发数</label>
-            <input v-model="formData.max_concurrent" class="form-input" type="number" />
+            <label class="form-label">模型监控URL</label>
+            <input v-model="formData.instance_url" class="form-input" placeholder="请输入模型监控URL" />
           </div>
         </div>
       </div>
@@ -128,7 +247,7 @@ function copyModelName() {
       </template>
       <template v-else>
         <button class="btn" @click="emit('close')">取消</button>
-        <button class="btn btn--primary" @click="emit('save', formData)">保存更改</button>
+        <button class="btn btn--primary" @click="handleSave">保存更改</button>
       </template>
     </template>
   </ElDrawer>

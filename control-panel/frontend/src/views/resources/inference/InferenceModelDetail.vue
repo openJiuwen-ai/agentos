@@ -4,11 +4,9 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElTag, ElSkeleton, ElResult, ElButton, ElIcon } from 'element-plus';
 import { ArrowLeft, Monitor } from '@element-plus/icons-vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
-import ChartCard from './ChartCard.vue';
-import MetricDisplay from './MetricDisplay.vue';
-import DataTable from './DataTable.vue';
 import { fetchModelDetail, updateModel } from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
+import PerformanceMonitor from '@/views/resources/inference-model/PerformanceMonitor.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -18,48 +16,21 @@ const error = ref<string | null>(null);
 const modelData = ref<ModelDetail | null>(null);
 const drawerVisible = ref(false);
 const drawerMode = ref<'view' | 'edit'>('view');
-const activeTimeFilter = ref('12h');
-
-const timeFilters = [
-  { key: '12h', label: '近12小时' },
-  { key: '24h', label: '近24小时' },
-  { key: '7d', label: '近7天' },
-  { key: '30d', label: '近30天' },
-];
 
 const metadata = computed(() => {
   if (!modelData.value) return [];
   const d = modelData.value;
   return [
-    { label: '模型名称', value: d.model_name || '--' },
-    { label: '模型类型', value: d.litellm_params?.model || '--' },
-    { label: 'API Base', value: d.litellm_params?.api_base || '--' },
-    { label: '实例URL', value: d.instance_url || '--' },
-    { label: '最大并发数', value: d.max_concurrent?.toString() || '--' },
-    { label: '创建时间', value: d.created_at || '--' },
-    { label: '更新时间', value: d.updated_at || '--' },
+    { label: '模型名称', value: d.model_name || '--', isTag: false },
+    { label: '模型类型', value: d.litellm_params?.model || '--', isTag: false },
+    { label: 'API Base', value: d.litellm_params?.api_base || '--', isTag: false },
+    { label: '部署框架', value: d.inference_engine || '--', isTag: false },
+    { label: '模型描述', value: d.model_info?.description || '--', isTag: false },
+    { label: '模型监控URL', value: d.instance_url || '--', isTag: false },
+    { label: '创建时间', value: d.created_at || '--', isTag: false },
+    { label: '更新时间', value: d.updated_at || '--', isTag: false },
   ];
 });
-
-const tokenRateColumns = [
-  { key: 'name', label: '数据名称', color: '#2563eb' },
-  { key: 'avg', label: '平均值' },
-  { key: 'max', label: '最大值' },
-  { key: 'min', label: '最小值' },
-];
-
-const tokenRateData = [
-  { name: '输入token速率', avg: '18.6', max: '4,820', min: '320' },
-  { name: '输出token速率', avg: '672', max: '2,140', min: '96', color: '#22c55e' },
-];
-
-const requestRateData = [
-  { name: '请求速率', avg: '18.6', max: '4,820', min: '320' },
-];
-
-const kvCacheData = [
-  { name: 'KV Cache使用率', avg: '63.5%', max: '88.4%', min: '28.6%' },
-];
 
 async function loadModelDetail() {
   const id = route.params.id as string;
@@ -84,10 +55,10 @@ function goBack() {
   router.push({ name: 'inference-model-dashboard' });
 }
 
-async function handleSave(data: Partial<ModelDetail>) {
+async function handleSave(data: Partial<ModelDetail> | Record<string, unknown>) {
   const id = route.params.id as string;
   try {
-    await updateModel(id, data);
+    await updateModel(id, data as Partial<ModelDetail>);
     await loadModelDetail();
     drawerVisible.value = false;
   } catch (e) {
@@ -127,61 +98,10 @@ onMounted(() => { loadModelDetail(); });
           <span v-else class="metadata-item__value">{{ item.value }}</span>
         </div>
       </div>
-
-      <div class="performance-section">
-        <div class="performance-header">
-          <h2 style="margin: 0; font-size: 18px; font-weight: 600">性能监控</h2>
-          <div class="time-filter">
-            <button v-for="f in timeFilters" :key="f.key" class="filter-tab" :class="{ 'filter-tab--active': activeTimeFilter === f.key }" @click="activeTimeFilter = f.key">{{ f.label }}</button>
-          </div>
-        </div>
-        <div class="charts-grid">
-          <ChartCard title="Token速率">
-            <div class="chart-metrics">
-              <MetricDisplay label="输入Token速率" value="19,080" unit="Token/s" trend="+46%" trend-label="较5分钟前" trend-type="up" />
-              <MetricDisplay label="输出Token速率" value="19,080" unit="Token/s" trend="+28%" trend-label="较5分钟前" trend-type="up" />
-            </div>
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-            <DataTable :columns="tokenRateColumns" :data="tokenRateData" />
-          </ChartCard>
-
-          <ChartCard title="请求速率">
-            <MetricDisplay label="当前值" value="18.6" unit="request/s" trend="+22.4%" trend-label="较5分钟前" trend-type="up" />
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-            <DataTable :columns="tokenRateColumns" :data="requestRateData" />
-          </ChartCard>
-
-          <ChartCard title="KV Cache使用率">
-            <MetricDisplay label="当前值" value="76.8" unit="%" trend="+22.4%" trend-label="较5分钟前" trend-type="up" />
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-            <DataTable :columns="tokenRateColumns" :data="kvCacheData" />
-          </ChartCard>
-
-          <ChartCard title="首Token时延_TTFT">
-            <div class="chart-metrics">
-              <MetricDisplay label="TTFT_P95" value="720" unit="ms" trend="-10.0%" trend-label="较阈值基线" trend-type="down" />
-              <MetricDisplay label="TTFT_P99" value="1,080" unit="ms" trend="-10.0%" trend-label="较阈值基线" trend-type="down" />
-            </div>
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-          </ChartCard>
-
-          <ChartCard title="Token生成时延_TPOT">
-            <div class="chart-metrics">
-              <MetricDisplay label="TPOT_P95" value="42" unit="ms/token" trend="+16.7%" trend-label="较阈值基线" trend-type="up" />
-              <MetricDisplay label="TPOT_P99" value="61" unit="ms/token" trend="+17.3%" trend-label="较阈值基线" trend-type="up" />
-            </div>
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-          </ChartCard>
-
-          <ChartCard title="端到端时延_E2E Latency">
-            <div class="chart-metrics">
-              <MetricDisplay label="E2E_P95" value="5.4" unit="s" trend="-10.0%" trend-label="较阈值基线" trend-type="down" />
-              <MetricDisplay label="E2E_P99" value="9.2" unit="s" trend="-8.0%" trend-label="较阈值基线" trend-type="down" />
-            </div>
-            <iframe width="100%" height="120" frameborder="0" style="background: #f3f4f6; border-radius: 8px;" />
-          </ChartCard>
-        </div>
-      </div>
+      <PerformanceMonitor
+        :inference-engine="modelData.inference_engine"
+        :grafana-job-name="modelData.grafana_job_name"
+      />
     </template>
 
     <ModelInfoDrawer :visible="drawerVisible" :mode="drawerMode" :model="modelData" @close="drawerVisible = false" @edit="drawerMode = 'edit'" @save="handleSave" @export="() => {}" />

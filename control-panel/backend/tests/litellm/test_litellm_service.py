@@ -14,6 +14,48 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+
+@pytest.fixture(autouse=True)
+def _mock_agent_metrics_sync(monkeypatch: pytest.MonkeyPatch):
+    """避免 CRUD 测试写入真实 agent-metrics.json。"""
+
+    async def fake_create(model_name, instance_url, inference_engine=None):
+        if not instance_url:
+            return None
+        desc = (inference_engine or model_name).lower()
+        return {
+            "grafana_job_name": f"{desc}-metrics-target",
+        }
+
+    async def fake_update(
+        model_name, local, instance_url, inference_engine=None,
+    ):
+        effective_url = instance_url or (local.instance_url if local else None)
+        if not effective_url:
+            return None
+        desc = (
+            inference_engine
+            or (local.inference_engine if local else None)
+            or model_name
+        ).lower()
+        return {
+            "grafana_job_name": f"{desc}-metrics-target",
+        }
+
+    async def fake_delete(model_name, local):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.litellm_service._sync_metrics_on_create", fake_create,
+    )
+    monkeypatch.setattr(
+        "app.services.litellm_service._sync_metrics_on_update", fake_update,
+    )
+    monkeypatch.setattr(
+        "app.services.litellm_service._sync_metrics_on_delete", fake_delete,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Schema: ModelUpdate
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -253,6 +295,7 @@ class TestServiceCreateModel:
                         model_info={"description": "desc"},
                         instance_url="https://example.com/v1",
                         max_concurrent=5,
+                        inference_engine="vLLM",
                     ),
                 )
 
@@ -260,9 +303,12 @@ class TestServiceCreateModel:
                 assert result["id"] == "uuid-123"
                 assert result["instance_url"] == "https://example.com/v1"
                 assert result["max_concurrent"] == 5
-                # DB upsert 收到正确的 model_id 和 model_name
+                # DB upsert 收到正确的 model_id / model_name 与 agent-metrics 元数据
                 assert mock_upsert.call_args[0][1] == "uuid-123"
                 assert mock_upsert.call_args[0][2] == "test-model"
+                ext = mock_upsert.call_args[0][3]
+                assert ext.extra_params["grafana_job_name"] == "vllm-metrics-target"
+                assert ext.inference_engine == "vLLM"
 
     @pytest.mark.asyncio
     async def test_create_extracts_id_from_model_info(self, svc, mock_db):
@@ -528,7 +574,7 @@ class TestServiceUpdateModel:
                 )
 
             mock_logger.warning.assert_called_once()
-            assert "local DB" in mock_logger.warning.call_args[0][0]
+            assert "agent-metrics" in mock_logger.warning.call_args[0][0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
