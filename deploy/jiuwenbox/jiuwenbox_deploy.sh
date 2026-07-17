@@ -13,7 +13,6 @@ LAST_ENV_FILE="$RUN_DIR/last-start.env"
 DEFAULT_LISTEN="unix:///run/jiuwenbox/jiuwenbox.sock"
 
 PYTHON=""
-SERVER_BIN=""
 PYTHON_CONFIG=""
 
 LISTEN_URI="${JIUWENBOX_LISTEN:-$DEFAULT_LISTEN}"
@@ -34,7 +33,7 @@ Commands:
 
 Global options:
   --python PATH           Python interpreter (default: .venv/bin/python3, else python3)
-                          jiuwenbox-server is resolved from the same bin/ directory
+                          jiuwenbox-server is invoked from PATH
 
 Start options:
   --save-logs DIR         Persist per-sandbox audit JSONL under DIR
@@ -185,7 +184,7 @@ consume_python_option() {
   return 1
 }
 
-resolve_python_and_server_bin() {
+resolve_python() {
   local candidate="${PYTHON_CONFIG:-}"
 
   if [[ -z "$candidate" && -f "$LAST_ENV_FILE" ]]; then
@@ -216,12 +215,75 @@ resolve_python_and_server_bin() {
   if [[ ! -x "$PYTHON" ]]; then
     die "python interpreter is not executable: $PYTHON"
   fi
+}
 
-  SERVER_BIN="$(dirname "$PYTHON")/jiuwenbox-server"
+policy_needs_iptables() {
+  local policy="${POLICY_CONFIG:-}"
+  local resolved=""
+
+  if [[ -z "$policy" ]]; then
+    return 0
+  fi
+
+  if [[ "$policy" = /* && -f "$policy" ]]; then
+    resolved="$policy"
+  elif [[ -f "$CALLER_CWD/$policy" ]]; then
+    resolved="$CALLER_CWD/$policy"
+  elif [[ -f "$SCRIPT_DIR/$policy" ]]; then
+    resolved="$SCRIPT_DIR/$policy"
+  elif [[ -f "$PROJECT_DIR/$policy" ]]; then
+    resolved="$PROJECT_DIR/$policy"
+  fi
+
+  if [[ -z "$resolved" ]]; then
+    return 0
+  fi
+
+  if grep -Eq '^[[:space:]]*mode:[[:space:]]*host[[:space:]]*$' "$resolved"; then
+    return 1
+  fi
+  return 0
+}
+
+check_iptables_backend() {
+  local table="${1:-filter}"
+  local -a probe_args
+  local binary stderr_out
+  local failures=""
+
+  if [[ "$table" == "nat" ]]; then
+    probe_args=(-t nat -L POSTROUTING -n)
+  else
+    probe_args=(-L OUTPUT -n)
+  fi
+
+  for binary in iptables iptables-nft iptables-legacy; do
+    if ! command -v "$binary" >/dev/null 2>&1; then
+      continue
+    fi
+    if "$binary" "${probe_args[@]}" >/dev/null 2>&1; then
+      return 0
+    fi
+    stderr_out="$("$binary" "${probe_args[@]}" 2>&1 | tail -n 1 || true)"
+    failures="${failures}  ${binary}: ${stderr_out}"$'\n'
+  done
+
+  die "$(cat <<EOF
+No working IPv4 iptables ${table} backend (kernel netfilter modules may be missing).
+${failures}Try:
+  sudo modprobe ip_tables iptable_filter iptable_nat nf_nat
+  sudo update-alternatives --set iptables /usr/sbin/iptables-nft
+Or set network.mode: host in your policy if network isolation is not required.
+EOF
+)"
 }
 
 check_prerequisites() {
-  resolve_python_and_server_bin
+  resolve_python
+
+  if ! command -v jiuwenbox-server >/dev/null 2>&1; then
+    die "jiuwenbox-server not found in PATH; install jiuwenswarm first (e.g. pip install jiuwenswarm-*.whl)"
+  fi
 
   local missing=()
   for cmd in bwrap ip; do
@@ -229,13 +291,20 @@ check_prerequisites() {
       missing+=("$cmd")
     fi
   done
-  if ! command -v iptables >/dev/null 2>&1 \
-    && ! command -v iptables-nft >/dev/null 2>&1 \
-    && ! command -v iptables-legacy >/dev/null 2>&1; then
-    missing+=("iptables (or iptables-nft / iptables-legacy)")
+  if policy_needs_iptables; then
+    if ! command -v iptables >/dev/null 2>&1 \
+      && ! command -v iptables-nft >/dev/null 2>&1 \
+      && ! command -v iptables-legacy >/dev/null 2>&1; then
+      missing+=("iptables (or iptables-nft / iptables-legacy)")
+    fi
   fi
   if ((${#missing[@]} > 0)); then
     die "missing required commands: ${missing[*]}"
+  fi
+
+  if policy_needs_iptables; then
+    check_iptables_backend filter
+    check_iptables_backend nat
   fi
 
   local pyver
@@ -358,10 +427,6 @@ cmd_start() {
   parse_start_args "$default_policy" "$@"
   check_prerequisites
 
-  if [[ ! -x "$SERVER_BIN" ]]; then
-    die "jiuwenbox-server not found at $SERVER_BIN; install the package first (e.g. uv sync && uv pip install -e .)"
-  fi
-
   local existing_pid
   existing_pid="$(find_server_pid || true)"
   if [[ -n "$existing_pid" ]]; then
@@ -381,7 +446,7 @@ cmd_start() {
 
   echo "Starting jiuwenbox server:"
   echo "  python:  $PYTHON"
-  echo "  binary:  $SERVER_BIN"
+  echo "  binary:  jiuwenbox-server"
   echo "  listen:  $LISTEN_URI"
   if [[ -n "${POLICY_ABS:-}" ]]; then
     echo "  policy:  $POLICY_ABS"
@@ -394,10 +459,10 @@ cmd_start() {
   echo "  log:     $LOG_FILE"
 
   if [[ "$FOREGROUND" = true ]]; then
-    exec env "${START_ENV[@]}" "$SERVER_BIN" "${server_args[@]}"
+    exec env "${START_ENV[@]}" jiuwenbox-server "${server_args[@]}"
   fi
 
-  nohup env "${START_ENV[@]}" "$SERVER_BIN" "${server_args[@]}" >>"$LOG_FILE" 2>&1 &
+  nohup env "${START_ENV[@]}" jiuwenbox-server "${server_args[@]}" >>"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   write_last_start_env
@@ -444,7 +509,7 @@ cmd_stop() {
 }
 
 jiuwenbox_home_dir() {
-  resolve_python_and_server_bin
+  resolve_python
   "$PYTHON" -c 'import os, pwd; print(pwd.getpwuid(os.geteuid()).pw_dir + "/.jiuwenbox")'
 }
 
