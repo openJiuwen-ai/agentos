@@ -3,6 +3,7 @@ import applianceIcon from '@/assets/icons/appliance.svg';
 import inferenceModelIcon from '@/assets/icons/inference-model.svg';
 import agentIcon from '@/assets/icons/agent.svg';
 import skillStoreIcon from '@/assets/icons/skill-store.svg';
+import alarmIcon from '@/assets/icons/alarm.svg';
 import userManagementIcon from '@/assets/icons/user-management.svg';
 import logCenterIcon from '@/assets/icons/log-center.svg';
 
@@ -60,7 +61,7 @@ export const appRouteTree: AppRouteNode[] = [
             order: 1,
             path: '/resources/inference-model',
             name: 'inference-model-dashboard',
-            component: () => import('@/views/resources/inference/InferenceModelDashboard.vue'),
+            component: () => import('@/views/resources/inference-model/InferenceModelDashboard.vue'),
           },
           {
             key: 'inference-model-api-key',
@@ -68,7 +69,7 @@ export const appRouteTree: AppRouteNode[] = [
             order: 2,
             path: '/resources/inference-model/api-key',
             name: 'inference-model-api-key',
-            component: () => import('@/views/resources/inference/InferenceApiKeyPage.vue'),
+            component: () => import('@/views/resources/inference-model/InferenceApiKeyPage.vue'),
           },
           {
             key: 'inference-model-call-analysis',
@@ -86,7 +87,7 @@ export const appRouteTree: AppRouteNode[] = [
             order: 4,
             path: '/resources/inference-model/:id',
             name: 'inference-model-detail',
-            component: () => import('@/views/resources/inference/InferenceModelDetail.vue'),
+            component: () => import('@/views/resources/inference-model/InferenceModelDetail.vue'),
             hideInMenu: true,
             hideSideMenu: true,
           },
@@ -124,6 +125,15 @@ export const appRouteTree: AppRouteNode[] = [
         name: 'skill-store',
         icon: skillStoreIcon,
         component: () => import('@/views/resources/SkillStorePage.vue'),
+      },
+      {
+        key: 'alarm',
+        label: '告警',
+        order: 5,
+        path: '/resources/alarm',
+        name: 'alarm',
+        icon: alarmIcon,
+        component: () => import('@/views/resources/AlarmPage.vue'),
       },
     ],
   },

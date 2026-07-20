@@ -8,10 +8,15 @@
 
 :root {
   --color-primary: #0067d1;
+  --el-color-primary: #0067d1;
   --text-primary: #191919;
   --text-secondary: #777777;
   --text-muted: #aeaeae;
   --bg-hover: rgb(25 25 25 / 5%);
+  --bg-active: #e6f2fd;
+  --bg-page: #f6f7f7;
+  --bg-side-nav: #ffffff;
+  --bg-top-nav: #ffffff;
   --border-color: #dfdfdf;
 
   /* Status colors */

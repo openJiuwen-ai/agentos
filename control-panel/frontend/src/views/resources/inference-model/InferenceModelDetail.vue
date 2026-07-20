@@ -6,7 +6,7 @@ import { ArrowLeft, Monitor } from '@element-plus/icons-vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
 import { fetchModelDetail, updateModel } from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
-import PerformanceMonitor from '@/views/resources/inference-model/PerformanceMonitor.vue';
+import PerformanceMonitor from './PerformanceMonitor.vue';
 
 const router = useRouter();
 const route = useRoute();

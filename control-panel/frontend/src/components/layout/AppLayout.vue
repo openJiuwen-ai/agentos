@@ -43,8 +43,11 @@ const showSideMenu = computed(() => !route.meta.hideSideMenu && sideMenus.value.
 }
 
 .app-layout__content {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
 }
 </style>

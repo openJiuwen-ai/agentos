@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import {
+  ElMenu,
+  ElMenuItem,
+  ElDropdown,
+  ElDropdownMenu,
+  ElDropdownItem,
+} from 'element-plus';
 import { topMenus } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 import personIcon from '@/assets/icons/person-line.svg';
@@ -13,72 +20,35 @@ const route = useRoute();
 const router = useRouter();
 const { isAdmin, username, userId, role, clearAuth } = useAuth();
 
-const activeTopMenu = computed(() => route.meta.topMenu as string | undefined);
+const activeTopMenu = computed(() => (route.meta.topMenu as string | undefined) ?? '');
 
 const workspace = ref<'admin' | 'user'>(localStorage.getItem('workspace') === 'user' ? 'user' : 'admin');
-const workspaceOpen = ref(false);
-const profileOpen = ref(false);
-const helpOpen = ref(false);
 
 const visibleTopMenus = computed(() =>
-  isAdmin.value
-    ? topMenus
-    : topMenus.filter((m) => !m.adminOnly),
+  isAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly),
 );
 
 const workspaceLabel = computed(() => (workspace.value === 'admin' ? '管理工作台' : '个人工作台'));
 
 function switchWorkspace(mode: 'admin' | 'user') {
   workspace.value = mode;
-  workspaceOpen.value = false;
   localStorage.setItem('workspace', mode);
   router.push({ name: 'overview' });
 }
 
-function openProfile() {
-  profileOpen.value = !profileOpen.value;
-  if (profileOpen.value) {
-    workspaceOpen.value = false;
-    helpOpen.value = false;
-  }
-}
-
 function goToProfile() {
-  profileOpen.value = false;
   router.push({ name: 'profile' });
 }
 
 function handleLogout() {
-  profileOpen.value = false;
   clearAuth();
   router.push({ name: 'login' });
 }
 
-function closeAll() {
-  workspaceOpen.value = false;
-  profileOpen.value = false;
-  helpOpen.value = false;
-}
+function handleTopMenuSelect(key: string) {
+  const menu = visibleTopMenus.value.find((m) => m.key === key);
+  if (!menu) return;
 
-function onDocClick(e: MouseEvent) {
-  const target = e.target as HTMLElement;
-  if (
-    !target.closest('.workspace-switch') &&
-    !target.closest('.profile-menu') &&
-    !target.closest('.help-menu')
-  ) {
-    closeAll();
-  }
-}
-
-onMounted(() => document.addEventListener('click', onDocClick));
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick));
-
-function isActive(key: string) {
-  return activeTopMenu.value === key;
-}
-
-function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   if (menu.routeName) {
     router.push({ name: menu.routeName });
     return;
@@ -88,6 +58,17 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
     router.push({ name: menu.defaultRouteName });
   }
 }
+
+function handleWorkspaceCommand(command: string | number | object) {
+  if (command === 'admin' || command === 'user') {
+    switchWorkspace(command);
+  }
+}
+
+function handleProfileCommand(command: string | number | object) {
+  if (command === 'profile') goToProfile();
+  if (command === 'logout') handleLogout();
+}
 </script>
 
 <template>
@@ -95,86 +76,89 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
     <div class="top-nav__left">
       <img src="/images/logo.png" alt="AgentOS" class="top-nav__logo" />
       <span class="top-nav__brand">AgentOS</span>
-      <div v-if="isAdmin" class="workspace-switch">
-        <button
-          type="button"
-          class="workspace-btn"
-          @click.stop="workspaceOpen = !workspaceOpen"
-        >
+      <ElDropdown v-if="isAdmin" trigger="click" @command="handleWorkspaceCommand">
+        <button type="button" class="workspace-btn">
           <span>{{ workspaceLabel }}</span>
           <img :src="arrowDownLine" alt="" width="10" height="10" />
         </button>
-        <div v-if="workspaceOpen" class="workspace-dropdown">
-          <button
-            type="button"
-            :class="{ 'workspace-dropdown__item--active': workspace === 'admin' }"
-            @click="switchWorkspace('admin')"
-          >
-            管理工作台
-          </button>
-          <button
-            type="button"
-            :class="{ 'workspace-dropdown__item--active': workspace === 'user' }"
-            @click="switchWorkspace('user')"
-          >
-            个人工作台
-          </button>
-        </div>
-      </div>
+        <template #dropdown>
+          <ElDropdownMenu>
+            <ElDropdownItem command="admin" :class="{ 'is-workspace-active': workspace === 'admin' }">
+              管理工作台
+            </ElDropdownItem>
+            <ElDropdownItem command="user" :class="{ 'is-workspace-active': workspace === 'user' }">
+              个人工作台
+            </ElDropdownItem>
+          </ElDropdownMenu>
+        </template>
+      </ElDropdown>
     </div>
-    <nav class="top-nav__menu">
-      <button
-        v-for="menu in visibleTopMenus"
-        :key="menu.key"
-        type="button"
-        class="top-nav__item"
-        :class="{ 'top-nav__item--active': isActive(menu.key) }"
-        @click="handleTopMenuClick(menu)"
-      >
+
+    <ElMenu
+      :key="activeTopMenu"
+      class="top-nav__menu"
+      mode="horizontal"
+      :ellipsis="false"
+      :default-active="activeTopMenu"
+      @select="handleTopMenuSelect"
+    >
+      <ElMenuItem v-for="menu in visibleTopMenus" :key="menu.key" :index="menu.key">
         {{ menu.label }}
-      </button>
-    </nav>
+      </ElMenuItem>
+    </ElMenu>
+
     <div class="top-nav__right">
-      <div class="help-menu">
-        <button class="top-nav__help" title="帮助" @click.stop="helpOpen = !helpOpen">
+      <ElDropdown trigger="click" placement="bottom-end">
+        <button type="button" class="top-nav__icon-btn" title="帮助">
           <img :src="helpIcon" alt="帮助" width="20" height="20" />
         </button>
-        <div v-if="helpOpen" class="help-dropdown">
-          <a class="help-dropdown__item" href="/docs" target="_blank" rel="noopener" @click.prevent>
-            <span class="help-dropdown__icon">📘</span>
-            <span>帮助中心</span>
-          </a>
-          <a class="help-dropdown__item" href="/feedback" target="_blank" rel="noopener" @click.prevent>
-            <span class="help-dropdown__icon">💬</span>
-            <span>反馈问题</span>
-          </a>
-        </div>
-      </div>
-      <div class="profile-menu">
-        <button class="top-nav__profile" title="个人中心" @click.stop="openProfile">
+        <template #dropdown>
+          <ElDropdownMenu>
+            <ElDropdownItem>
+              <span class="help-item">
+                <span class="help-item__icon">📘</span>
+                <span>帮助中心</span>
+              </span>
+            </ElDropdownItem>
+            <ElDropdownItem>
+              <span class="help-item">
+                <span class="help-item__icon">💬</span>
+                <span>反馈问题</span>
+              </span>
+            </ElDropdownItem>
+          </ElDropdownMenu>
+        </template>
+      </ElDropdown>
+
+      <ElDropdown trigger="click" placement="bottom-end" @command="handleProfileCommand">
+        <button type="button" class="top-nav__icon-btn" title="个人中心">
           <img :src="personIcon" alt="个人中心" width="20" height="20" />
         </button>
-        <div v-if="profileOpen" class="profile-dropdown">
-          <button type="button" class="profile-dropdown__header" @click="goToProfile">
-            <img class="profile-dropdown__avatar" src="/images/profile-avatar.png" :alt="username" />
-            <div class="profile-dropdown__info">
-              <div class="profile-dropdown__name-row">
-                <span class="profile-dropdown__name">{{ username || '用户' }}</span>
-                <span v-if="role" class="role-tag" :class="`role-tag--${role}`">
-                  {{ role === 'admin' ? '管理员' : '普通用户' }}
-                </span>
+        <template #dropdown>
+          <ElDropdownMenu class="profile-dropdown-menu">
+            <ElDropdownItem command="profile" class="profile-dropdown-header">
+              <div class="profile-header">
+                <img class="profile-header__avatar" src="/images/profile-avatar.png" :alt="username" />
+                <div class="profile-header__info">
+                  <div class="profile-header__name-row">
+                    <span class="profile-header__name">{{ username || '用户' }}</span>
+                    <span v-if="role" class="role-tag" :class="`role-tag--${role}`">
+                      {{ role === 'admin' ? '管理员' : '普通用户' }}
+                    </span>
+                  </div>
+                  <span v-if="userId" class="profile-header__id">用户ID: {{ userId }}</span>
+                  <span v-else class="profile-header__id profile-header__id--muted">查看个人资料</span>
+                </div>
+                <img class="profile-header__arrow" :src="rightArrow" alt="" aria-hidden="true" />
               </div>
-              <span v-if="userId" class="profile-dropdown__id">用户ID: {{ userId }}</span>
-              <span v-else class="profile-dropdown__id profile-dropdown__id--muted">查看个人资料</span>
-            </div>
-            <img class="profile-dropdown__arrow" :src="rightArrow" alt="" aria-hidden="true" />
-          </button>
-          <button type="button" class="profile-dropdown__item profile-dropdown__item--danger" @click="handleLogout">
-            <span class="profile-dropdown__icon" v-html="logoutIcon" />
-            <span>退出登录</span>
-          </button>
-        </div>
-      </div>
+            </ElDropdownItem>
+            <ElDropdownItem command="logout" divided class="profile-logout">
+              <span class="profile-logout__icon" v-html="logoutIcon" />
+              <span>退出登录</span>
+            </ElDropdownItem>
+          </ElDropdownMenu>
+        </template>
+      </ElDropdown>
     </div>
   </header>
 </template>
@@ -211,13 +195,8 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   white-space: nowrap;
 }
 
-/* workspace switcher */
-.workspace-switch {
-  position: relative;
-}
-
 .workspace-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
@@ -232,45 +211,9 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
 }
 
 .workspace-btn:hover {
-  border-color: #0067d1;
+  border-color: var(--color-primary);
 }
 
-.workspace-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 100;
-  min-width: 118px;
-  padding: 4px 0;
-  background: #ffffff;
-  border: 1px solid #c9c9c9;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.workspace-dropdown button {
-  display: block;
-  width: 100%;
-  padding: 6px 16px;
-  border: none;
-  background: transparent;
-  color: #191919;
-  font-size: 14px;
-  line-height: 22px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.workspace-dropdown button:hover {
-  background: var(--bg-hover);
-}
-
-.workspace-dropdown__item--active {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
-/* right column */
 .top-nav__right {
   display: flex;
   justify-content: flex-end;
@@ -279,12 +222,7 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   justify-self: end;
 }
 
-/* help menu (top right) */
-.help-menu {
-  position: relative;
-}
-
-.top-nav__help {
+.top-nav__icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -296,102 +234,67 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   background: transparent;
   cursor: pointer;
   transition: background-color 0.2s;
+  outline: none;
 }
 
-.top-nav__help:hover {
+.top-nav__icon-btn:hover {
   background: var(--bg-hover);
 }
 
-.help-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 100;
-  min-width: 160px;
-  padding: 4px 0;
-  background: #ffffff;
-  border: 1px solid #dfdfdf;
-  border-radius: 6px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-}
-
-.help-dropdown__item {
+.top-nav__menu {
   display: flex;
   align-items: center;
+  justify-content: center;
+  height: 48px;
+  border-bottom: none;
+  background: transparent;
+}
+
+.top-nav__menu :deep(.el-menu-item) {
+  height: 48px;
+  margin: 0 24px;
+  padding: 12px 0 0;
+  border-bottom: 2px solid transparent !important;
+  color: var(--text-secondary);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.top-nav__menu :deep(.el-menu-item:hover),
+.top-nav__menu :deep(.el-menu-item:focus) {
+  background: transparent !important;
+  color: var(--text-primary);
+}
+
+.top-nav__menu :deep(.el-menu-item.is-active) {
+  background: transparent !important;
+  color: var(--color-primary) !important;
+  border-bottom-color: var(--color-primary) !important;
+  font-weight: 400;
+}
+
+.help-item {
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
-  padding: 8px 14px;
-  color: #191919;
-  font-size: 14px;
-  text-decoration: none;
-  cursor: pointer;
-  transition: background-color 0.15s;
 }
 
-.help-dropdown__item:hover {
-  background: var(--bg-hover);
-}
-
-.help-dropdown__icon {
+.help-item__icon {
   width: 20px;
   text-align: center;
   opacity: 0.7;
 }
 
-/* profile menu (top right) */
-.profile-menu {
-  position: relative;
-}
-
-.top-nav__profile {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.top-nav__profile:hover {
-  background: var(--bg-hover);
-}
-
-.profile-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 100;
-  width: 280px;
-  padding: 4px 0;
-  background: #ffffff;
-  border: 1px solid #dfdfdf;
-  border-radius: 8px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
-}
-
-.profile-dropdown__header {
+.profile-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.15s;
+  width: 248px;
+  padding: 4px 0;
 }
 
-.profile-dropdown__header:hover {
-  background: var(--bg-hover);
-}
-
-.profile-dropdown__avatar {
+.profile-header__avatar {
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -399,7 +302,7 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   flex-shrink: 0;
 }
 
-.profile-dropdown__info {
+.profile-header__info {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -407,19 +310,19 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   min-width: 0;
 }
 
-.profile-dropdown__name-row {
+.profile-header__name-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.profile-dropdown__name {
+.profile-header__name {
   font-size: 15px;
   font-weight: 500;
   color: #191919;
 }
 
-.profile-dropdown__id {
+.profile-header__id {
   font-size: 12px;
   color: #777777;
   overflow: hidden;
@@ -427,21 +330,15 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   white-space: nowrap;
 }
 
-.profile-dropdown__id--muted {
+.profile-header__id--muted {
   font-style: italic;
 }
 
-.profile-dropdown__arrow {
+.profile-header__arrow {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
   opacity: 0.5;
-}
-
-.profile-dropdown__icon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
 }
 
 .role-tag {
@@ -463,77 +360,31 @@ function handleTopMenuClick(menu: (typeof topMenus)[number]) {
   background: #1f55b5;
 }
 
-.profile-dropdown__item {
-  display: flex;
+.profile-logout {
+  color: #e02128 !important;
+}
+
+.profile-logout__icon {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 14px;
-  border: none;
-  background: transparent;
-  color: #191919;
-  font-size: 14px;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.15s;
-  border-top: 1px solid #f3f3f3;
+  margin-right: 8px;
+}
+</style>
+
+<style>
+.is-workspace-active {
+  color: var(--color-primary) !important;
+  font-weight: 500;
 }
 
-.profile-dropdown__item:hover {
-  background: var(--bg-hover);
+.profile-dropdown-menu {
+  width: 280px;
+  padding: 4px 0 !important;
 }
 
-.profile-dropdown__item--danger {
-  color: #e02128;
-}
-
-.profile-dropdown__item--danger:hover {
-  background: #fff5f5;
-}
-
-/* menus */
-.top-nav__menu {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 48px;
-}
-
-.top-nav__item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  min-height: 48px;
-  padding: 12px 0 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 24px;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.top-nav__item:hover {
-  color: var(--text-primary);
-  background: transparent;
-}
-
-.top-nav__item--active {
-  padding-bottom: 2px;
-  color: var(--color-primary);
-  font-weight: 400;
-  background: transparent;
-}
-
-.top-nav__item--active::after {
-  content: '';
-  width: 100%;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--color-primary);
+.profile-dropdown-menu .profile-dropdown-header {
+  padding: 8px 14px !important;
+  height: auto !important;
+  line-height: normal !important;
 }
 </style>

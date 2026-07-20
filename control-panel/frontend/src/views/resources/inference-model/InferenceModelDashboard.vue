@@ -245,7 +245,7 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 </script>
 
 <template>
-  <section class="page">
+  <section class="page inference-dashboard">
     <h1 class="page-title">推理模型</h1>
 
     <!-- Overview Card -->
@@ -277,7 +277,7 @@ onMounted(() => { loadModels(); loadOverviewData(); });
     </div>
 
     <!-- Model Cards -->
-    <div class="card" style="margin-top: 24px">
+    <div class="card model-list-card">
       <div class="model-section__header">
         <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary)">可用推理模型</h2>
         <button class="btn btn--primary" @click="showAddModal = true"><el-icon :size="16"><Plus /></el-icon> 添加模型</button>
@@ -299,7 +299,15 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 </template>
 
 <style scoped>
-.overview-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 20px; margin-top: 20px; }
+.inference-dashboard {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.overview-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 20px; margin-top: 20px; flex-shrink: 0; }
 .overview-card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .overview-card__title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: #111827; }
 .overview-card__detail { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #2563eb; background: none; border: none; cursor: pointer; }
@@ -316,9 +324,26 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 .overview-card__metric-value { font-size: 24px; font-weight: 600; color: #111827; }
 .overview-card__metric-unit { font-size: 12px; font-weight: 400; color: #6b7280; margin-left: 2px; }
 .overview-card__error { padding: 16px; color: #dc2626; font-size: 14px; }
-.model-section__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.model-section__toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; }
-.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 28px; }
+
+.model-list-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 24px;
+}
+
+.model-section__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-shrink: 0; }
+.model-section__toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; flex-shrink: 0; }
+.model-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+  gap: 28px;
+  align-content: start;
+}
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 14px; font-weight: 500; border: 1px solid var(--border-color, #d1d5db); border-radius: 6px; background: #fff; color: var(--text-primary, #1f2937); cursor: pointer; }
 .btn--primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .btn--primary:hover { background: #1d4ed8; }

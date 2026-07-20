@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMenu, ElMenuItem, ElSubMenu } from 'element-plus';
 import { appRouteTree, findSideMenuParentKey, type SideMenuItem } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 
@@ -23,62 +24,67 @@ const visibleMenus = computed(() =>
         })),
 );
 
-const expandedKeys = ref<string[]>([]);
+const openedKeys = ref<string[]>([]);
+const menuKey = ref(0);
 
-const activeRouteName = computed(() => route.name);
+const activeIndex = computed(() => {
+  const name = route.name;
+  if (typeof name !== 'string') return '';
 
-function isExpanded(key: string) {
-  return expandedKeys.value.includes(key);
-}
-
-function isActiveRoute(routeName: SideMenuItem['routeName']) {
-  return routeName != null && activeRouteName.value === routeName;
-}
-
-function isGroupActive(item: SideMenuItem) {
-  if (item.routeName && isActiveRoute(item.routeName)) {
-    return true;
+  for (const item of visibleMenus.value) {
+    if (item.routeName === name) return item.key;
+    const child = item.children?.find((c) => c.routeName === name);
+    if (child) return child.key;
   }
+  return '';
+});
 
-  return item.children?.some((child) => isActiveRoute(child.routeName)) ?? false;
+function iconMaskStyle(icon?: string) {
+  if (!icon) return undefined;
+  return {
+    maskImage: `url(${icon})`,
+    WebkitMaskImage: `url(${icon})`,
+  };
 }
 
-function toggleExpand(key: string) {
-  if (isExpanded(key)) {
-    expandedKeys.value = expandedKeys.value.filter((item) => item !== key);
-    return;
+function findItemByKey(key: string): SideMenuItem | undefined {
+  for (const item of visibleMenus.value) {
+    if (item.key === key) return item;
+    const child = item.children?.find((c) => c.key === key);
+    if (child) return child;
   }
-
-  expandedKeys.value = [...expandedKeys.value, key];
+  return undefined;
 }
 
-function navigateTo(routeName: SideMenuItem['routeName']) {
-  if (routeName == null) return;
-  router.push({ name: routeName });
-}
-
-function handleLevel2Click(item: SideMenuItem) {
-  if (item.children?.length) {
-    toggleExpand(item.key);
-    return;
-  }
-
-  if (item.routeName) {
-    navigateTo(item.routeName);
+function handleSelect(index: string) {
+  const item = findItemByKey(index);
+  if (item?.routeName) {
+    router.push({ name: item.routeName });
   }
 }
 
-function syncExpandedKeys() {
+function handleOpen(index: string) {
+  if (!openedKeys.value.includes(index)) {
+    openedKeys.value = [...openedKeys.value, index];
+  }
+}
+
+function handleClose(index: string) {
+  openedKeys.value = openedKeys.value.filter((k) => k !== index);
+}
+
+function syncOpenedKeys() {
   const parentKey = findSideMenuParentKey(appRouteTree, route.name);
-  if (parentKey && !expandedKeys.value.includes(parentKey)) {
-    expandedKeys.value = [...expandedKeys.value, parentKey];
+  if (parentKey && !openedKeys.value.includes(parentKey)) {
+    openedKeys.value = [...openedKeys.value, parentKey];
+    menuKey.value += 1;
   }
 }
 
 watch(
   () => route.name,
   () => {
-    syncExpandedKeys();
+    syncOpenedKeys();
   },
   { immediate: true },
 );
@@ -86,7 +92,8 @@ watch(
 watch(
   () => props.menus,
   () => {
-    syncExpandedKeys();
+    syncOpenedKeys();
+    menuKey.value += 1;
   },
   { immediate: true },
 );
@@ -94,42 +101,43 @@ watch(
 
 <template>
   <aside class="side-menu">
-    <ul class="side-menu__list">
-      <li v-for="item in visibleMenus" :key="item.key" class="side-menu__item">
-        <button
-          type="button"
-          class="side-menu__level2"
-          :class="{ 'side-menu__level2--active': isGroupActive(item) }"
-          @click="handleLevel2Click(item)"
-        >
-          <span class="side-menu__icon">
-            <img v-if="item.icon" :src="item.icon" :alt="item.label" />
-            <span v-else class="side-menu__icon-placeholder" />
-          </span>
-          <span class="side-menu__label">{{ item.label }}</span>
-          <span
-            v-if="item.children?.length"
-            class="side-menu__arrow"
-            :class="{ 'side-menu__arrow--expanded': isExpanded(item.key) }"
-          >
-            ›
-          </span>
-        </button>
+    <ElMenu
+      :key="menuKey"
+      class="side-menu__el"
+      :default-active="activeIndex"
+      :default-openeds="openedKeys"
+      :unique-opened="false"
+      @select="handleSelect"
+      @open="handleOpen"
+      @close="handleClose"
+    >
+      <template v-for="item in visibleMenus" :key="item.key">
+        <ElSubMenu v-if="item.children?.length" :index="item.key">
+          <template #title>
+            <span
+              class="side-menu__icon"
+              :class="{ 'side-menu__icon--placeholder': !item.icon }"
+              :style="iconMaskStyle(item.icon)"
+              aria-hidden="true"
+            />
+            <span class="side-menu__label">{{ item.label }}</span>
+          </template>
+          <ElMenuItem v-for="child in item.children" :key="child.key" :index="child.key">
+            {{ child.label }}
+          </ElMenuItem>
+        </ElSubMenu>
 
-        <ul v-if="item.children?.length && isExpanded(item.key)" class="side-menu__sublist">
-          <li v-for="child in item.children" :key="child.key">
-            <button
-              type="button"
-              class="side-menu__level3"
-              :class="{ 'side-menu__level3--active': isActiveRoute(child.routeName) }"
-              @click="navigateTo(child.routeName)"
-            >
-              {{ child.label }}
-            </button>
-          </li>
-        </ul>
-      </li>
-    </ul>
+        <ElMenuItem v-else :index="item.key">
+          <span
+            class="side-menu__icon"
+            :class="{ 'side-menu__icon--placeholder': !item.icon }"
+            :style="iconMaskStyle(item.icon)"
+            aria-hidden="true"
+          />
+          <span class="side-menu__label">{{ item.label }}</span>
+        </ElMenuItem>
+      </template>
+    </ElMenu>
   </aside>
 </template>
 
@@ -143,104 +151,103 @@ watch(
   overflow-y: auto;
 }
 
-.side-menu__list,
-.side-menu__sublist {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.side-menu__item + .side-menu__item {
-  margin-top: 0;
-}
-
-.side-menu__level2,
-.side-menu__level3 {
+.side-menu__el {
   width: 100%;
-  border: none;
+  border-right: none;
   background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition:
-    background-color 0.2s,
-    color 0.2s;
-}
-
-.side-menu__level2 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 16px;
-  border-radius: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 22px;
-}
-
-.side-menu__level2:hover,
-.side-menu__level3:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.side-menu__level2--active,
-.side-menu__level3--active {
-  background: var(--bg-active);
-  color: var(--color-primary);
-  font-weight: 400;
 }
 
 .side-menu__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-block;
   width: 16px;
   height: 16px;
+  margin-right: 12px;
   flex-shrink: 0;
+  background-color: var(--text-primary);
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  transition: background-color 0.2s;
 }
 
-.side-menu__icon img {
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
-}
-
-.side-menu__icon-placeholder {
-  display: block;
-  width: 16px;
-  height: 16px;
+.side-menu__icon--placeholder {
   border-radius: 0;
-  background: var(--border-color);
+  background-color: var(--border-color);
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 
 .side-menu__label {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.side-menu__arrow {
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1;
-  transform: rotate(0deg);
-  transition: transform 0.2s;
-}
-
-.side-menu__arrow--expanded {
-  transform: rotate(90deg);
-}
-
-.side-menu__sublist {
-  margin-top: 0;
-  padding-left: 44px;
-}
-
-.side-menu__level3 {
-  padding: 10px 16px;
+.side-menu :deep(.el-menu-item),
+.side-menu :deep(.el-sub-menu__title) {
+  height: 48px;
+  line-height: 22px;
+  padding: 13px 16px !important;
+  margin: 0;
   border-radius: 0;
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 400;
-  line-height: 22px;
+}
+
+.side-menu :deep(.el-menu-item:hover),
+.side-menu :deep(.el-sub-menu__title:hover) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.side-menu :deep(.el-menu-item.is-active) {
+  background-color: var(--bg-active) !important;
+}
+
+/* 选中二级菜单：文字与 icon 变蓝 */
+.side-menu :deep(.side-menu__el > .el-menu-item.is-active) {
+  color: var(--color-primary) !important;
+}
+
+.side-menu :deep(.el-menu-item.is-active .side-menu__icon) {
+  background-color: var(--color-primary);
+}
+
+/* 选中三级菜单：父级文字与 icon 变蓝；三级文字保持深色 */
+.side-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
+  color: var(--color-primary);
+}
+
+.side-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title .side-menu__icon) {
+  background-color: var(--color-primary);
+}
+
+.side-menu :deep(.el-sub-menu .el-menu-item.is-active) {
+  color: var(--text-primary) !important;
+}
+
+.side-menu :deep(.el-sub-menu .el-menu) {
+  background: rgb(243 243 243 / 50%);
+}
+
+.side-menu :deep(.el-sub-menu .el-menu-item) {
+  padding-left: 44px !important;
+  min-width: 0;
+}
+
+.side-menu :deep(.el-sub-menu .el-menu-item.is-active) {
+  background-color: var(--bg-active) !important;
+}
+
+.side-menu :deep(.el-sub-menu__icon-arrow) {
+  right: 16px;
+  margin-top: -5px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 </style>
