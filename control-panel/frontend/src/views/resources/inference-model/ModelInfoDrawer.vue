@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { ElDrawer, ElIcon } from 'element-plus';
+import {
+  ElButton,
+  ElDrawer,
+  ElForm,
+  ElFormItem,
+  ElIcon,
+  ElInput,
+  ElInputNumber,
+  ElOption,
+  ElSelect,
+} from 'element-plus';
 import { ArrowDown, CopyDocument, Monitor } from '@element-plus/icons-vue';
 import ModelInfoRow from './ModelInfoRow.vue';
 import type { ModelDetail } from '@/api/inference';
@@ -43,7 +53,6 @@ interface FormData {
   [key: string]: unknown;
 }
 
-// 从litellm_params.model中解析出部署模型名称（去掉provider前缀）
 function parseDeployName(model: string): string {
   if (!model) return '';
   const slashIndex = model.indexOf('/');
@@ -121,7 +130,6 @@ function copyModelName() {
 }
 
 function handleSave() {
-  // 根据部署模型名称和部署框架构建model字段
   const modelIdentifier = `openai/${formData.value.deployName}`;
 
   const saveData: Partial<ModelDetail> = {
@@ -145,18 +153,20 @@ function handleSave() {
 
 <template>
   <ElDrawer :model-value="visible" title="模型信息" size="480px" @close="emit('close')">
-    <!-- Model Header -->
     <div class="model-header" v-if="model">
       <div class="model-header__icon">
         <el-icon :size="32" color="#2563eb"><Monitor /></el-icon>
       </div>
       <span class="model-header__name">{{ model.model_name }}</span>
-      <button class="model-header__copy" @click="copyModelName" title="复制模型名称">
-        <el-icon :size="16"><CopyDocument /></el-icon>
-      </button>
+      <ElButton
+        class="model-header__copy"
+        text
+        :icon="CopyDocument"
+        title="复制模型名称"
+        @click="copyModelName"
+      />
     </div>
 
-    <!-- View Mode -->
     <template v-if="mode === 'view' && model">
       <div class="info-section">
         <h3 class="info-section__title">基础信息</h3>
@@ -178,36 +188,42 @@ function handleSave() {
       </div>
     </template>
 
-    <!-- Edit Mode -->
     <template v-if="mode === 'edit' && model">
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
           <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
           基础信息
         </h3>
-        <div v-show="sections.basic" class="form-grid">
-          <div class="form-group">
-            <label class="form-label form-label--required">模型名称</label>
-            <input v-model="formData.model_name" class="form-input" />
-          </div>
-          <div class="form-group">
-            <label class="form-label form-label--required">部署模型名称</label>
-            <input v-model="formData.deployName" class="form-input" placeholder="例如: gpt-4" />
+        <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
+          <ElFormItem label="模型名称" required class="form-grid__item">
+            <ElInput v-model="formData.model_name" />
+          </ElFormItem>
+          <ElFormItem label="部署模型名称" required class="form-grid__item">
+            <ElInput v-model="formData.deployName" placeholder="例如: gpt-4" />
             <span class="form-hint">仅支持Openai API格式，模型名将自动添加前缀: openai/</span>
-          </div>
-          <div class="form-group">
-            <label class="form-label">API Base</label>
-            <input v-model="formData.litellm_params.api_base" class="form-input" placeholder="例如: http://localhost:8000" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">上下文长度</label>
-            <input v-model="formData.model_info.context_window" class="form-input" type="number" placeholder="例如: 4096" />
-          </div>
-          <div class="form-group" style="grid-column: span 2">
-            <label class="form-label">模型描述</label>
-            <textarea v-model="formData.model_info.description" class="form-textarea" placeholder="简要描述该模型的用途和特点..."></textarea>
-          </div>
-        </div>
+          </ElFormItem>
+          <ElFormItem label="API Base" class="form-grid__item">
+            <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000" />
+          </ElFormItem>
+          <ElFormItem label="上下文长度" class="form-grid__item">
+            <ElInputNumber
+              v-model="formData.model_info.context_window"
+              :controls="false"
+              :min="0"
+              placeholder="例如: 4096"
+              class="form-field"
+            />
+          </ElFormItem>
+          <ElFormItem label="模型描述" class="form-grid__item form-grid__item--full">
+            <ElInput
+              v-model="formData.model_info.description"
+              type="textarea"
+              :rows="4"
+              resize="vertical"
+              placeholder="简要描述该模型的用途和特点..."
+            />
+          </ElFormItem>
+        </ElForm>
       </div>
 
       <div class="info-section">
@@ -215,15 +231,14 @@ function handleSave() {
           <el-icon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
           部署信息
         </h3>
-        <div v-show="sections.deploy" class="form-grid">
-          <div class="form-group">
-            <label class="form-label form-label--required">部署框架</label>
-            <select v-model="formData.deployFramework" class="form-select">
-              <option value="vLLM">vLLM</option>
-              <option value="SGLang">SGLang</option>
-            </select>
-          </div>
-        </div>
+        <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
+          <ElFormItem label="部署框架" required class="form-grid__item">
+            <ElSelect v-model="formData.deployFramework" placeholder="请选择部署框架">
+              <ElOption label="vLLM" value="vLLM" />
+              <ElOption label="SGLang" value="SGLang" />
+            </ElSelect>
+          </ElFormItem>
+        </ElForm>
       </div>
 
       <div class="info-section">
@@ -231,23 +246,22 @@ function handleSave() {
           <el-icon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
           服务信息
         </h3>
-        <div v-show="sections.service" class="form-grid">
-          <div class="form-group">
-            <label class="form-label">模型监控URL</label>
-            <input v-model="formData.instance_url" class="form-input" placeholder="请输入模型监控URL" />
-          </div>
-        </div>
+        <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
+          <ElFormItem label="模型监控URL" class="form-grid__item form-grid__item--full">
+            <ElInput v-model="formData.instance_url" placeholder="请输入模型监控URL" />
+          </ElFormItem>
+        </ElForm>
       </div>
     </template>
 
     <template #footer>
       <template v-if="mode === 'view'">
-        <button class="btn" @click="emit('export')">导出</button>
-        <button class="btn btn--primary" @click="emit('edit')">编辑信息</button>
+        <ElButton @click="emit('export')">导出</ElButton>
+        <ElButton type="primary" @click="emit('edit')">编辑信息</ElButton>
       </template>
       <template v-else>
-        <button class="btn" @click="emit('close')">取消</button>
-        <button class="btn btn--primary" @click="handleSave">保存更改</button>
+        <ElButton @click="emit('close')">取消</ElButton>
+        <ElButton type="primary" @click="handleSave">保存更改</ElButton>
       </template>
     </template>
   </ElDrawer>
@@ -274,22 +288,10 @@ function handleSave() {
 }
 
 .model-header__copy {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 28px;
   height: 28px;
-  border: none;
-  background: none;
-  border-radius: 4px;
-  cursor: pointer;
+  padding: 0;
   color: var(--text-secondary, #6b7280);
-  transition: all 0.2s;
-}
-
-.model-header__copy:hover {
-  background: var(--bg-hover, #f3f4f6);
-  color: var(--text-primary, #1f2937);
 }
 
 .info-section {
@@ -315,60 +317,18 @@ function handleSave() {
   user-select: none;
 }
 
-.info-section__title--clickable svg {
-  transition: transform 0.2s;
-  flex-shrink: 0;
-}
-
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.form-grid__item {
+  margin-bottom: 0;
 }
 
-.form-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary, #6b7280);
-}
-
-.form-label--required::before {
-  content: '*';
-  color: #ef4444;
-  margin-right: 4px;
-}
-
-.form-input,
-.form-select,
-.form-textarea {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 14px;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary, #1f2937);
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.form-input:focus,
-.form-select:focus,
-.form-textarea:focus {
-  outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.form-textarea {
-  min-height: 80px;
-  resize: vertical;
+.form-grid__item--full {
+  grid-column: span 2;
 }
 
 .form-hint {
@@ -376,29 +336,21 @@ function handleSave() {
   color: var(--text-tertiary, #9ca3af);
 }
 
-.btn {
-  padding: 8px 16px;
-  font-size: 14px;
+.form-field {
+  width: 100%;
+}
+
+.form-grid :deep(.el-form-item__label) {
+  font-size: 13px;
   font-weight: 500;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary, #1f2937);
-  cursor: pointer;
-  transition: all 0.2s;
+  color: var(--text-secondary, #6b7280);
 }
 
-.btn:hover {
-  background: var(--bg-hover, #f9fafb);
+.form-grid :deep(.el-input-number .el-input__wrapper) {
+  width: 100%;
 }
 
-.btn--primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-
-.btn--primary:hover {
-  background: #1d4ed8;
+.form-grid :deep(.el-input-number .el-input__inner) {
+  text-align: left;
 }
 </style>

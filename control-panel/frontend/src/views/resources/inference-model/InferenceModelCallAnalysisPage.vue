@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
+import { ElButton } from 'element-plus';
+import { ArrowLeft } from '@element-plus/icons-vue';
 import CallAnalysis from './CallAnalysis.vue';
 
 const router = useRouter();
@@ -13,7 +15,7 @@ function goBack() {
   <div class="detail-page">
     <header class="detail-page__banner">
       <div class="detail-page__banner-content">
-        <button type="button" class="detail-page__back" @click="goBack">←</button>
+        <ElButton class="detail-page__back" text :icon="ArrowLeft" @click="goBack" />
         <h1 class="detail-page__title">推理模型调用分析</h1>
       </div>
     </header>
@@ -32,9 +34,7 @@ function goBack() {
 }
 
 .detail-page__banner {
-  min-height: 120px;
-  padding: 16px 24px;
-  background: #fff;
+  padding: 12px 32px;
 }
 
 .detail-page__banner-content {
@@ -44,33 +44,23 @@ function goBack() {
 }
 
 .detail-page__back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 36px;
   height: 36px;
   padding: 0;
-  border: none;
-  border-radius: 8px;
-  background: #fff;
   color: var(--text-secondary);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background-color 0.2s,
-    color 0.2s;
 }
 
 .detail-page__back:hover {
-  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .detail-page__title {
   margin: 0;
+  font-style: normal;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 28px;
+  letter-spacing: 0;
   color: var(--text-primary);
 }
 

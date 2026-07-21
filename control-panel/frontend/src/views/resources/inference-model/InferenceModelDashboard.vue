@@ -1,19 +1,30 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElInput, ElIcon, ElMessageBox } from 'element-plus';
-import { Search, Plus, ArrowRight } from '@element-plus/icons-vue';
+import {
+  ElInput,
+  ElMessageBox,
+  ElButton,
+  ElRadioGroup,
+  ElRadioButton,
+  ElAlert,
+  ElSkeleton,
+  ElEmpty,
+  ElMessage,
+} from 'element-plus';
+import { Search } from '@element-plus/icons-vue';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
 import { fetchModelList, fetchModelDetail, createModel, updateModel, deleteModel, restartModel, fetchUsageOverview, fetchUserUsage } from '@/api/inference';
-import type { ModelDetail, UsageOverviewResponse, UserUsageDetailResponse } from '@/api/inference';
-import { ElMessage } from 'element-plus';
+import type { ModelDetail } from '@/api/inference';
 import { useAuth } from '@/composables/useAuth';
+import { calculateOverviewTotals, calculateUserTotals, formatTokens, getDateRange, USAGE_ALL_TIME_START } from './utils/usage';
 
 const router = useRouter();
 const { isAdmin, userId } = useAuth();
 const loading = ref(false);
+const listError = ref('');
 
 interface ModelCardData {
   id: string;
@@ -49,52 +60,6 @@ const overviewData = ref({
 });
 const overviewError = ref('');
 
-function formatDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function getDateRange(days: number | string): { start_date: string; end_date: string } {
-  const end = new Date();
-  const start = typeof days === 'string' ? new Date(days) : new Date();
-  if (typeof days === 'number') {
-    start.setDate(end.getDate() - days);
-  }
-  return { start_date: formatDate(start), end_date: formatDate(end) };
-}
-
-function calculateTotals(data: UsageOverviewResponse) {
-  return (data.users ?? []).reduce(
-    (acc, user) => ({
-      requests: acc.requests + user.total_requests,
-      tokens: acc.tokens + user.total_tokens,
-    }),
-    { requests: 0, tokens: 0 }
-  );
-}
-
-function calculateUserTotals(data: UserUsageDetailResponse) {
-  return (data.daily_activity ?? []).reduce(
-    (acc, day) => ({
-      requests: acc.requests + day.requests,
-      tokens: acc.tokens + day.tokens,
-    }),
-    { requests: 0, tokens: 0 }
-  );
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return (tokens / 1_000_000).toFixed(2) + 'M';
-  }
-  if (tokens >= 1_000) {
-    return (tokens / 1_000).toFixed(1) + 'K';
-  }
-  return tokens.toString();
-}
-
 async function loadOverviewData() {
   overviewError.value = '';
   try {
@@ -103,13 +68,13 @@ async function loadOverviewData() {
       const [todayRes, weekRes, totalRes] = await Promise.all([
         fetchUsageOverview(getDateRange(0)),
         fetchUsageOverview(getDateRange(7)),
-        fetchUsageOverview(getDateRange('2000-01-01')),
+        fetchUsageOverview(getDateRange(USAGE_ALL_TIME_START)),
       ]);
 
       overviewData.value = {
-        today: calculateTotals(todayRes),
-        week: calculateTotals(weekRes),
-        total: calculateTotals(totalRes),
+        today: calculateOverviewTotals(todayRes),
+        week: calculateOverviewTotals(weekRes),
+        total: calculateOverviewTotals(totalRes),
       };
     } else {
       // 普通用户：使用 /user 接口获取自己的数据
@@ -122,7 +87,7 @@ async function loadOverviewData() {
       const [todayRes, weekRes, totalRes] = await Promise.all([
         fetchUserUsage({ user_id: uid, ...getDateRange(0) }),
         fetchUserUsage({ user_id: uid, ...getDateRange(7) }),
-        fetchUserUsage({ user_id: uid, ...getDateRange('2000-01-01') }),
+        fetchUserUsage({ user_id: uid, ...getDateRange(USAGE_ALL_TIME_START) }),
       ]);
 
       overviewData.value = {
@@ -139,10 +104,11 @@ async function loadOverviewData() {
 
 async function loadModels() {
   loading.value = true;
+  listError.value = '';
   try {
     const data = await fetchModelList({ keyword: searchQuery.value });
     // 将后端数据转换为ModelCard期望的格式
-    models.value = data.items.map(item => ({
+    models.value = data?.items?.map(item => ({
       id: item.id,
       name: item.model_name,
       status: 'success' as const,
@@ -154,8 +120,13 @@ async function loadModels() {
       meta: [item.litellm_params.model],
       iconSrc: undefined,
       contextWindow: item.model_info?.context_window,
-    }));
-  } catch (e) { console.error('加载模型列表失败:', e); } finally { loading.value = false; }
+    })) ?? [];
+  } catch (e) {
+    models.value = [];
+    listError.value = e instanceof Error ? e.message : '加载模型列表失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
 function goToModel(id: string) { router.push({ name: 'inference-model-detail', params: { id } }); }
@@ -252,9 +223,22 @@ onMounted(() => { loadModels(); loadOverviewData(); });
     <div class="overview-card">
       <div class="overview-card__header">
         <div class="overview-card__title"><span>调用概览</span></div>
-        <button class="overview-card__detail" @click="router.push({ name: 'inference-model-call-analysis' })">查看详情 <el-icon :size="14"><ArrowRight /></el-icon></button>
+        <ElButton
+          class="overview-card__detail"
+          link
+          type="primary"
+          @click="router.push({ name: 'inference-model-call-analysis' })"
+        >
+          查看详情
+        </ElButton>
       </div>
-      <div v-if="overviewError" class="overview-card__error">加载失败: {{ overviewError }}</div>
+      <ElAlert
+        v-if="overviewError"
+        :title="`加载失败: ${overviewError}`"
+        type="error"
+        show-icon
+        :closable="false"
+      />
       <div v-else class="overview-card__content">
         <div class="overview-card__section">
           <div class="overview-card__section-header"><span>调用次数</span></div>
@@ -280,15 +264,28 @@ onMounted(() => { loadModels(); loadOverviewData(); });
     <div class="card model-list-card">
       <div class="model-section__header">
         <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary)">可用推理模型</h2>
-        <button class="btn btn--primary" @click="showAddModal = true"><el-icon :size="16"><Plus /></el-icon> 添加模型</button>
+        <ElButton type="primary" @click="showAddModal = true">添加模型</ElButton>
       </div>
       <div class="model-section__toolbar">
-        <div class="filter-tabs">
-          <button v-for="f in filters" :key="f.key" class="filter-tab" :class="{ 'filter-tab--active': activeFilter === f.key }" @click="activeFilter = f.key">{{ f.label }}</button>
-        </div>
+        <ElRadioGroup v-model="activeFilter">
+          <ElRadioButton v-for="f in filters" :key="f.key" :value="f.key">{{ f.label }}</ElRadioButton>
+        </ElRadioGroup>
         <ElInput v-model="searchQuery" placeholder="请输入搜索内容" :prefix-icon="Search" clearable style="width: 240px" />
       </div>
-      <div class="model-grid">
+      <div v-if="loading" class="model-list-state">
+        <ElSkeleton :rows="6" animated />
+      </div>
+      <ElAlert
+        v-else-if="listError"
+        :title="listError"
+        type="error"
+        show-icon
+        :closable="false"
+      />
+      <div v-else-if="!models.length" class="model-list-state">
+        <ElEmpty description="暂无推理模型" :image-size="80" />
+      </div>
+      <div v-else class="model-grid">
         <ModelCard v-for="model in models" :key="model.id" v-bind="model" :icon-src="model.iconSrc" :is-admin="isAdmin" @click="goToModel(model.id)" @delete="handleDeleteModel(model.id)" @edit="handleEditModel(model.id)" @restart="handleRestartModel(model.id)" />
       </div>
     </div>
@@ -310,8 +307,14 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 .overview-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 20px; margin-top: 20px; flex-shrink: 0; }
 .overview-card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .overview-card__title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: #111827; }
-.overview-card__detail { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #2563eb; background: none; border: none; cursor: pointer; }
-.overview-card__detail:hover { opacity: 0.8; }
+.overview-card__detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  height: auto;
+  padding: 0;
+}
 .overview-card__content { display: flex; gap: 0; }
 .overview-card__section { flex: 1; padding: 0 20px; }
 .overview-card__section:first-child { padding-left: 0; }
@@ -323,7 +326,6 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 .overview-card__metric-label { font-size: 12px; color: #9ca3af; }
 .overview-card__metric-value { font-size: 24px; font-weight: 600; color: #111827; }
 .overview-card__metric-unit { font-size: 12px; font-weight: 400; color: #6b7280; margin-left: 2px; }
-.overview-card__error { padding: 16px; color: #dc2626; font-size: 14px; }
 
 .model-list-card {
   flex: 1;
@@ -335,6 +337,14 @@ onMounted(() => { loadModels(); loadOverviewData(); });
 
 .model-section__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-shrink: 0; }
 .model-section__toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; flex-shrink: 0; }
+.model-list-state {
+  flex: 1;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+}
 .model-grid {
   flex: 1;
   min-height: 0;
@@ -344,7 +354,4 @@ onMounted(() => { loadModels(); loadOverviewData(); });
   gap: 28px;
   align-content: start;
 }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 14px; font-weight: 500; border: 1px solid var(--border-color, #d1d5db); border-radius: 6px; background: #fff; color: var(--text-primary, #1f2937); cursor: pointer; }
-.btn--primary { background: #2563eb; border-color: #2563eb; color: #fff; }
-.btn--primary:hover { background: #1d4ed8; }
 </style>

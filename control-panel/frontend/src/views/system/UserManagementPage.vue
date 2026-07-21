@@ -21,10 +21,10 @@ import {
   type UserItem,
   type BatchCreateResult,
 } from '@/api/users';
-import userAvatar from '@/assets/icons/person.svg';
-import docIcon from '@/assets/icons/doc.svg';
-import keyIcon from '@/assets/icons/key.svg';
-import deleteIcon from '@/assets/icons/delete.svg';
+import userAvatar from '@/assets/images/person.svg';
+import docIcon from '@/assets/images/doc.svg';
+import keyIcon from '@/assets/images/key.svg';
+import deleteIcon from '@/assets/images/delete.svg';
 
 const users = ref<UserItem[]>([]);
 const total = ref(0);

@@ -1,42 +1,75 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getMe } from '@/api/users';
+import {
+  ElTabs,
+  ElTabPane,
+  ElButton,
+  ElTag,
+  ElForm,
+  ElFormItem,
+  ElInput,
+  ElDialog,
+  ElMessage,
+  ElMessageBox,
+  ElEmpty,
+  type FormInstance,
+  type FormRules,
+} from 'element-plus';
+import { getMe, changeMyPassword } from '@/api/users';
 import { useAuth } from '@/composables/useAuth';
+import profileBannerImg from '@/assets/images/profile-banner.png';
+import profileAvatarImg from '@/assets/images/profile-avatar.png';
 
 const route = useRoute();
 const router = useRouter();
 const { clearAuth } = useAuth();
 
 type TabKey = 'profile' | 'cloud-account' | 'preferences';
-const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: 'profile', label: '个人信息' },
-  { key: 'cloud-account', label: '云账户管理' },
-  { key: 'preferences', label: '偏好设置' },
-];
 
-const activeTab = ref<TabKey>(
-  (route.query.tab as TabKey) || 'profile',
-);
+const activeTab = ref<TabKey>((route.query.tab as TabKey) || 'profile');
 
-function selectTab(key: TabKey) {
-  activeTab.value = key;
+watch(activeTab, (key) => {
   router.replace({ query: { tab: key } });
-}
+});
 
 const profile = ref({
   username: '',
   user_id: '',
   role: '',
   is_active: true,
+  created_at: null as string | null,
 });
 
-const oldPassword = ref('');
-const newPassword = ref('');
-const confirmPassword = ref('');
-const loading = ref(false);
-const errorMsg = ref('');
-const showResetForm = ref(false);
+const showResetDialog = ref(false);
+const resetLoading = ref(false);
+const resetFormRef = ref<FormInstance>();
+const resetForm = ref({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+});
+
+const resetRules: FormRules = {
+  oldPassword: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 8, message: '新密码长度至少 8 位', trigger: 'blur' },
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value, callback) => {
+        if (value !== resetForm.value.newPassword) {
+          callback(new Error('两次输入的新密码不一致'));
+        } else {
+          callback();
+        }
+      },
+      trigger: 'blur',
+    },
+  ],
+};
 
 async function loadProfile() {
   try {
@@ -53,37 +86,45 @@ function roleLabel(role: string) {
   return role === 'admin' ? '管理员' : '普通用户';
 }
 
+function openResetDialog() {
+  resetForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' };
+  showResetDialog.value = true;
+}
+
 async function handleResetPassword() {
-  errorMsg.value = '';
+  const form = resetFormRef.value;
+  if (!form) return;
 
-  if (!oldPassword.value || !newPassword.value || !confirmPassword.value) {
-    errorMsg.value = '请填写所有密码字段';
-    return;
-  }
-  if (newPassword.value.length < 8) {
-    errorMsg.value = '新密码长度至少 8 位';
-    return;
-  }
-  if (newPassword.value !== confirmPassword.value) {
-    errorMsg.value = '两次输入的新密码不一致';
-    return;
-  }
-
-  loading.value = true;
   try {
-    const { changeMyPassword } = await import('@/api/users');
-    await changeMyPassword(oldPassword.value, newPassword.value);
+    await form.validate();
+  } catch {
+    return;
+  }
+
+  resetLoading.value = true;
+  try {
+    await changeMyPassword(resetForm.value.oldPassword, resetForm.value.newPassword);
+    ElMessage.success('密码修改成功，请重新登录');
+    showResetDialog.value = false;
     clearAuth();
     router.push('/login');
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '密码修改失败';
+    ElMessage.error(e instanceof Error ? e.message : '密码修改失败');
   } finally {
-    loading.value = false;
+    resetLoading.value = false;
   }
 }
 
-function handleLogout() {
-  if (!confirm('确定要退出登录吗？')) return;
+async function handleLogout() {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
+  } catch {
+    return;
+  }
   clearAuth();
   router.push('/login');
 }
@@ -91,187 +132,177 @@ function handleLogout() {
 
 <template>
   <div class="profile-page">
-    <img class="profile-banner" src="/images/profile-banner.png" alt="" />
+    <img class="profile-banner" :src="profileBannerImg" alt="" />
+
     <div class="profile-content">
       <div class="profile-header">
-        <img class="profile-avatar" src="/images/profile-avatar.png" alt="" />
+        <img class="profile-avatar" :src="profileAvatarImg" alt="" />
         <div class="profile-meta">
           <div class="profile-name-row">
-            <span class="profile-name">{{ profile.username }}</span>
-            <span v-if="profile.role" class="role-tag" :class="`role-tag--${profile.role}`">
+            <span class="profile-name">{{ profile.username || '—' }}</span>
+            <ElTag
+              v-if="profile.role"
+              size="small"
+              effect="dark"
+              :class="profile.role === 'admin' ? 'role-tag role-tag--admin' : 'role-tag role-tag--user'"
+            >
               {{ roleLabel(profile.role) }}
-            </span>
+            </ElTag>
           </div>
           <span v-if="profile.user_id" class="profile-id">用户ID: {{ profile.user_id }}</span>
         </div>
       </div>
 
-      <nav class="profile-tabs">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          type="button"
-          class="profile-tabs__item"
-          :class="{ 'profile-tabs__item--active': activeTab === t.key }"
-          @click="selectTab(t.key)"
-        >
-          {{ t.label }}
-        </button>
-      </nav>
+      <ElTabs v-model="activeTab" class="profile-tabs">
+        <ElTabPane label="个人信息" name="profile">
+          <section class="profile-card">
+            <h2 class="profile-card__title">基本信息</h2>
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">头像</span>
+                <img class="info-avatar" :src="profileAvatarImg" alt="" />
+              </div>
+              <div class="info-item">
+                <span class="info-label">用户ID</span>
+                <span class="info-value info-value--mono">{{ profile.user_id || '—' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">用户名</span>
+                <span class="info-value">{{ profile.username || '—' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">账号状态</span>
+                <ElTag
+                  size="small"
+                  effect="light"
+                  class="status-tag"
+                  :class="profile.is_active ? 'status-tag--active' : 'status-tag--inactive'"
+                >
+                  {{ profile.is_active ? '正常' : '停用' }}
+                </ElTag>
+              </div>
+              <div class="info-item">
+                <span class="info-label">用户角色</span>
+                <ElTag
+                  v-if="profile.role"
+                  size="small"
+                  effect="dark"
+                  :class="profile.role === 'admin' ? 'role-tag role-tag--admin' : 'role-tag role-tag--user'"
+                >
+                  {{ roleLabel(profile.role) }}
+                </ElTag>
+                <span v-else class="info-value">—</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">手机号</span>
+                <span class="info-value">—</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">邮箱</span>
+                <span class="info-value">—</span>
+              </div>
+            </div>
+          </section>
 
-      <template v-if="activeTab === 'profile'">
-      <section class="profile-section">
-        <h2 class="section-title">基本信息</h2>
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="info-label">头像</span>
-            <img class="info-avatar" src="/images/profile-avatar.png" alt="" />
-          </div>
-          <div class="info-item">
-            <span class="info-label">用户名</span>
-            <span class="info-value">{{ profile.username }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">用户ID</span>
-            <span class="info-value info-value--mono">{{ profile.user_id }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">用户角色</span>
-            <span v-if="profile.role" class="role-tag" :class="`role-tag--${profile.role}`">
-              {{ roleLabel(profile.role) }}
-            </span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">账号状态</span>
-            <span class="status-tag status-tag--active">正常</span>
-          </div>
-        </div>
-      </section>
+          <section class="profile-card profile-card--row">
+            <div class="profile-card__text">
+              <h2 class="profile-card__title">重置密码</h2>
+              <p class="profile-card__desc">上次重置：—</p>
+            </div>
+            <ElButton class="profile-action-btn" @click="openResetDialog">重置密码</ElButton>
+          </section>
 
-    <section class="profile-section">
-      <div class="section-row">
-        <div class="section-row-text">
-          <h2 class="section-title">重置密码</h2>
-          <p class="section-desc">修改密码后需要重新登录</p>
-        </div>
-        <button v-if="!showResetForm" class="btn btn--primary" @click="showResetForm = true">
-          重置密码
-        </button>
-      </div>
+          <section class="profile-card profile-card--row">
+            <h2 class="profile-card__title">退出登录</h2>
+            <ElButton type="danger" plain class="profile-action-btn" @click="handleLogout">退出</ElButton>
+          </section>
+        </ElTabPane>
 
-      <form v-if="showResetForm" class="reset-form" @submit.prevent="handleResetPassword">
-        <div class="form-group">
-          <label class="form-label" for="old-password">原密码</label>
-          <input
-            id="old-password"
-            v-model="oldPassword"
+        <ElTabPane label="云账户管理" name="cloud-account">
+          <section class="profile-card">
+            <ElEmpty description="功能开发中" />
+          </section>
+        </ElTabPane>
+
+        <ElTabPane label="偏好设置" name="preferences">
+          <section class="profile-card">
+            <ElEmpty description="功能开发中" />
+          </section>
+        </ElTabPane>
+      </ElTabs>
+    </div>
+
+    <ElDialog
+      v-model="showResetDialog"
+      title="重置密码"
+      width="480px"
+      destroy-on-close
+      @closed="resetFormRef?.resetFields()"
+    >
+      <p class="reset-hint">修改密码后需要重新登录</p>
+      <ElForm
+        ref="resetFormRef"
+        :model="resetForm"
+        :rules="resetRules"
+        label-position="top"
+        @submit.prevent="handleResetPassword"
+      >
+        <ElFormItem label="原密码" prop="oldPassword">
+          <ElInput
+            v-model="resetForm.oldPassword"
             type="password"
-            class="form-input"
+            show-password
             autocomplete="current-password"
-            :disabled="loading"
+            :disabled="resetLoading"
           />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="new-password">新密码</label>
-          <input
-            id="new-password"
-            v-model="newPassword"
+        </ElFormItem>
+        <ElFormItem label="新密码" prop="newPassword">
+          <ElInput
+            v-model="resetForm.newPassword"
             type="password"
-            class="form-input"
+            show-password
             placeholder="至少 8 位字符"
             autocomplete="new-password"
-            :disabled="loading"
+            :disabled="resetLoading"
           />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="confirm-password">确认新密码</label>
-          <input
-            id="confirm-password"
-            v-model="confirmPassword"
+        </ElFormItem>
+        <ElFormItem label="确认新密码" prop="confirmPassword">
+          <ElInput
+            v-model="resetForm.confirmPassword"
             type="password"
-            class="form-input"
+            show-password
             autocomplete="new-password"
-            :disabled="loading"
+            :disabled="resetLoading"
           />
-        </div>
-        <p v-if="errorMsg" class="msg msg--error" role="alert">{{ errorMsg }}</p>
-        <div class="form-actions">
-          <button type="button" class="btn btn--secondary" @click="showResetForm = false">取消</button>
-          <button type="submit" class="btn btn--primary" :disabled="loading">
-            {{ loading ? '保存中...' : '保存修改' }}
-          </button>
-        </div>
-      </form>
-    </section>
-
-    <section class="profile-section">
-      <div class="section-row">
-        <h2 class="section-title">退出登录</h2>
-        <button class="btn btn--danger" @click="handleLogout">退出</button>
-      </div>
-    </section>
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="showResetDialog = false">取消</ElButton>
+        <ElButton type="primary" :loading="resetLoading" @click="handleResetPassword">
+          保存修改
+        </ElButton>
       </template>
-    </div>
+    </ElDialog>
   </div>
 </template>
 
 <style scoped>
 .profile-page {
-  /* full-bleed banner; inner content constrained */
+  min-height: 100%;
+  background: var(--bg-page);
 }
-
-.profile-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 32px 32px;
-}
-
-/* tab menubar */
-.profile-tabs {
-  display: flex;
-  gap: 32px;
-  border-bottom: 1px solid var(--border-color);
-  margin-bottom: 24px;
-}
-
-.profile-tabs__item {
-  padding: 12px 0 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 16px;
-  line-height: 24px;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.profile-tabs__item:hover {
-  color: var(--text-primary);
-}
-
-.profile-tabs__item--active {
-  color: var(--color-primary);
-  position: relative;
-}
-
-.profile-tabs__item--active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--color-primary);
-  border-radius: 1px;
-}
-
-/* placeholder for unfinished tabs (kept empty — tabs render blank) */
 
 .profile-banner {
   display: block;
   width: 100%;
   height: 224px;
   object-fit: cover;
+}
+
+.profile-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 32px 32px;
 }
 
 .profile-header {
@@ -284,10 +315,11 @@ function handleLogout() {
 .profile-avatar {
   width: 100px;
   height: 100px;
+  margin-top: -56px;
+  border: 4px solid #fff;
   border-radius: 50%;
   background: #f3f3f3;
-  margin-top: -56px;
-  border: 4px solid #ffffff;
+  object-fit: cover;
 }
 
 .profile-meta {
@@ -305,50 +337,123 @@ function handleLogout() {
 .profile-name {
   font-size: 24px;
   font-weight: 500;
-  color: #191919;
   line-height: 32px;
+  color: var(--text-primary);
 }
 
 .profile-id {
   font-size: 16px;
-  color: #777777;
   line-height: 24px;
+  color: var(--text-secondary);
 }
 
-/* ── sections ── */
-.profile-section {
-  margin-top: 24px;
-  padding: 20px 24px;
-  background: #ffffff;
+.profile-tabs {
+  margin-top: 8px;
+}
+
+.profile-tabs :deep(.el-tabs__header) {
+  margin-bottom: 20px;
+}
+
+.profile-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background-color: var(--border-color);
+}
+
+.profile-tabs :deep(.el-tabs__item) {
+  font-size: 16px;
+  height: 48px;
+  line-height: 48px;
+  color: var(--text-secondary);
+}
+
+.profile-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--color-primary);
+  font-weight: 400;
+}
+
+.profile-tabs :deep(.el-tabs__active-bar) {
+  background-color: var(--color-primary);
+  height: 2px;
+  border-radius: 1px;
+}
+
+.profile-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.profile-card {
+  padding: 20px 24px 24px;
+  background: #fff;
   border-radius: 12px;
 }
 
-.section-title {
+.profile-card--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 20px;
+}
+
+.profile-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-card__title {
   margin: 0;
   font-size: 18px;
   font-weight: 500;
-  color: #191919;
   line-height: 26px;
+  color: var(--text-primary);
 }
 
-.section-desc {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: #777777;
+.profile-card__desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-secondary);
 }
 
-.section-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+.profile-action-btn {
+  width: 96px;
+  height: 32px;
+  margin: 0;
+  padding: 5px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 400;
 }
 
-.section-row-text {
-  display: flex;
-  flex-direction: column;
+.profile-action-btn.el-button {
+  --el-button-bg-color: #fff;
+  --el-button-text-color: rgba(25, 25, 25, 1);
+  --el-button-border-color: rgba(201, 201, 201, 1);
+  --el-button-hover-bg-color: var(--bg-hover);
+  --el-button-hover-text-color: rgba(25, 25, 25, 1);
+  --el-button-hover-border-color: rgba(201, 201, 201, 1);
+  --el-button-active-bg-color: var(--bg-hover);
+  --el-button-active-text-color: rgba(25, 25, 25, 1);
+  --el-button-active-border-color: rgba(201, 201, 201, 1);
 }
 
-/* ── info grid ── */
+.profile-action-btn.el-button--danger.is-plain {
+  --el-button-bg-color: #fff;
+  --el-button-text-color: rgba(224, 33, 40, 1);
+  --el-button-border-color: rgba(224, 33, 40, 1);
+  --el-button-hover-bg-color: rgba(224, 33, 40, 0.05);
+  --el-button-hover-text-color: rgba(224, 33, 40, 1);
+  --el-button-hover-border-color: rgba(224, 33, 40, 1);
+  --el-button-active-bg-color: rgba(224, 33, 40, 0.05);
+  --el-button-active-text-color: rgba(224, 33, 40, 1);
+  --el-button-active-border-color: rgba(224, 33, 40, 1);
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -365,17 +470,18 @@ function handleLogout() {
 
 .info-label {
   width: 80px;
+  flex-shrink: 0;
   font-size: 14px;
-  color: #777777;
+  color: var(--text-secondary);
 }
 
 .info-value {
   font-size: 16px;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .info-value--mono {
-  font-family: ui-monospace, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
 }
 
@@ -384,130 +490,50 @@ function handleLogout() {
   height: 48px;
   border-radius: 50%;
   background: #f3f3f3;
+  object-fit: cover;
 }
 
-/* ── tags ── */
 .role-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 20px;
+  border: none !important;
 }
 
 .role-tag--admin {
-  color: #ffffff;
-  background: #ec6f1a;
+  color: #fff !important;
+  background: #ec6f1a !important;
 }
 
 .role-tag--user {
-  color: #ffffff;
-  background: #1f55b5;
+  color: #fff !important;
+  background: #1f55b5 !important;
 }
 
 .status-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 20px;
-  background: #dff4cc;
-  color: #316614;
+  border: none !important;
 }
 
-/* ── reset form ── */
-.reset-form {
-  margin-top: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 480px;
+.status-tag--active {
+  color: #316614 !important;
+  background: #dff4cc !important;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.status-tag--inactive {
+  color: #777 !important;
+  background: #f3f3f3 !important;
 }
 
-.form-label {
+.reset-hint {
+  margin: 0 0 16px;
   font-size: 14px;
-  color: #191919;
+  color: var(--text-secondary);
 }
 
-.form-input {
-  padding: 11px 12px;
-  font-size: 14px;
-  color: #191919;
-  background: #ffffff;
-  border: 1px solid #c9c9c9;
-  border-radius: 4px;
-  outline: none;
-  transition: border-color 0.2s;
-}
+@media (max-width: 768px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
 
-.form-input:focus {
-  border-color: #0067d1;
-}
-
-.form-input::placeholder {
-  color: #aeaeae;
-}
-
-.form-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.msg {
-  margin: 0;
-  font-size: 13px;
-}
-
-.msg--error {
-  color: #e02128;
-}
-
-/* ── buttons ── */
-.btn {
-  padding: 5px 20px;
-  font-size: 14px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btn--primary {
-  color: #ffffff;
-  background: #0067d1;
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: #0055b3;
-}
-
-.btn--primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn--secondary {
-  color: #191919;
-  background: #f3f3f3;
-}
-
-.btn--secondary:hover {
-  background: #e8e8e8;
-}
-
-.btn--danger {
-  color: #ffffff;
-  background: #e02128;
-  padding: 5px 34px;
-}
-
-.btn--danger:hover {
-  background: #c01c22;
+  .profile-content {
+    padding: 0 16px 24px;
+  }
 }
 </style>

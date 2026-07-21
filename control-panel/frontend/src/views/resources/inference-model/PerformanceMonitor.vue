@@ -1,9 +1,11 @@
 <template>
   <section class="tab-panel">
     <h2 class="tab-panel__title">性能监控</h2>
-    <div v-if="!grafanaDashboardPath" class="tab-panel__empty">
-      暂不支持该推理引擎的监控面板（{{ inferenceEngine || '未知' }}）
-    </div>
+    <ElEmpty
+      v-if="!grafanaDashboardPath"
+      :description="`暂不支持该推理引擎的监控面板（${inferenceEngine || '未知'}）`"
+      :image-size="80"
+    />
     <iframe
       v-else
       class="tab-panel__iframe"
@@ -15,6 +17,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { ElEmpty } from 'element-plus';
 
 const GRAFANA_PORT = 3000;
 const GRAFANA_QUERY_BASE = 'orgId=1&from=now-30m&to=now&kiosk&theme=light';
@@ -70,11 +73,5 @@ const grafanaIframeSrc = computed(() => {
   width: 100%;
   min-height: 600px;
   border: none;
-}
-
-.tab-panel__empty {
-  padding: 24px 0;
-  font-size: 14px;
-  color: #6b7280;
 }
 </style>

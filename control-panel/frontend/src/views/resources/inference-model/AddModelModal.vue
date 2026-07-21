@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { ElDrawer, ElIcon } from 'element-plus';
+import {
+  ElButton,
+  ElDrawer,
+  ElForm,
+  ElFormItem,
+  ElIcon,
+  ElInput,
+  ElInputNumber,
+  ElOption,
+  ElSelect,
+} from 'element-plus';
 import { ArrowDown } from '@element-plus/icons-vue';
 
 interface ModelFormData {
@@ -75,40 +85,42 @@ function handleSave() {
         <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
         基础信息
       </h3>
-      <div v-show="sections.basic" class="form-grid">
-        <div class="form-group">
-          <label class="form-label form-label--required">模型名称</label>
-          <input v-model="formData.name" class="form-input" placeholder="请输入模型名称" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">模型类型</label>
-          <select v-model="formData.type" class="form-select">
-            <option value="chat">chat</option>
-            <option value="completion">completion</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label form-label--required">上下文长度</label>
-          <input v-model="formData.contextLength" class="form-input" type="number" placeholder="请输入上下文长度" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">模型参数量</label>
-          <input v-model="formData.paramSize" class="form-input" placeholder="例如 72B" />
-        </div>
-        <div class="form-group" style="grid-column: span 2">
-          <label class="form-label">分类标签</label>
-          <input v-model="formData.tags" class="form-input" placeholder="W8A8" />
+      <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
+        <ElFormItem label="模型名称" required class="form-grid__item">
+          <ElInput v-model="formData.name" placeholder="请输入模型名称" />
+        </ElFormItem>
+        <ElFormItem label="模型类型" class="form-grid__item">
+          <ElSelect v-model="formData.type" placeholder="请选择模型类型">
+            <ElOption label="chat" value="chat" />
+            <ElOption label="completion" value="completion" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="上下文长度" required class="form-grid__item">
+          <ElInputNumber
+            v-model="formData.contextLength"
+            :controls="false"
+            :min="0"
+            placeholder="请输入上下文长度"
+            class="form-field"
+          />
+        </ElFormItem>
+        <ElFormItem label="模型参数量" class="form-grid__item">
+          <ElInput v-model="formData.paramSize" placeholder="例如 72B" />
+        </ElFormItem>
+        <ElFormItem label="分类标签" class="form-grid__item form-grid__item--full">
+          <ElInput v-model="formData.tags" placeholder="W8A8" />
           <span class="form-hint">多个标签用逗号分割</span>
-        </div>
-        <div class="form-group" style="grid-column: span 2">
-          <label class="form-label">模型描述</label>
-          <textarea
+        </ElFormItem>
+        <ElFormItem label="模型描述" class="form-grid__item form-grid__item--full">
+          <ElInput
             v-model="formData.description"
-            class="form-textarea"
+            type="textarea"
+            :rows="4"
+            resize="vertical"
             placeholder="简要描述该模型的用途和特点..."
-          ></textarea>
-        </div>
-      </div>
+          />
+        </ElFormItem>
+      </ElForm>
     </div>
 
     <!-- 部署信息 -->
@@ -117,20 +129,18 @@ function handleSave() {
         <el-icon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
         部署信息
       </h3>
-      <div v-show="sections.deploy" class="form-grid">
-        <div class="form-group">
-          <label class="form-label form-label--required">部署模型名称</label>
-          <input v-model="formData.deployName" class="form-input" placeholder="例如: gpt-4" />
-          <span class="form-hint">仅支持Openai API格式，模型名将自动添加前缀: openai/</span>
-        </div>
-        <div class="form-group">
-          <label class="form-label form-label--required">部署框架</label>
-          <select v-model="formData.deployFramework" class="form-select">
-            <option value="vLLM">vLLM</option>
-            <option value="SGLang">SGLang</option>
-          </select>
-        </div>
-      </div>
+      <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
+        <ElFormItem label="部署模型名称" required class="form-grid__item">
+          <ElInput v-model="formData.deployName" placeholder="例如: gpt-4" />
+          <span class="form-hint">仅支持 OpenAI API 格式，模型名将自动添加前缀: openai/</span>
+        </ElFormItem>
+        <ElFormItem label="部署框架" required class="form-grid__item">
+          <ElSelect v-model="formData.deployFramework" placeholder="请选择部署框架">
+            <ElOption label="vLLM" value="vLLM" />
+            <ElOption label="SGLang" value="SGLang" />
+          </ElSelect>
+        </ElFormItem>
+      </ElForm>
     </div>
 
     <!-- 服务访问信息 -->
@@ -139,25 +149,28 @@ function handleSave() {
         <el-icon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
         服务访问信息
       </h3>
-      <div v-show="sections.service" class="form-grid">
-        <div class="form-group">
-          <label class="form-label form-label--required">服务 IP 地址</label>
-          <input v-model="formData.serviceIp" class="form-input" placeholder="请输入服务IP地址" />
-        </div>
-        <div class="form-group">
-          <label class="form-label form-label--required">服务端口</label>
-          <input v-model="formData.servicePort" class="form-input" type="number" placeholder="请输入服务端口" />
-        </div>
-        <div class="form-group" style="grid-column: span 2">
-          <label class="form-label form-label--required">模型监控URL</label>
-          <input v-model="formData.metricsUrl" class="form-input" placeholder="请输入模型监控URL" />
-        </div>
-      </div>
+      <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
+        <ElFormItem label="服务 IP 地址" required class="form-grid__item">
+          <ElInput v-model="formData.serviceIp" placeholder="请输入服务 IP 地址" />
+        </ElFormItem>
+        <ElFormItem label="服务端口" required class="form-grid__item">
+          <ElInputNumber
+            v-model="formData.servicePort"
+            :controls="false"
+            :min="0"
+            placeholder="请输入服务端口"
+            class="form-field"
+          />
+        </ElFormItem>
+        <ElFormItem label="模型监控 URL" required class="form-grid__item form-grid__item--full">
+          <ElInput v-model="formData.metricsUrl" placeholder="请输入模型监控 URL" />
+        </ElFormItem>
+      </ElForm>
     </div>
 
     <template #footer>
-      <button class="btn" @click="emit('close')">取消</button>
-      <button class="btn btn--primary" @click="handleSave">确认添加</button>
+      <ElButton @click="emit('close')">取消</ElButton>
+      <ElButton type="primary" @click="handleSave">确认添加</ElButton>
     </template>
   </ElDrawer>
 </template>
@@ -167,6 +180,14 @@ function handleSave() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.form-grid__item {
+  margin-bottom: 0;
+}
+
+.form-grid__item--full {
+  grid-column: span 2;
 }
 
 .info-section {
@@ -192,79 +213,26 @@ function handleSave() {
   user-select: none;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary, #6b7280);
-}
-
-.form-label--required::before {
-  content: '*';
-  color: #ef4444;
-  margin-right: 4px;
-}
-
-.form-input,
-.form-select,
-.form-textarea {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 14px;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary, #1f2937);
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.form-input:focus,
-.form-select:focus,
-.form-textarea:focus {
-  outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.form-textarea {
-  min-height: 80px;
-  resize: vertical;
-}
-
 .form-hint {
   font-size: 12px;
   color: var(--text-tertiary, #9ca3af);
 }
 
-.btn {
-  padding: 8px 16px;
-  font-size: 14px;
+.form-field {
+  width: 100%;
+}
+
+.form-grid :deep(.el-form-item__label) {
+  font-size: 13px;
   font-weight: 500;
-  border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-primary, #1f2937);
-  cursor: pointer;
-  transition: all 0.2s;
+  color: var(--text-secondary, #6b7280);
 }
 
-.btn:hover {
-  background: var(--bg-hover, #f9fafb);
+.form-grid :deep(.el-input-number .el-input__wrapper) {
+  width: 100%;
 }
 
-.btn--primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
-}
-
-.btn--primary:hover {
-  background: #1d4ed8;
+.form-grid :deep(.el-input-number .el-input__inner) {
+  text-align: left;
 }
 </style>

@@ -78,7 +78,7 @@ onMounted(() => { loadModelDetail(); });
     </ElResult>
     <template v-else-if="modelData">
       <div class="detail-header">
-        <button class="detail-back" @click="goBack"><el-icon :size="20"><ArrowLeft /></el-icon></button>
+        <ElButton class="detail-back" text :icon="ArrowLeft" @click="goBack" />
         <div class="detail-header__icon" v-if="modelData">
           <el-icon :size="28" color="#2563eb"><Monitor /></el-icon>
         </div>
@@ -88,7 +88,7 @@ onMounted(() => { loadModelDetail(); });
           </div>
           <span style="font-size: 12px; color: var(--text-secondary)">模型类型 {{ modelData.litellm_params?.model || '--' }}</span>
         </div>
-        <button class="detail-link" @click="openDrawer('view')">模型详情</button>
+        <ElButton class="detail-link" link type="primary" @click="openDrawer('view')">模型详情</ElButton>
       </div>
 
       <div class="metadata-bar">
@@ -112,10 +112,21 @@ onMounted(() => { loadModelDetail(); });
 .detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .detail-header__icon { width: 44px; height: 44px; border-radius: 10px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
 .detail-header__icon img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
-.detail-link { margin-left: auto; font-size: 14px; color: #2563eb; cursor: pointer; background: none; border: none; }
-.detail-link:hover { text-decoration: underline; }
-.detail-back { border: none; background: none; cursor: pointer; padding: 4px; color: var(--text-secondary); }
-.detail-back:hover { color: var(--text-primary); }
+.detail-link {
+  margin-left: auto;
+  font-size: 14px;
+  height: auto;
+  padding: 0;
+}
+.detail-back {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-secondary);
+}
+.detail-back:hover {
+  color: var(--text-primary);
+}
 .detail-header__info { display: flex; flex-direction: column; gap: 4px; }
 .detail-header__name { display: flex; align-items: center; gap: 12px; }
 .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #374151; }

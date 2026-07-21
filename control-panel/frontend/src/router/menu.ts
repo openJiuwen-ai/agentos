@@ -1,11 +1,11 @@
 import type { RouteRecordRaw } from 'vue-router';
-import applianceIcon from '@/assets/icons/appliance.svg';
-import inferenceModelIcon from '@/assets/icons/inference-model.svg';
-import agentIcon from '@/assets/icons/agent.svg';
-import skillStoreIcon from '@/assets/icons/skill-store.svg';
-import alarmIcon from '@/assets/icons/alarm.svg';
-import userManagementIcon from '@/assets/icons/user-management.svg';
-import logCenterIcon from '@/assets/icons/log-center.svg';
+import applianceIcon from '@/assets/images/appliance.svg';
+import inferenceModelIcon from '@/assets/images/inference-model.svg';
+import agentIcon from '@/assets/images/agent.svg';
+import skillStoreIcon from '@/assets/images/skill-store.svg';
+import alarmIcon from '@/assets/images/alarm.svg';
+import userManagementIcon from '@/assets/images/user-management.svg';
+import logCenterIcon from '@/assets/images/log-center.svg';
 
 export interface AppRouteNode {
   key: string;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElTag, ElDropdown, ElDropdownMenu, ElDropdownItem, ElIcon } from 'element-plus';
+import { ElTag, ElDropdown, ElDropdownMenu, ElDropdownItem, ElIcon, ElButton } from 'element-plus';
 import { Edit, Refresh, Delete, MoreFilled, Monitor } from '@element-plus/icons-vue';
 
 defineProps<{
@@ -38,7 +38,7 @@ function handleAction(action: string) {
         <div class="model-card__icon">
           <img v-if="iconSrc" :src="iconSrc" :alt="name" class="model-card__icon-img" />
           <slot v-else name="icon">
-            <el-icon :size="24" color="#6b7280"><Monitor /></el-icon>
+            <ElIcon :size="24" color="#6b7280"><Monitor /></ElIcon>
           </slot>
         </div>
         <div>
@@ -64,25 +64,29 @@ function handleAction(action: string) {
     <div class="model-card__footer">
       <span v-if="meta?.length" class="model-card__meta">{{ meta.join(' · ') }}</span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleAction">
-        <button class="model-card__more" title="更多" @click.stop>
-          <el-icon :size="16"><MoreFilled /></el-icon>
-        </button>
+        <ElButton
+          class="model-card__more"
+          text
+          :icon="MoreFilled"
+          title="更多"
+          @click.stop
+        />
         <template #dropdown>
           <ElDropdownMenu>
             <ElDropdownItem command="edit">
-              <el-icon><Edit /></el-icon>
+              <ElIcon><Edit /></ElIcon>
               编辑信息
             </ElDropdownItem>
             <ElDropdownItem command="restart">
-              <el-icon><Refresh /></el-icon>
+              <ElIcon><Refresh /></ElIcon>
               重启服务
             </ElDropdownItem>
-            <el-dropdown-item divided command="delete">
-              <span style="color: #ef4444">
-                <el-icon><Delete /></el-icon>
+            <ElDropdownItem divided command="delete">
+              <span class="model-card__delete">
+                <ElIcon><Delete /></ElIcon>
                 删除模型
               </span>
-            </el-dropdown-item>
+            </ElDropdownItem>
           </ElDropdownMenu>
         </template>
       </ElDropdown>
@@ -224,19 +228,20 @@ function handleAction(action: string) {
 }
 
 .model-card__more {
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   color: #9ca3af;
-  transition: all 0.2s;
 }
 
 .model-card__more:hover {
-  background: #f3f4f6;
   color: #6b7280;
+}
+
+.model-card__delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #ef4444;
 }
 </style>

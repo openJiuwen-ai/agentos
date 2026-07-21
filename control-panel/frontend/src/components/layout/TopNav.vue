@@ -10,11 +10,13 @@ import {
 } from 'element-plus';
 import { topMenus } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
-import personIcon from '@/assets/icons/person-line.svg';
-import helpIcon from '@/assets/icons/help.svg';
-import rightArrow from '@/assets/icons/right-arrow.svg';
-import arrowDownLine from '@/assets/icons/arrow-down-line.svg';
-import logoutIcon from '@/assets/icons/logout.svg?raw';
+import personIcon from '@/assets/images/person-line.svg';
+import helpIcon from '@/assets/images/help.svg';
+import rightArrow from '@/assets/images/right-arrow.svg';
+import arrowDownLine from '@/assets/images/arrow-down-line.svg';
+import logoutIcon from '@/assets/images/logout.svg';
+import logoImg from '@/assets/images/logo.png';
+import profileAvatarImg from '@/assets/images/profile-avatar.png';
 
 const route = useRoute();
 const router = useRouter();
@@ -74,7 +76,7 @@ function handleProfileCommand(command: string | number | object) {
 <template>
   <header class="top-nav">
     <div class="top-nav__left">
-      <img src="/images/logo.png" alt="AgentOS" class="top-nav__logo" />
+      <img :src="logoImg" alt="AgentOS" class="top-nav__logo" />
       <span class="top-nav__brand">AgentOS</span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleWorkspaceCommand">
         <button type="button" class="workspace-btn">
@@ -138,7 +140,7 @@ function handleProfileCommand(command: string | number | object) {
           <ElDropdownMenu class="profile-dropdown-menu">
             <ElDropdownItem command="profile" class="profile-dropdown-header">
               <div class="profile-header">
-                <img class="profile-header__avatar" src="/images/profile-avatar.png" :alt="username" />
+                <img class="profile-header__avatar" :src="profileAvatarImg" :alt="username" />
                 <div class="profile-header__info">
                   <div class="profile-header__name-row">
                     <span class="profile-header__name">{{ username || '用户' }}</span>
@@ -153,7 +155,7 @@ function handleProfileCommand(command: string | number | object) {
               </div>
             </ElDropdownItem>
             <ElDropdownItem command="logout" divided class="profile-logout">
-              <span class="profile-logout__icon" v-html="logoutIcon" />
+              <img class="profile-logout__icon" :src="logoutIcon" alt="退出登录" width="16" height="16" />
               <span>退出登录</span>
             </ElDropdownItem>
           </ElDropdownMenu>
@@ -360,8 +362,9 @@ function handleProfileCommand(command: string | number | object) {
   background: #1f55b5;
 }
 
-.profile-logout {
-  color: #e02128 !important;
+.profile-logout,
+.profile-logout span {
+  color: rgba(224, 33, 40, 1) !important;
 }
 
 .profile-logout__icon {
@@ -386,5 +389,9 @@ function handleProfileCommand(command: string | number | object) {
   padding: 8px 14px !important;
   height: auto !important;
   line-height: normal !important;
+}
+
+.profile-dropdown-menu li.profile-logout.el-dropdown-menu__item:hover {
+  background-color: #fee7e8 !important;
 }
 </style>
