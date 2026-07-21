@@ -177,11 +177,18 @@ fetch_latest_yr_schedule_time() {
   fi
 
   schedule_time="$(printf '%s\n' "${html}" \
-    | grep 'openeuler' \
-    | head -1 \
-    | sed -E 's/.*openeuler<\/td><td>([0-9]+)<\/td>.*/\1/')"
+    | sed -n '/<h2>openeuler<\/h2>/,/<hr class="os-divider">/p' \
+    | sed -n 's/.*<tr><td>\([0-9][0-9]*\)<\/td>.*/\1/p' \
+    | head -1)"
 
-  if [[ -z "${schedule_time}" || "${schedule_time}" == *openeuler* ]]; then
+  if [[ -z "${schedule_time}" ]]; then
+    schedule_time="$(printf '%s\n' "${html}" \
+      | grep -oE 'daily_build/[0-9]+/openeuler' \
+      | head -1 \
+      | sed -E 's|daily_build/([0-9]+)/openeuler|\1|')"
+  fi
+
+  if [[ -z "${schedule_time}" ]]; then
     echo "error: failed to parse latest openeuler build from ${YUANRONG_DAILY_INDEX_URL}" >&2
     return 1
   fi
@@ -441,7 +448,7 @@ pack() {
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
   local client_tgz="${BUILD_DIR}/AgentOS-Client.tgz"
-  local server_tgz="${BUILD_DIR}/AgentOS-Server.tgz"
+  local server_tgz="${BUILD_DIR}/AgentOS-Server-${ARCH}.tgz"
 
   tar -czf "${client_tgz}" -C "${client_staging}" .
   tar -czf "${server_tgz}" -C "${server_staging}" .

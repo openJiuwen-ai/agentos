@@ -46,7 +46,7 @@
 |------|-----------|--------|------|
 | 构建模式 | `daily` / `release` | `daily` | 每日构建或发布包 |
 | Python ABI | `--cp-tag` | `cp311` | yuanrong wheel 的 cp tag |
-| 架构 | （脚本内 `ARCH`） | `uname -m` | 影响 openyuanrong 包路径与文件名 |
+| 架构 | （脚本内 `ARCH`） | `uname -m` | 影响 openyuanrong 包路径、wheel 文件名与服务端 tar 包名 |
 | yuanrong 发布版本 | `--yuanrong-release-version` | `0.9.0` | 仅 `release` 模式 |
 | jiuwenswarm 发布版本 | `--jiuwenswarm-release-version` | `0.2.2` | 仅 `release` 模式，wheel 文件名中的版本号 |
 | jiuwenswarm release git tag | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | 仅 `release` 模式，对应 `JIUWENSWARM_RELEASE_GIT_TAG` |
@@ -68,7 +68,7 @@
 | 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
 | 6 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
 | 7 | `build_conch` | 预留步骤（当前为空） |
-| 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server.tgz` |
+| 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server-${ARCH}.tgz` |
 
 任一步骤失败时，脚本会因 `set -e` 立即退出。
 
@@ -92,7 +92,7 @@
 
 - 包版本（`yr_ver`）：默认 `9.9.9`，可通过 `--yuanrong-daily-version` 修改
 - 构建时间（`yr_schedule_time`）：
-  - 默认从 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 解析 **openeuler** 最新 `Latest Build`
+  - 默认从 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 解析 **openeuler** 区块下最新的 `Build Number`
   - 也可通过 `--yr-schedule-time` 手动指定，如 `202607101255`
 - 来源：`https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/<yr_schedule_time>/openeuler/<arch>/`
 
@@ -113,7 +113,7 @@
 - release git tag：默认 `JiuwenSwarm0.2.2`，可通过 `--jiuwenswarm-release-git-tag` 修改（对应构建参数 `JIUWENSWARM_RELEASE_GIT_TAG`）
 - 源码 clone：按 `JIUWENSWARM_RELEASE_GIT_TAG` checkout 到 `build/dist/downloads/jiuwenswarm_src/`
 - wheel 来源：`https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/<release_git_tag>/`
-- 打包时，`jiuwenswarm_src/deploy/yuanrong/` 会拷贝到 `AgentOS-Server.tgz` 的 `jiuwenswarm/deploy/yuanrong/`（供 `deploy/jiuwenswarm/module.sh` 调用）
+- 打包时，`jiuwenswarm_src/deploy/yuanrong/` 会拷贝到 `AgentOS-Server-${ARCH}.tgz` 的 `deploy/jiuwenswarm/`（供 `deploy/jiuwenswarm/module.sh` 调用）
 
 | 文件 |
 |------|
@@ -164,14 +164,14 @@ build/dist/downloads/openyuanrong/      # openyuanrong wheel 包
 | daily | macOS / Windows / linux aarch64 / linux x86_64 共 4 个 TUI wheel |
 | release | macOS / Windows 共 2 个 TUI wheel |
 
-### `AgentOS-Server.tgz`
+### `AgentOS-Server-${ARCH}.tgz`
 
-服务端包，包含：
+服务端包，文件名随构建机器架构变化，例如 `AgentOS-Server-x86_64.tgz`、`AgentOS-Server-aarch64.tgz`（`ARCH` 来自 `uname -m`）。包含：
 
 - `jiuwenswarm-<version>-py3-none-any.whl`
 - 上述 openYuanrong wheel（daily 6 个 / release 6 个）
 - `deploy/` 目录（来自仓库 `deploy/`）
-- `jiuwenswarm/deploy/yuanrong/` 部署脚本（来自 `jiuwenswarm_src/deploy/yuanrong/`）
+- `deploy/jiuwenswarm/` 部署脚本（来自 `jiuwenswarm_src/deploy/yuanrong/`，与仓库 `deploy/jiuwenswarm/` 合并）
 
 ## 目录结构示例
 
@@ -183,7 +183,7 @@ build/
 ├── README.md
 └── dist/
     ├── AgentOS-Client.tgz
-    ├── AgentOS-Server.tgz
+    ├── AgentOS-Server-<arch>.tgz   # 如 AgentOS-Server-x86_64.tgz
     ├── downloads/
     │   ├── jiuwenswarm/        # wheel 包
     │   ├── jiuwenswarm_src/    # jiuwenswarm git 源码
@@ -193,7 +193,7 @@ build/
         └── server/
 ```
 
-### `AgentOS-Server.tgz` 解压后结构
+### `AgentOS-Server-${ARCH}.tgz` 解压后结构
 
 #### daily 模式
 
@@ -316,7 +316,7 @@ rm -f build/dist/downloads/openyuanrong/*.part
 
 **手动指定 yuanrong 每日构建时间**
 
-在 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 查找 openeuler 对应的 `Latest Build` 时间戳后：
+在 [daily build 索引页](https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html) 查找 openeuler 区块下最新的 `Build Number` 后：
 
 ```bash
 ./build/build.sh daily --yr-schedule-time 202607101255
