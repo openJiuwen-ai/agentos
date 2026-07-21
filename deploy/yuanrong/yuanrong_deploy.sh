@@ -132,8 +132,7 @@ yr_ensure_pip() {
     local python_version="${YR_PYTHON_VERSION}"
 
     info "Ensuring pip on ${host}..."
-    exec_on_host "${host}" "python${python_version} -m ensurepip --upgrade 2>/dev/null || true"
-    exec_on_host "${host}" "python${python_version} -m pip install --upgrade pip --quiet"
+    exec_on_host "${host}" "python${python_version} -m ensurepip 2>/dev/null || true"
 }
 
 yr_install_packages() {
@@ -204,7 +203,13 @@ yr_install_packages() {
         fi
         info "Installing on ${host}: ${package}"
         if exec_on_host "${host}" "python${python_version} -m pip install '${install_target}' --quiet"; then
-            success "Installed on ${host}: ${package}"
+            # 加固：pip show 确认包确实已注册到当前 Python 环境
+            local pkg_name="${package%%-${yr_version}-*}"
+            if exec_on_host "${host}" "python${python_version} -m pip show '${pkg_name}' >/dev/null 2>&1"; then
+                success "Installed on ${host}: ${package}"
+            else
+                error "pip install returned success but 'pip show ${pkg_name}' failed on ${host} (wheel may be corrupted or installed to wrong env)"
+            fi
         else
             error "Failed to install on ${host}: ${package}"
         fi

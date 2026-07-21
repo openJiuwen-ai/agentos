@@ -50,7 +50,12 @@ jiuwenswarm_install() {
         local jw_whl="${found_whl%%$'\n'*}"
         info "Found jiuwenswarm whl: ${jw_whl}"
         if bash -c "python${YR_PYTHON_VERSION} -m pip install '${jw_whl}' --quiet"; then
-            success "jiuwenswarm installed on ${local_host}"
+            # 加固：pip show 确认包确实已注册到当前 Python 环境
+            if bash -c "python${YR_PYTHON_VERSION} -m pip show jiuwenswarm >/dev/null 2>&1"; then
+                success "jiuwenswarm installed on ${local_host}"
+            else
+                error "pip install returned success but 'pip show jiuwenswarm' failed on ${local_host} (wheel may be corrupted or installed to wrong env)"
+            fi
         else
             error "Failed to install jiuwenswarm on ${local_host}"
         fi
