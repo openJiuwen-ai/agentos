@@ -5,9 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CALLER_CWD="$(pwd)"
 
-VENV_DIR="$PROJECT_DIR/.venv"
-RUN_DIR="$PROJECT_DIR/.run"
-PID_FILE="$RUN_DIR/jiuwenbox.pid"
+# 运行态目录（日志、last-start.env）；固定在 /tmp，避免写进仓库树
+RUN_DIR="${JIUWENBOX_RUN_DIR:-/tmp/jiuwenbox}"
 LOG_FILE="$RUN_DIR/jiuwenbox.log"
 LAST_ENV_FILE="$RUN_DIR/last-start.env"
 DEFAULT_LISTEN="unix:///run/jiuwenbox/jiuwenbox.sock"
@@ -20,7 +19,9 @@ UDS_MODE="${JIUWENBOX_UDS_MODE:-}"
 SAVE_LOGS_DIR="${JIUWENBOX_SAVE_LOGS_DIR:-}"
 
 STOP_TIMEOUT_SECONDS=15
-PGREP_PATTERN='[j]iuwenbox\.server\.launcher'
+# Match console-script entrypoint (python .../jiuwenbox-server) and module form
+# (python -m jiuwenbox.server.launcher). Bracket prefix avoids matching pgrep itself.
+PGREP_PATTERN='[j]iuwenbox(-server|\.server\.launcher)'
 
 usage() {
   cat <<'EOF'
@@ -28,17 +29,18 @@ Usage: jiuwenbox_deploy.sh [--python PATH] <command> [options]
 
 Commands:
   start [policy.yaml]     Start jiuwenbox-server in background (or --foreground)
-  stop                    Stop the running server
-  clean                   Stop server and remove ~/.jiuwenbox/ and .run/
+  stop                    Stop the running server (by process search)
+  status                  Check whether jiuwenbox-server is running (exit 0 if yes, 1 if no)
+  clean                   Stop server and remove ~/.jiuwenbox/ and /tmp/jiuwenbox/
 
 Global options:
-  --python PATH           Python interpreter (default: .venv/bin/python3, else python3)
+  --python PATH           Python interpreter (default: python3)
                           jiuwenbox-server is invoked from PATH
 
 Start options:
   --save-logs DIR         Persist per-sandbox audit JSONL under DIR
                           (equivalent to JIUWENBOX_SAVE_LOGS_DIR)
-  --foreground            Run in foreground (start only; no pid file)
+  --foreground            Run in foreground (start only)
   --python PATH           Same as the global option (may appear after start)
 
 Environment (same names as run_docker.sh / launcher):
@@ -50,10 +52,11 @@ Environment (same names as run_docker.sh / launcher):
 
 Examples:
   sudo ./jiuwenbox_deploy.sh start
-  sudo ./jiuwenbox_deploy.sh --python .venv/bin/python3 start
-  sudo ./jiuwenbox_deploy.sh start --python .venv/bin/python3 ./default-policy.yaml
-  sudo ./jiuwenbox_deploy.sh --python .venv/bin/python3 clean
+  sudo ./jiuwenbox_deploy.sh --python python3.11 start
+  sudo ./jiuwenbox_deploy.sh start --python python3.11 ./default-policy.yaml
+  sudo ./jiuwenbox_deploy.sh --python python3.11 clean
   sudo ./jiuwenbox_deploy.sh stop
+  ./jiuwenbox_deploy.sh status
 EOF
 }
 
@@ -76,23 +79,15 @@ is_running_pid() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
-read_pid() {
-  if [[ -f "$PID_FILE" ]]; then
-    tr -d '[:space:]' <"$PID_FILE"
-    return 0
+# 通过进程搜索定位 jiuwenbox-server
+find_server_pids() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$PGREP_PATTERN" 2>/dev/null || true
   fi
-  return 1
 }
 
 find_server_pid() {
-  local pid=""
-  if pid="$(read_pid 2>/dev/null || true)" && is_running_pid "$pid"; then
-    echo "$pid"
-    return 0
-  fi
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "$PGREP_PATTERN" 2>/dev/null | head -n 1 || true
-  fi
+  find_server_pids | head -n 1 || true
 }
 
 parse_listen_uri() {
@@ -194,11 +189,7 @@ resolve_python() {
   fi
 
   if [[ -z "$candidate" ]]; then
-    if [[ -x "$VENV_DIR/bin/python3" ]]; then
-      candidate="$VENV_DIR/bin/python3"
-    else
-      candidate="python3"
-    fi
+    candidate="python3"
   fi
 
   if [[ "$candidate" == */* ]]; then
@@ -464,7 +455,6 @@ cmd_start() {
 
   nohup env "${START_ENV[@]}" jiuwenbox-server "${server_args[@]}" >>"$LOG_FILE" 2>&1 &
   local pid=$!
-  echo "$pid" >"$PID_FILE"
   write_last_start_env
 
   sleep 1
@@ -478,34 +468,53 @@ cmd_start() {
 }
 
 cmd_stop() {
+  local pids
   local pid
-  pid="$(find_server_pid || true)"
+  local waited=0
+  local remaining=""
 
-  if [[ -z "$pid" ]]; then
+  pids="$(find_server_pids)"
+  if [[ -z "$pids" ]]; then
     echo "jiuwenbox is not running"
-    rm -f "$PID_FILE"
     remove_stale_uds_socket
     exit 0
   fi
 
-  echo "Stopping jiuwenbox (pid $pid)..."
-  kill -TERM "$pid" 2>/dev/null || true
+  echo "Stopping jiuwenbox process(es): ${pids//$'\n'/ }..."
+  for pid in $pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
 
-  local waited=0
-  while is_running_pid "$pid" && (( waited < STOP_TIMEOUT_SECONDS )); do
+  while (( waited < STOP_TIMEOUT_SECONDS )); do
+    remaining="$(find_server_pids)"
+    [[ -z "$remaining" ]] && break
     sleep 1
     waited=$((waited + 1))
   done
 
-  if is_running_pid "$pid"; then
-    echo "Process did not exit; sending SIGKILL"
-    kill -KILL "$pid" 2>/dev/null || true
+  remaining="$(find_server_pids)"
+  if [[ -n "$remaining" ]]; then
+    echo "Process(es) did not exit; sending SIGKILL: ${remaining//$'\n'/ }"
+    for pid in $remaining; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
     sleep 1
   fi
 
-  rm -f "$PID_FILE"
   remove_stale_uds_socket
   echo "Stopped jiuwenbox"
+}
+
+# 供 module.sh / 脚本调用：exit 0 表示已运行，exit 1 表示未运行
+cmd_status() {
+  local pids
+  pids="$(find_server_pids)"
+  if [[ -n "$pids" ]]; then
+    echo "jiuwenbox is running (pid(s): ${pids//$'\n'/ })"
+    exit 0
+  fi
+  echo "jiuwenbox is not running"
+  exit 1
 }
 
 jiuwenbox_home_dir() {
@@ -579,7 +588,7 @@ main() {
         set_python_config "$2"
         shift 2
         ;;
-      start|stop|clean)
+      start|stop|clean|status)
         break
         ;;
       *)
@@ -604,6 +613,9 @@ main() {
     stop)
       require_root "$0" stop "$@"
       cmd_stop "$@"
+      ;;
+    status)
+      cmd_status "$@"
       ;;
     clean)
       require_root "$0" ${PYTHON_CONFIG:+--python "$PYTHON_CONFIG"} clean "$@"

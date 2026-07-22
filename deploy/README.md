@@ -8,6 +8,7 @@
 
 | 模块 | 说明 | 部署/安装内容 |
 | --- | --- | --- |
+| `jiuwenbox` | 沙箱服务 | 在 `--hosts` 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
 | `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
 | `jiuwenswarm` | jiuwenswarm 函数 + gateway | 函数注册 + gateway 进程（whl 包已包含 gateway） |
 
@@ -17,6 +18,10 @@
 deploy/
 ├── agentos.sh                # agentos 部署总脚本（不含模块特有逻辑）
 ├── README.md                 # 本文档
+├── jiuwenbox/
+│   ├── module.sh             # jiuwenbox 钩子（含 --hosts 编排）
+│   ├── jiuwenbox_deploy.sh   # 本机 start/stop/status
+│   └── default-policy.yaml   # policy 模板（含 extensions 占位符）
 ├── yuanrong/
 │   ├── module.sh             # yuanrong 钩子函数
 │   └── yuanrong_deploy.sh    # yuanrong 原始部署脚本
@@ -101,10 +106,16 @@ bash agentos.sh restart --hosts 192.168.1.1
 | `restart` | 重启全部组件（先 down 再 up） |
 | `install` | 在本机安装全部组件的 whl 包（不启动服务） |
 | `uninstall` | 在本机卸载全部组件的 whl 包 |
-| `--hosts HOSTS` | 目标主机 IP 列表，逗号分隔。第一个为 master，其余为 agent。不指定时默认本机 IP |
+| `--hosts HOSTS` | 目标主机 IP 列表，逗号分隔。yuanrong：第一个为 master、其余为 agent；jiuwenbox：每台各启一份。不指定时默认本机 IP |
 | `-h, --help` | 显示帮助信息 |
 
 ### 配置
+
+#### jiuwenbox
+
+- 配置文件：`deploy/jiuwenbox/default-policy.yaml`（`__JIUWENSWARM_EXTENSIONS_DIR__` 在各机 local-up 时按该机 `pip show jiuwenswarm` 替换）
+- `--hosts` 时在列表中**每一台**启动一份 jiuwenbox（无 master/agent 差异）；远端通过 SSH 同步脚本后执行 `module.sh local-up`
+- 前置：各目标机已安装 jiuwenswarm（含 `jiuwenbox-server`），控制机到目标机 root SSH 免密
 
 #### yuanrong
 

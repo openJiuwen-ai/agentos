@@ -88,7 +88,7 @@ filesystem_policy:
     #   mode: "rw"
     - host_path: "__JIUWENSWARM_EXTENSIONS_DIR__"
       sandbox_path: "__JIUWENSWARM_EXTENSIONS_DIR__"
-      mode: "rw"
+      mode: "ro"
   # Device nodes to expose inside the sandbox with bwrap --dev-bind.
   # Each item uses:
   #   host_path: absolute device path on the host
@@ -112,7 +112,7 @@ namespace:
   # user:
   #   true: create a new user namespace
   #   false: reuse the current user namespace
-  user: true
+  user: false
 
   # pid:
   #   true: create a new PID namespace
