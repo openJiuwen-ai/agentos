@@ -158,15 +158,44 @@ def _mask_key(key: str, show: int = 8) -> str:
 # ─── 辅助函数 ────────────────────────────────────────────────────────────────────
 
 
+async def _build_health_map(svc: "LitellmService") -> dict[str, str]:
+    """调用 LiteLLM /health，构建 litellm_params.model|api_base -> status 的映射。"""
+    try:
+        data = await svc.request("GET", "/health")
+    except (LitellmConnectionError, LitellmUpstreamError):
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    for ep in data.get("healthy_endpoints") or []:
+        key = f"{ep.get('model', '')}|{ep.get('api_base', '')}"
+        result[key] = "healthy"
+    for ep in data.get("unhealthy_endpoints") or []:
+        key = f"{ep.get('model', '')}|{ep.get('api_base', '')}"
+        result[key] = "unhealthy"
+    return result
+
+
 def _fetch_model_detail(
     svc: "LitellmService",
     m: dict,
     local: "LitellmModelParams | None",
+    health_map: dict[str, str] | None = None,
 ) -> dict | None:
     """合并 LiteLLM 模型信息与本地扩展字段。"""
     model_id = m.get("model_name", "") or m.get("id", "")
     if not model_id:
         return None
+
+    # 通过 litellm_params.model + api_base 匹配健康状态
+    status = "unknown"
+    if health_map is not None:
+        llm_model = (m.get("litellm_params") or {}).get("model") or ""
+        api_base = (m.get("litellm_params") or {}).get("api_base") or ""
+        key = f"{llm_model}|{api_base}"
+        status = health_map.get(key, "unknown")
 
     return {
         "id": m.get("model_info", {}).get("id") or model_id,
@@ -177,6 +206,7 @@ def _fetch_model_detail(
         "max_concurrent": local.max_concurrent if local else None,
         "inference_engine": local.inference_engine if local else None,
         "grafana_job_name": _grafana_job_from_local(local),
+        "status": status,
         "created_at": local.created_at if local else None,
         "updated_at": local.updated_at if local else None,
     }
@@ -445,8 +475,11 @@ class LitellmService:
             for row in name_result.scalars().all():
                 local_by_name[row.model_name] = row
 
+        # 获取健康状态
+        health_map = await _build_health_map(self)
+
         tasks = [
-            _fetch_model_detail(self, m, local_by_name.get(m.get("model_name")))
+            _fetch_model_detail(self, m, local_by_name.get(m.get("model_name")), health_map)
             for m in llm_models
         ]
         merged = [r for r in tasks if r is not None]

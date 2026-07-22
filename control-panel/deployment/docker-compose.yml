@@ -22,6 +22,8 @@ services:
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
     volumes:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - agentos
     depends_on:
@@ -83,6 +85,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - agentos
     restart: unless-stopped

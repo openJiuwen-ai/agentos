@@ -39,6 +39,7 @@ export interface InferenceModelItem {
   max_concurrent?: number;
   inference_engine?: string;
   grafana_job_name?: string;
+  status?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -53,6 +54,7 @@ export interface ModelDetail {
   max_concurrent?: number;
   inference_engine?: string;
   grafana_job_name?: string;
+  status?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -67,6 +69,7 @@ export interface ModelListResponse {
 
 /** API Key 项（后端返回格式） */
 export interface ApiKeyItem {
+  key_name?: string;
   key_preview: string;
   key_alias: string;
   bound_model?: string;
@@ -135,7 +138,7 @@ export async function fetchApiKeyList() {
 }
 
 /** 创建 API Key */
-export async function createApiKey(data: { model?: string }) {
+export async function createApiKey(data: { key_name?: string; model?: string }) {
   return post<CreateApiKeyResponse>('/api/v1/litellm/key/generate', data);
 }
 

@@ -108,19 +108,26 @@ async function loadModels() {
   try {
     const data = await fetchModelList({ keyword: searchQuery.value });
     // 将后端数据转换为ModelCard期望的格式
-    models.value = data?.items?.map(item => ({
-      id: item.id,
-      name: item.model_name,
-      status: 'success' as const,
-      statusText: '健康',
-      tags: [],
-      e2eP95: '--',
-      todayCalls: '--',
-      todayTokens: '--',
-      meta: [item.litellm_params.model],
-      iconSrc: undefined,
-      contextWindow: item.model_info?.context_window,
-    })) ?? [];
+    models.value = data?.items?.map(item => {
+      const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
+        healthy: { status: 'success', statusText: '健康' },
+        unhealthy: { status: 'error', statusText: '异常' },
+      };
+      const { status, statusText } = statusMap[item.status ?? ''] ?? { status: 'warning', statusText: '未知' };
+      return {
+        id: item.id,
+        name: item.model_name,
+        status,
+        statusText,
+        tags: [],
+        e2eP95: '--',
+        todayCalls: '--',
+        todayTokens: '--',
+        meta: [item.litellm_params.model],
+        iconSrc: undefined,
+        contextWindow: item.model_info?.context_window,
+      };
+    }) ?? [];
   } catch (e) {
     models.value = [];
     listError.value = e instanceof Error ? e.message : '加载模型列表失败';
@@ -170,7 +177,7 @@ async function handleSaveModel(data: Partial<ModelDetail>) {
 
 async function handleRestartModel(id: string) { try { await restartModel(id); await loadModels(); } catch (e) { console.error(e); } }
 
-async function handleAddModel(formData: { name: string; type: string; contextLength: number | null; deployName: string; deployFramework: string; serviceIp: string; servicePort: number | null; metricsUrl: string; paramSize?: string; tags?: string; description?: string }) {
+async function handleAddModel(formData: { name: string; type: string; contextLength: number | null; deployName: string; deployFramework: string; serviceIp: string; servicePort: number | null; metricsUrl: string; apiKey?: string; paramSize?: string; tags?: string; description?: string }) {
   // 必填项验证
   if (!formData.name?.trim()) {
     ElMessage.warning('请输入模型名称');
@@ -199,6 +206,7 @@ async function handleAddModel(formData: { name: string; type: string; contextLen
       litellm_params: {
         model: modelIdentifier,
         api_base: serviceUrl,
+        api_key: formData.apiKey || 'sk-1234',
       },
       instance_url: formData.metricsUrl || undefined,
       inference_engine: formData.deployFramework || undefined,

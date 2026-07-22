@@ -108,6 +108,7 @@ class ModelItem(BaseModel):
     max_concurrent: int | None = None
     inference_engine: str | None = None
     grafana_job_name: str | None = None
+    status: str = "unknown"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

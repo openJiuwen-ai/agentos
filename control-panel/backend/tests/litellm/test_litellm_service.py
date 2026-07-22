@@ -713,7 +713,10 @@ class TestServiceListModels:
         }
 
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = llm_response
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -731,7 +734,10 @@ class TestServiceListModels:
         ]
 
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = llm_response
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -743,7 +749,10 @@ class TestServiceListModels:
         """场景: /model/info 返回空列表.
         预期: total=0, items=[]."""
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = {"data": []}
+            mock_req.side_effect = lambda method, path, **kw: (
+                {"data": []} if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -763,7 +772,10 @@ class TestServiceListModels:
         }
 
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = llm_response
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -775,7 +787,10 @@ class TestServiceListModels:
         """场景: LiteLLM 返回非预期格式 (无 'data' key 也非列表).
         预期: 不崩溃, 返回 total=0 空列表 (防御性处理)."""
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = {"models": [{"model_name": "x"}], "object": "list"}
+            mock_req.side_effect = lambda method, path, **kw: (
+                {"models": [{"model_name": "x"}], "object": "list"} if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -811,7 +826,10 @@ class TestServiceListModels:
         mock_db.execute.return_value = result1
 
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = llm_response
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             result = await svc.list_models(mock_db, page=1, page_size=20)
 
@@ -831,7 +849,10 @@ class TestServiceListModels:
         }
 
         with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = llm_response
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
 
             page1 = await svc.list_models(mock_db, page=1, page_size=10)
             assert page1["total"] == 25

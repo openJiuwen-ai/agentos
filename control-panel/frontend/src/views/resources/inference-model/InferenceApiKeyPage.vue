@@ -32,6 +32,14 @@ const paginatedApiKeys = computed(() => {
 const showCreateDialog = ref(false);
 const createForm = ref({ name: '' });
 const createLoading = ref(false);
+const createFormRef = ref<InstanceType<typeof ElForm> | null>(null);
+
+const createFormRules = {
+  name: [
+    { required: true, message: '请输入 API Key 名称', trigger: 'blur' },
+    { max: 256, message: 'API Key 名称不能超过 256 个字符', trigger: 'blur' },
+  ],
+};
 
 const showCreatedDialog = ref(false);
 const createdKey = ref<CreateApiKeyResponse | null>(null);
@@ -88,9 +96,15 @@ function openCreateDialog() {
 }
 
 async function handleCreateKey() {
+  if (!createFormRef.value) return;
+  try {
+    await createFormRef.value.validate();
+  } catch {
+    return;
+  }
   createLoading.value = true;
   try {
-    const result = await createApiKey({});
+    const result = await createApiKey({ key_name: createForm.value.name || undefined });
     createdKey.value = result;
     showCreateDialog.value = false;
     showCreatedDialog.value = true;
@@ -128,6 +142,11 @@ onMounted(() => {
       <ElSkeleton v-if="loading" :rows="5" animated style="padding: 20px" />
 
       <ElTable v-else :data="paginatedApiKeys" style="width: 100%">
+        <ElTableColumn label="名称" min-width="140">
+          <template #default="{ row }">
+            {{ row.key_name || row.key_preview }}
+          </template>
+        </ElTableColumn>
         <ElTableColumn prop="key_preview" label="Key预览" min-width="180">
           <template #default="{ row }">
             <span class="mono-text">{{ row.key_preview }}</span>
@@ -177,12 +196,12 @@ onMounted(() => {
       width="400px"
       :close-on-click-modal="false"
     >
-      <ElForm :model="createForm" label-position="top">
-        <ElFormItem label="名称" required>
+      <ElForm ref="createFormRef" :model="createForm" :rules="createFormRules" label-position="top">
+        <ElFormItem label="名称" prop="name">
           <ElInput
             v-model="createForm.name"
             placeholder="请输入 API Key 名称"
-            maxlength="50"
+            maxlength="256"
           />
         </ElFormItem>
       </ElForm>

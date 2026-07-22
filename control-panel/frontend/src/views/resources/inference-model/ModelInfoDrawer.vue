@@ -74,6 +74,7 @@ const formData = ref<FormData>({
     ...props.model?.litellm_params,
     model: props.model?.litellm_params?.model ?? '',
     api_base: props.model?.litellm_params?.api_base ?? '',
+    api_key: props.model?.litellm_params?.api_key ?? '',
   },
   instance_url: props.model?.instance_url,
   max_concurrent: props.model?.max_concurrent,
@@ -101,6 +102,7 @@ watch(
           ...val.litellm_params,
           model: val.litellm_params?.model ?? '',
           api_base: val.litellm_params?.api_base ?? '',
+          api_key: val.litellm_params?.api_key ?? '',
         },
         instance_url: val.instance_url,
         max_concurrent: val.max_concurrent,
@@ -137,6 +139,7 @@ function handleSave() {
     litellm_params: {
       model: modelIdentifier,
       api_base: formData.value.litellm_params.api_base,
+      ...(formData.value.litellm_params.api_key ? { api_key: formData.value.litellm_params.api_key } : {}),
     },
     model_info: {
       id: formData.value.model_info.id,
@@ -204,6 +207,10 @@ function handleSave() {
           </ElFormItem>
           <ElFormItem label="API Base" class="form-grid__item">
             <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000" />
+          </ElFormItem>
+          <ElFormItem label="API Key" class="form-grid__item">
+            <ElInput v-model="formData.litellm_params.api_key" type="password" placeholder="调用模型所需的API Key（可选）" />
+            <span class="form-hint">用于调用第三方模型服务的认证密钥</span>
           </ElFormItem>
           <ElFormItem label="上下文长度" class="form-grid__item">
             <ElInputNumber
