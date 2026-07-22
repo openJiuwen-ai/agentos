@@ -46,31 +46,50 @@ deploy/
 
 - 部署机器到所有目标主机需配置 SSH 免密登录
 - 目标主机需预装指定版本的 Python（默认 3.11）
+- 部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）
 - `up` / `restart` 不安装 whl 包，请先在各目标主机执行 `install`
+
+### 安装包获取
+
+下载或自行构建 `AgentOS-Server.tgz` 安装包并解压，执行 `deploy` 目录中的 `agentos.sh` 脚本。
+
+- 下载地址示例：
+  - x86：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/x86_64/AgentOS-Server.tgz`
+  - arm：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/aarch64/AgentOS-Server.tgz`
+- 自行构建：见 [agentos/README.md](../README.md)
 
 ### 命令
 
+#### 单机部署
+
 ```bash
-# 本机安装全部 whl 包（需将 whl 包放在 agentos 根目录，即 deploy 的同级目录）
-./agentos.sh install
+# 本机安装全部 whl 包
+bash agentos.sh install
 
-# 一键部署全部组件（单机）
-./agentos.sh up --hosts 192.168.1.1
+# 一键部署全部组件到本机
+bash agentos.sh up
 
+# 停止并卸载本机的全部组件
+bash agentos.sh down
+
+# 重启本机的全部组件（先 down 再 up）
+bash agentos.sh restart
+
+# 卸载本机全部 whl 包
+bash agentos.sh uninstall
+```
+
+#### 多机部署（TODO）
+
+```bash
 # 一键部署全部组件（多机，第一个 IP 为 master，其余为 agent）
-./agentos.sh up --hosts 192.168.1.1,192.168.1.2,192.168.1.3
-
-# 不指定 hosts，默认本机部署
-./agentos.sh up
+bash agentos.sh up --hosts 192.168.1.1,192.168.1.2,192.168.1.3
 
 # 停止并卸载全部组件
-./agentos.sh down --hosts 192.168.1.1,192.168.1.2
+bash agentos.sh down --hosts 192.168.1.1,192.168.1.2
 
 # 重启全部组件（先 down 再 up）
-./agentos.sh restart --hosts 192.168.1.1
-
-# 卸载全部 whl 包
-./agentos.sh uninstall
+bash agentos.sh restart --hosts 192.168.1.1
 ```
 
 ### 参数说明
@@ -117,7 +136,7 @@ deploy/
 - **openyuanrong**：`YR_PKG_BASE` 默认指向 agentos 根目录，yuanrong 脚本按版本/arch 自动拼接 whl 文件名
 - **jiuwenswarm**：匹配 `jiuwenswarm-*-py3-none-any.whl`（如 `jiuwenswarm-0.2.3-py3-none-any.whl`，已包含 gateway）
 
-可通过 `YR_PKG_BASE=/other/path ./agentos.sh install` 覆盖 yuanrong 的 whl 目录。
+可通过 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 yuanrong 的 whl 目录。
 
 ---
 
@@ -173,7 +192,7 @@ MODULES=("yuanrong" "jiuwenswarm" "mymodule")
 
 ### 完成
 
-此后 `./agentos.sh up` 会自动按 `yuanrong → jiuwenswarm → mymodule` 顺序部署，`./agentos.sh down` 会逆序卸载，`install` / `uninstall` 同理。
+此后 `bash agentos.sh up` 会自动按 `yuanrong → jiuwenswarm → mymodule` 顺序部署，`bash agentos.sh down` 会逆序卸载，`install` / `uninstall` 同理。
 
 ### 钩子函数说明
 
