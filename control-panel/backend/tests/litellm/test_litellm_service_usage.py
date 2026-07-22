@@ -119,6 +119,8 @@ class TestLitellmServiceUsage:
         result = await svc.get_usage_overview(db_session, start_date="2026-07-01", end_date="2026-07-02")
         assert len(result["users"]) == 2
         assert len(result["daily"]) == 2
+        assert result["daily"][0]["active_users"] == 2
+        assert result["daily"][1]["active_users"] == 1
 
     # [场景] spend 表不存在时调用 get_usage_trend（触发表不存在的 ProgrammingError）
     # [预期] 返回空 items，不抛异常（优雅降级）

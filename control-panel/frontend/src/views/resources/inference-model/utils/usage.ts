@@ -34,6 +34,20 @@ export function getDateRange(daysOrStart: number | string): { start_date: string
   return { start_date: formatDate(start), end_date: formatDate(end) };
 }
 
+/** 生成 start_date 到 end_date（含）的日期序列 */
+export function generateDateSeriesFromRange(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const current = new Date(startDate);
+  const end = new Date(endDate);
+
+  while (current <= end) {
+    dates.push(formatDate(current));
+    current.setDate(current.getDate() + 1);
+  }
+
+  return dates;
+}
+
 export function formatTokens(tokens: number): string {
   if (tokens >= TOKEN_MILLION) {
     return (tokens / TOKEN_MILLION).toFixed(TOKEN_MILLION_FRACTION_DIGITS) + 'M';

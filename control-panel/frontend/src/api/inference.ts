@@ -164,6 +164,7 @@ export interface UsageOverviewResponse {
     tokens: number;
     requests: number;
     cost: number;
+    active_users: number;
   }>;
 }
 

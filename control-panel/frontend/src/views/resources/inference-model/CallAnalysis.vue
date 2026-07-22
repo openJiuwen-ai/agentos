@@ -4,8 +4,16 @@ import * as echarts from 'echarts';
 import { ElAlert, ElDatePicker, ElEmpty, ElSegmented, ElSkeleton, ElTable, ElTableColumn } from 'element-plus';
 import { useAuth } from '@/composables/useAuth';
 import { fetchUsageOverview, fetchUsageByUser, fetchUserUsage, fetchUsageTrend } from '@/api/inference';
-import type { UsageOverviewResponse, UserUsageRankResponse, UserUsageDetailResponse, TrendResponse } from '@/api/inference';
-import { calculateOverviewTotals, calculateUserTotals, formatCost, formatDate, formatTokens, getDateRange } from './utils/usage';
+import type { UserUsageRankResponse, UserUsageDetailResponse, TrendResponse } from '@/api/inference';
+import {
+  calculateOverviewTotals,
+  calculateUserTotals,
+  formatCost,
+  formatDate,
+  formatTokens,
+  generateDateSeriesFromRange,
+  getDateRange,
+} from './utils/usage';
 import apiCallTimesIcon from '@/assets/images/api_call_times.svg';
 import tokenIcon from '@/assets/images/token.svg';
 import personIcon from '@/assets/images/person.svg';
@@ -19,7 +27,6 @@ const error = ref('');
 type TrendPreset = '12h' | '24h' | '7d' | '30d';
 
 const trendPreset = ref<TrendPreset | ''>('12h');
-const trendDays = ref(1);
 const customDateRange = ref<[Date, Date] | null>(null);
 const trendPresetOptions = [
   { label: '近12小时', value: '12h' },
@@ -43,7 +50,6 @@ function resizeCharts() {
 }
 
 // 管理员数据
-const overviewData = ref<UsageOverviewResponse | null>(null);
 const userRankData = ref<UserUsageRankResponse | null>(null);
 const trendData = ref<TrendResponse | null>(null);
 const activeUserTrendData = ref<Array<{ date: string; count: number }>>([]);
@@ -91,56 +97,60 @@ const userDetailSummary = computed(() => {
   };
 });
 
-// 生成完整的日期序列（用于填充没有数据的日期）
-function generateDateSeries(days: number): string[] {
-  const dates: string[] = [];
-  const today = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    dates.push(formatDate(d));
+type DateRange = { start_date: string; end_date: string };
+
+const daysByPreset: Record<TrendPreset, number> = {
+  '12h': 0,
+  '24h': 1,
+  '7d': 7,
+  '30d': 30,
+};
+
+function getPresetRange(preset: TrendPreset): DateRange {
+  return getDateRange(daysByPreset[preset]);
+}
+
+function getCurrentTrendRange(): DateRange {
+  if (customDateRange.value) {
+    return {
+      start_date: formatDate(customDateRange.value[0]),
+      end_date: formatDate(customDateRange.value[1]),
+    };
   }
-  return dates;
+  if (trendPreset.value) {
+    return getPresetRange(trendPreset.value);
+  }
+  return getDateRange(7);
 }
 
 // 将API数据转换为ECharts格式
-function prepareTrendChartData(data: TrendResponse | null, days: number) {
-  let hourlyItems: TrendResponse['items'] | null = null;
-  if (trendPreset.value === '12h') {
-    hourlyItems = (data?.items ?? []).slice(-12);
-  } else if (trendPreset.value === '24h') {
-    hourlyItems = (data?.items ?? []).slice(-24);
-  } else {}
-
-  if (hourlyItems) {
-    return {
-      dates: hourlyItems.map((item) => item.time.slice(-5)),
-      requests: hourlyItems.map((item) => item.requests),
-      tokens: hourlyItems.map((item) => item.tokens),
-    };
-  }
-
-  const dateSeries = generateDateSeries(days);
+function prepareTrendChartData(data: TrendResponse | null, range: DateRange) {
+  const dateSeries = generateDateSeriesFromRange(range.start_date, range.end_date);
   const dataMap = new Map<string, { requests: number; tokens: number }>();
 
   if (data?.items) {
     for (const item of data.items) {
-      dataMap.set(item.time, { requests: item.requests, tokens: item.tokens });
+      const dateKey = item.time.slice(0, 10);
+      dataMap.set(dateKey, { requests: item.requests, tokens: item.tokens });
     }
   }
 
   return {
-    dates: dateSeries.map(d => d.slice(5)), // 只显示月-日
-    requests: dateSeries.map(d => dataMap.get(d)?.requests ?? 0),
-    tokens: dateSeries.map(d => dataMap.get(d)?.tokens ?? 0),
+    dates: dateSeries.map((d) => d.slice(5)),
+    requests: dateSeries.map((d) => dataMap.get(d)?.requests ?? 0),
+    tokens: dateSeries.map((d) => dataMap.get(d)?.tokens ?? 0),
   };
 }
 
 // 渲染趋势图
-function renderTrendChart(chart: echarts.ECharts | null, data: TrendResponse | null, days: number) {
+function renderTrendChart(
+  chart: echarts.ECharts | null,
+  data: TrendResponse | null,
+  range: DateRange,
+) {
   if (!chart) return;
 
-  const { dates, requests, tokens } = prepareTrendChartData(data, days);
+  const { dates, requests, tokens } = prepareTrendChartData(data, range);
 
   chart.setOption({
     tooltip: {
@@ -207,8 +217,25 @@ function renderTrendChart(chart: echarts.ECharts | null, data: TrendResponse | n
     series: [
       {
         name: '调用次数',
-        type: 'bar',
+        type: 'line',
         data: requests,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#2563eb', width: 2 },
+        itemStyle: { color: '#2563eb' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(37, 99, 235, 0.18)' },
+            { offset: 1, color: 'rgba(37, 99, 235, 0)' },
+          ]),
+        },
+      },
+      {
+        name: 'Token数',
+        type: 'bar',
+        yAxisIndex: 1,
+        data: tokens,
         itemStyle: {
           color: '#bfdbfe',
           borderRadius: [2, 2, 0, 0],
@@ -219,24 +246,6 @@ function renderTrendChart(chart: echarts.ECharts | null, data: TrendResponse | n
           },
         },
         barWidth: '60%',
-      },
-      {
-        name: 'Token数',
-        type: 'line',
-        yAxisIndex: 1,
-        data: tokens,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: {
-          color: '#2563eb',
-          width: 2,
-        },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(37, 99, 235, 0.2)' },
-            { offset: 1, color: 'rgba(37, 99, 235, 0)' },
-          ]),
-        },
       },
     ],
   });
@@ -291,17 +300,17 @@ function renderActiveUsersChart() {
   });
 }
 
-async function loadTrend(range: { start_date: string; end_date: string }, granularity: 'hour' | 'day') {
-  const params = { ...range, granularity };
+async function loadTrend(range: DateRange) {
+  const params = { ...range, granularity: 'day' as const };
   try {
     if (isAdmin.value) {
       trendData.value = await fetchUsageTrend(params);
-      renderTrendChart(adminChart, trendData.value, trendDays.value);
+      renderTrendChart(adminChart, trendData.value, range);
     } else {
       const uid = userId.value;
       if (uid) {
         userTrendData.value = await fetchUsageTrend({ ...params, user_id: uid });
-        renderTrendChart(userChart, userTrendData.value, trendDays.value);
+        renderTrendChart(userChart, userTrendData.value, range);
       }
     }
   } catch (e) {
@@ -309,19 +318,50 @@ async function loadTrend(range: { start_date: string; end_date: string }, granul
   }
 }
 
+async function loadUserRank(range: DateRange) {
+  try {
+    userRankData.value = await fetchUsageByUser({ ...range, top: 10 });
+  } catch (e) {
+    console.warn('加载用户排名失败:', e);
+  }
+}
+
+async function loadActiveUserTrend(range: DateRange) {
+  try {
+    const response = await fetchUsageOverview(range);
+    const activeUsersByDate = new Map(
+      (response.daily ?? []).map((item) => [item.date.slice(0, 10), item.active_users ?? 0]),
+    );
+    const dates = generateDateSeriesFromRange(range.start_date, range.end_date);
+    activeUserTrendData.value = dates.map((date) => ({
+      date,
+      count: activeUsersByDate.get(date) ?? 0,
+    }));
+    renderActiveUsersChart();
+  } catch (e) {
+    console.warn('加载活跃用户趋势失败:', e);
+  }
+}
+
+async function reloadFilteredPanels(range: DateRange) {
+  if (isAdmin.value) {
+    await Promise.all([
+      loadTrend(range),
+      loadActiveUserTrend(range),
+      loadUserRank(range),
+    ]);
+    return;
+  }
+
+  await loadTrend(range);
+}
+
 function handleTrendPresetChange(value: string | number | boolean) {
   const preset = String(value) as TrendPreset;
-  const daysByPreset: Record<TrendPreset, number> = {
-    '12h': 1,
-    '24h': 1,
-    '7d': 7,
-    '30d': 30,
-  };
 
   trendPreset.value = preset;
-  trendDays.value = daysByPreset[preset];
   customDateRange.value = null;
-  loadTrend(getDateRange(trendDays.value), preset.endsWith('h') ? 'hour' : 'day');
+  reloadFilteredPanels(getPresetRange(preset));
 }
 
 function handleCustomDateChange(value: [Date, Date] | null) {
@@ -329,25 +369,10 @@ function handleCustomDateChange(value: [Date, Date] | null) {
 
   const [start, end] = value;
   trendPreset.value = '';
-  trendDays.value = Math.max(
-    1,
-    Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1,
-  );
-  loadTrend(
-    { start_date: formatDate(start), end_date: formatDate(end) },
-    'day',
-  );
-}
-
-async function loadActiveUserTrend() {
-  const dates = generateDateSeries(7);
-  const dailyResponses = await Promise.all(
-    dates.map((date) => fetchUsageOverview({ start_date: date, end_date: date })),
-  );
-  activeUserTrendData.value = dailyResponses.map((response, index) => ({
-    date: dates[index],
-    count: response.users?.filter((user) => user.total_requests > 0).length ?? 0,
-  }));
+  reloadFilteredPanels({
+    start_date: formatDate(start),
+    end_date: formatDate(end),
+  });
 }
 
 // 初始化ECharts（确保DOM已渲染）
@@ -358,14 +383,14 @@ function initChart(type: 'admin' | 'user' | 'activeUsers') {
         adminChart.dispose();
       }
       adminChart = echarts.init(adminChartRef.value);
-      renderTrendChart(adminChart, trendData.value, trendDays.value);
+      renderTrendChart(adminChart, trendData.value, getCurrentTrendRange());
     }
     if (type === 'user' && userChartRef.value) {
       if (userChart) {
         userChart.dispose();
       }
       userChart = echarts.init(userChartRef.value);
-      renderTrendChart(userChart, userTrendData.value, trendDays.value);
+      renderTrendChart(userChart, userTrendData.value, getCurrentTrendRange());
     }
     if (type === 'activeUsers' && activeUsersChartRef.value) {
       if (activeUsersChart) {
@@ -403,15 +428,7 @@ async function loadData() {
     const range30 = getDateRange(30);
 
     if (isAdmin.value) {
-      // 管理员：加载所有数据
-      const [overview, userRank] = await Promise.all([
-        fetchUsageOverview(range30),
-        fetchUsageByUser({ ...range30, top: 10 }),
-      ]);
-      overviewData.value = overview;
-      userRankData.value = userRank;
-
-      // 计算概览统计 + 活跃用户数
+      // 管理员：加载概览统计（固定周期，不受趋势筛选影响）
       const [todayRes, weekRes, totalRes] = await Promise.all([
         fetchUsageOverview(getDateRange(0)),
         fetchUsageOverview(getDateRange(7)),
@@ -425,13 +442,9 @@ async function loadData() {
       activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
       totalUsersCount.value = weekRes.users?.length || 0;
 
-      // 趋势图单独加载
+      // 趋势区三个面板按当前筛选范围加载
       try {
-        const [trend] = await Promise.all([
-          fetchUsageTrend({ ...getDateRange(1), granularity: 'hour' }),
-          loadActiveUserTrend(),
-        ]);
-        trendData.value = trend;
+        await reloadFilteredPanels(getPresetRange('12h'));
       } catch (e) {
         console.warn('加载趋势数据失败:', e);
       }
@@ -457,13 +470,9 @@ async function loadData() {
         total: calculateUserTotals(totalRes),
       };
 
-      // 趋势图单独加载
+      // 趋势图按当前筛选范围加载
       try {
-        userTrendData.value = await fetchUsageTrend({
-          ...getDateRange(1),
-          granularity: 'hour',
-          user_id: uid,
-        });
+        await reloadFilteredPanels(getPresetRange('12h'));
       } catch (e) {
         console.warn('加载趋势数据失败:', e);
       }

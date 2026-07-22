@@ -277,6 +277,7 @@ class OverviewDailyItem(BaseModel):
     tokens: int = 0
     requests: int = 0
     cost: float = 0.0
+    active_users: int = 0
 
 
 class OverviewResponse(BaseModel):

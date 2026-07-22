@@ -1282,7 +1282,8 @@ class LitellmService:
                 {self._DATE_COL},
                 COALESCE(SUM("total_tokens"), 0) AS tokens,
                 COALESCE(COUNT(*), 0) AS requests,
-                COALESCE(SUM(spend), 0) AS cost
+                COALESCE(SUM(spend), 0) AS cost,
+                COALESCE(COUNT(DISTINCT {self._USER_COL}), 0) AS active_users
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
             GROUP BY {self._DATE_COL}
@@ -1295,6 +1296,7 @@ class LitellmService:
                 "tokens": row[1],
                 "requests": row[2],
                 "cost": float(row[3]),
+                "active_users": row[4],
             }
             for row in rows2
         ]
