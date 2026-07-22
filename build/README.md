@@ -54,7 +54,6 @@
 | yuanrong 每日构建时间 | `--yr-schedule-time` | 自动获取 | 仅 `daily` 模式，OBS 路径中的时间戳 |
 | yuanrong release 下载路径 | `--yr-release-download-base` | 自动拼接 | 仅 `release` 模式，对应 `YR_RELEASE_DOWNLOAD_BASE` |
 | 并行下载数 | `--download-jobs` | `3` | 同时下载的最大文件数 |
-
 也可在 `build.sh` 顶部 `# build parameters` 区域直接修改默认值。
 
 ## 构建流程
@@ -64,7 +63,7 @@
 | 1 | `parse_args` | 解析命令行参数 |
 | 2 | `configure_build` | 按模式生成下载 URL 与包列表 |
 | 3 | `clean` | 清理 `build/dist/` |
-| 4 | `build_manager_app` | 预留步骤（当前为空） |
+| 4 | `build_manager_app` | 打包 `control-panel/deploy/` → `AgentOS-Manager.tgz` |
 | 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
 | 6 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
 | 7 | `build_conch` | 预留步骤（当前为空） |
@@ -164,6 +163,13 @@ build/dist/downloads/openyuanrong/      # openyuanrong wheel 包
 | daily | macOS / Windows / linux aarch64 / linux x86_64 共 4 个 TUI wheel |
 | release | macOS / Windows 共 2 个 TUI wheel |
 
+### `AgentOS-Manager.tgz`
+
+管理面部署配置包，直接从 `control-panel/deploy/` 打包，与架构无关：
+
+- `docker-compose.yml` + `.env.example`
+- `grafana/`、`litellm/`、`victoriametrics/`、`postgres/` 配置
+
 ### `AgentOS-Server-${ARCH}.tgz`
 
 服务端包，文件名随构建机器架构变化，例如 `AgentOS-Server-x86_64.tgz`、`AgentOS-Server-aarch64.tgz`（`ARCH` 来自 `uname -m`）。包含：
@@ -183,6 +189,7 @@ build/
 ├── README.md
 └── dist/
     ├── AgentOS-Client.tgz
+    ├── AgentOS-Manager.tgz
     ├── AgentOS-Server-<arch>.tgz   # 如 AgentOS-Server-x86_64.tgz
     ├── downloads/
     │   ├── jiuwenswarm/        # wheel 包
@@ -190,7 +197,8 @@ build/
     │   └── openyuanrong/
     └── staging/          # 打包中间目录，可忽略
         ├── client/
-        └── server/
+        ├── server/
+        └── manager/
 ```
 
 ### `AgentOS-Server-${ARCH}.tgz` 解压后结构

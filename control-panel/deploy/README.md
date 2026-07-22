@@ -12,7 +12,7 @@ control-panel/
 ├── image/                      # 镜像构建（与 frontend 同级；当前仅前端+Nginx）
 │   ├── Dockerfile
 │   └── nginx.conf
-└── deployment/                 # 运行时 compose 与监控配置
+└── deploy/                     # 运行时 compose 与监控配置
     ├── docker-compose.yml
     ├── .env.example
     ├── README.md
@@ -125,7 +125,7 @@ docker images | grep -E 'agentos|postgres|litellm|victoria-metrics|grafana'
 ### 3. 一键拉起
 
 ```bash
-cd control-panel/deployment
+cd control-panel/deploy
 
 cp .env.example .env
 # 编辑 .env：POSTGRES_PASSWORD、LITELLM_MASTER_KEY（须以 sk- 开头）
@@ -143,7 +143,7 @@ docker compose ps
 curl -I http://127.0.0.1:8080/
 
 # 检查 postgres 状态（端口：5432）：返回的 STATUS 为 healthy
-docker ps --filter name=deployment-postgres-1
+docker ps --filter name=deploy-postgres-1
 
 # 检查 litellm-database 状态（端口：4000）：返回 "I'm alive!"
 curl http://127.0.0.1:4000/health/liveliness
