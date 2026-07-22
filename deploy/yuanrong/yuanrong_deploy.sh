@@ -250,6 +250,70 @@ yr_verify_install() {
     fi
 }
 
+# ===== 进程清理与检测函数 =====
+# 清理指定节点上残留的 yuanrong 进程:
+#   1. 先 kill "yr start" 命令进程（避免其继续拉起服务）
+#   2. 再 kill yr 运行时进程（命令行含 /yr/ 路径）
+# 注: grep 模式使用字符类 (yr star[t] / /yr[/]) 避免匹配到当前清理命令自身
+yr_cleanup_processes() {
+    local host="$1"
+
+    info "Cleaning up yuanrong processes on ${host}..."
+
+    # 1. 清理 "yr start" 命令进程
+    local start_pids
+    start_pids=$(exec_on_host "${host}" "ps -ef | grep 'yr star[t]' | grep -v grep | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
+    if [ -n "${start_pids}" ]; then
+        info "Found 'yr start' processes on ${host}, PIDs: ${start_pids}"
+        for pid in ${start_pids}; do
+            exec_on_host "${host}" "kill -9 ${pid}" 2>/dev/null && \
+                info "Killed 'yr start' process ${pid} on ${host}" || \
+                warning "Failed to kill 'yr start' process ${pid} on ${host}"
+        done
+    else
+        info "No 'yr start' processes found on ${host}"
+    fi
+
+    # 2. 清理 yr 运行时进程（命令行含 /yr/ 路径）
+    local yr_pids
+    yr_pids=$(exec_on_host "${host}" "ps -ef | grep '/yr[/]' | grep -v grep | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
+    if [ -n "${yr_pids}" ]; then
+        info "Found yr processes on ${host}, PIDs: ${yr_pids}"
+        for pid in ${yr_pids}; do
+            exec_on_host "${host}" "kill -9 ${pid}" 2>/dev/null && \
+                info "Killed yr process ${pid} on ${host}" || \
+                warning "Failed to kill yr process ${pid} on ${host}"
+        done
+    else
+        info "No yr processes found on ${host}"
+    fi
+
+    return 0
+}
+
+# 在 yr start 前检测节点上是否已存在 yuanrong 集群/进程。
+# 若已存在则直接报错退出，不自动清理，避免误杀原可用集群。
+# 由用户决定是否执行 down/stop 后再重新 up。
+yr_check_existing() {
+    local host="$1"
+
+    info "Checking for existing yuanrong processes on ${host}..."
+
+    local start_pids yr_pids error_msg=""
+    start_pids=$(exec_on_host "${host}" "ps -ef | grep 'yr star[t]' | grep -v grep | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
+    yr_pids=$(exec_on_host "${host}" "ps -ef | grep '/yr[/]' | grep -v grep | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
+
+    if [ -n "${start_pids}" ] || [ -n "${yr_pids}" ]; then
+        [ -n "${start_pids}" ] && error_msg="${error_msg}'yr start' PIDs: ${start_pids}; "
+        [ -n "${yr_pids}" ] && error_msg="${error_msg}yr PIDs: ${yr_pids}; "
+        error "Existing yuanrong processes detected on ${host}: ${error_msg}Please run 'down' first to avoid launching duplicate clusters, then retry 'up'."
+    else
+        info "No existing yuanrong processes on ${host}"
+    fi
+
+    return 0
+}
+
 yr_start_master() {
     local master_host="$1"
 
@@ -268,7 +332,7 @@ yr_start_master() {
        grep -q "started" "${startup_log}" 2>/dev/null; then
         success "openyuanrong master started on ${master_host}"
     else
-        warning "Could not confirm master health from log, continuing..."
+        error "Could not confirm master health on ${master_host}, no success marker found in ${startup_log}"
     fi
 
     local session_dir
@@ -316,10 +380,12 @@ yr_stop_all() {
     info "Stopping openyuanrong services..."
 
     for host in "${YR_HOST_LIST[@]}"; do
-        info "Stopping yr on ${host}..."
-        exec_on_host "${host}" "yr stop" 2>/dev/null && \
+        info "Stopping yr on ${host} (force)..."
+        exec_on_host "${host}" "yr stop --force" 2>/dev/null && \
             success "yr stopped on ${host}" || \
             warning "Failed to stop yr on ${host} (may not be running)"
+        # 强制清理残留进程，避免多次 up/down 后进程堆积
+        yr_cleanup_processes "${host}"
     done
 
     success "openyuanrong uninstall completed!"
@@ -329,9 +395,26 @@ yr_stop_all() {
 deploy_yr_up() {
     local hosts_str="${CLUSTER_HOSTS}"
     local master_host
+    # yr_up_phase:
+    #   0 = 检测/校验阶段（check 失败不清理，避免误杀原可用集群）
+    #   1 = 启动阶段（yr start 失败时清理本次拉起产生的残留进程）
+    #   2 = 全部成功完成
+    local yr_up_phase=0
 
     IFS=',' read -ra YR_HOST_LIST <<< "${hosts_str}"
     master_host="${YR_HOST_LIST[0]}"
+
+    # 失败清理 trap:
+    #   - 仅当已进入启动阶段 (phase>=1) 且未完成 (phase!=2) 时才清理本次拉起的残留进程
+    #   - check 阶段 (phase=0) 失败（如发现已有集群）不清理，保护原可用集群
+    trap '
+        if [ "${yr_up_phase:-0}" = "1" ]; then
+            warning "deploy_yr_up failed during startup phase, cleaning up residual yuanrong processes on all hosts..."
+            for _h in "${YR_HOST_LIST[@]}"; do
+                yr_cleanup_processes "${_h}"
+            done
+        fi
+    ' EXIT
 
     info "Deploying openyuanrong in process mode"
     info "Master host: ${master_host}"
@@ -355,6 +438,15 @@ deploy_yr_up() {
         yr_verify_install "${host}"
     done
 
+    # 预检查：所有节点确认无残留 yuanrong 进程后才进入启动阶段。
+    # 此处失败（发现已有集群）不触发清理，保护原可用集群。
+    for host in "${YR_HOST_LIST[@]}"; do
+        yr_check_existing "${host}"
+    done
+
+    # 进入启动阶段：此后任何失败都将触发清理
+    yr_up_phase=1
+
     yr_start_master "${master_host}"
 
     if [ ${#YR_HOST_LIST[@]} -gt 1 ]; then
@@ -364,6 +456,7 @@ deploy_yr_up() {
         done
     fi
 
+    yr_up_phase=2
     success "openyuanrong process-mode deployment completed!"
     echo ""
     echo "=========================================="
@@ -377,6 +470,9 @@ deploy_yr_up() {
     echo "  Stop all services:"
     echo "    ./$(basename "$0") down --hosts ${hosts_str}"
     echo "=========================================="
+
+    # 成功完成，清除失败清理 trap，避免影响后续命令
+    trap - EXIT
 }
 
 deploy_yr_down() {
