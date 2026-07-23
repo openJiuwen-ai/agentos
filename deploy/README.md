@@ -20,7 +20,7 @@ deploy/
 ├── README.md                 # 本文档
 ├── jiuwenbox/
 │   ├── module.sh             # jiuwenbox 钩子（含 --hosts 编排）
-│   ├── jiuwenbox_deploy.sh   # 本机 start/stop/status
+│   ├── jiuwenbox_deploy.sh   # up/down/restart（含 --hosts 编排）
 │   └── default-policy.yaml   # policy 模板（含 extensions 占位符）
 ├── yuanrong/
 │   ├── module.sh             # yuanrong 钩子函数
@@ -113,8 +113,10 @@ bash agentos.sh restart --hosts 192.168.1.1
 
 #### jiuwenbox
 
-- 配置文件：`deploy/jiuwenbox/default-policy.yaml`（`__JIUWENSWARM_EXTENSIONS_DIR__` 在各机 local-up 时按该机 `pip show jiuwenswarm` 替换）
-- `--hosts` 时在列表中**每一台**启动一份 jiuwenbox（无 master/agent 差异）；远端通过 SSH 同步脚本后执行 `module.sh local-up`
+- 配置文件：`deploy/jiuwenbox/default-policy.yaml`（`__JIUWENSWARM_EXTENSIONS_DIR__` 在各机 start 时按该机 `pip show jiuwenswarm` 替换）
+- `module.sh` 为薄封装；`--hosts` 编排与启停逻辑在 `jiuwenbox_deploy.sh`
+- `--hosts` 时在列表中**每一台**启动一份 jiuwenbox（无 master/agent 差异）；远端 scp 后执行同一套 `up`/`down`（对端默认本机 IP，只走本机启停）
+- 已有实例时只报错、不自动清理（对齐 yuanrong）；需先 `down` 再 `up`
 - 前置：各目标机已安装 jiuwenswarm（含 `jiuwenbox-server`），控制机到目标机 root SSH 免密
 
 #### yuanrong
