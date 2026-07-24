@@ -161,13 +161,7 @@ function handleSave() {
         <el-icon :size="32" color="#2563eb"><Monitor /></el-icon>
       </div>
       <span class="model-header__name">{{ model.model_name }}</span>
-      <ElButton
-        class="model-header__copy"
-        text
-        :icon="CopyDocument"
-        title="复制模型名称"
-        @click="copyModelName"
-      />
+      <ElButton class="model-header__copy" text :icon="CopyDocument" title="复制模型名称" @click="copyModelName" />
     </div>
 
     <template v-if="mode === 'view' && model">
@@ -194,7 +188,9 @@ function handleSave() {
     <template v-if="mode === 'edit' && model">
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
-          <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+          <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
+            ><ArrowDown
+          /></el-icon>
           基础信息
         </h3>
         <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
@@ -209,7 +205,11 @@ function handleSave() {
             <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000" />
           </ElFormItem>
           <ElFormItem label="API Key" class="form-grid__item">
-            <ElInput v-model="formData.litellm_params.api_key" type="password" placeholder="调用模型所需的API Key（可选）" />
+            <ElInput
+              v-model="formData.litellm_params.api_key"
+              type="password"
+              placeholder="调用模型所需的API Key（可选）"
+            />
             <span class="form-hint">用于调用第三方模型服务的认证密钥</span>
           </ElFormItem>
           <ElFormItem label="上下文长度" class="form-grid__item">
@@ -235,7 +235,10 @@ function handleSave() {
 
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
-          <el-icon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+          <el-icon
+            :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
+            ><ArrowDown
+          /></el-icon>
           部署信息
         </h3>
         <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
@@ -250,7 +253,10 @@ function handleSave() {
 
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('service')">
-          <el-icon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+          <el-icon
+            :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
+            ><ArrowDown
+          /></el-icon>
           服务信息
         </h3>
         <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
@@ -280,7 +286,7 @@ function handleSave() {
   align-items: center;
   gap: 12px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  border-bottom: 1px solid var(--border-separator, #e5e7eb);
   margin-bottom: 20px;
 }
 
@@ -291,14 +297,14 @@ function handleSave() {
 .model-header__name {
   font-size: 18px;
   font-weight: 600;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-primary);
 }
 
 .model-header__copy {
   width: 28px;
   height: 28px;
   padding: 0;
-  color: var(--text-secondary, #6b7280);
+  color: var(--text-secondary);
 }
 
 .info-section {
@@ -313,7 +319,7 @@ function handleSave() {
   margin: 0 0 16px 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-primary);
 }
 
 .info-section__title--clickable {
@@ -340,7 +346,7 @@ function handleSave() {
 
 .form-hint {
   font-size: 12px;
-  color: var(--text-tertiary, #9ca3af);
+  color: var(--text-secondary);
 }
 
 .form-field {
@@ -350,7 +356,7 @@ function handleSave() {
 .form-grid :deep(.el-form-item__label) {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary, #6b7280);
+  color: var(--text-secondary);
 }
 
 .form-grid :deep(.el-input-number .el-input__wrapper) {

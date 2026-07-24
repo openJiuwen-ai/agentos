@@ -64,13 +64,7 @@ function handleAction(action: string) {
     <div class="model-card__footer">
       <span v-if="meta?.length" class="model-card__meta">{{ meta.join(' · ') }}</span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleAction">
-        <ElButton
-          class="model-card__more"
-          text
-          :icon="MoreFilled"
-          title="更多"
-          @click.stop
-        />
+        <ElButton class="model-card__more" text :icon="MoreFilled" title="更多" @click.stop />
         <template #dropdown>
           <ElDropdownMenu>
             <ElDropdownItem command="edit">
@@ -98,7 +92,7 @@ function handleAction(action: string) {
 .model-card {
   background: linear-gradient(180deg, #e9f4ff 0%, rgba(237, 246, 255, 0.78) 22%, rgba(255, 255, 255, 0) 100%), #fff;
   border-radius: 24px;
-  border: 2px solid #f3f3f3;
+  border: 2px solid var(--border-separator-subtle);
   padding: 20px;
   cursor: pointer;
   transition: all 0.2s;
@@ -109,7 +103,7 @@ function handleAction(action: string) {
 }
 
 .model-card:hover {
-  border-color: #dfdfdf;
+  border-color: var(--border-separator);
 }
 
 .model-card__header {
@@ -128,7 +122,7 @@ function handleAction(action: string) {
   width: 44px;
   height: 44px;
   border-radius: 10px;
-  background: #f3f4f6;
+  background: var(--bg-2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -166,26 +160,26 @@ function handleAction(action: string) {
   align-items: center;
   gap: 6px;
   font-size: 14px;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .model-card__status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #9ca3af;
+  background: var(--text-secondary);
 }
 
 .model-card__status--success .model-card__status-dot {
-  background: #22c55e;
+  background: var(--success);
 }
 
 .model-card__status--error .model-card__status-dot {
-  background: #ef4444;
+  background: var(--error);
 }
 
 .model-card__status--warning .model-card__status-dot {
-  background: #f59e0b;
+  background: var(--alert);
 }
 
 .model-card__info-section {
@@ -215,13 +209,13 @@ function handleAction(action: string) {
 
 .model-info-item__label {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .model-info-item__value {
   font-size: 24px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text-primary);
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -231,17 +225,17 @@ function handleAction(action: string) {
   width: 28px;
   height: 28px;
   padding: 0;
-  color: #9ca3af;
+  color: var(--text-secondary);
 }
 
 .model-card__more:hover {
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .model-card__delete {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #ef4444;
+  color: var(--error);
 }
 </style>

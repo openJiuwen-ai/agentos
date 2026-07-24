@@ -202,7 +202,7 @@ function handleSave() {
   margin: 0 0 16px 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-primary);
 }
 
 .info-section__title--clickable {
@@ -215,7 +215,7 @@ function handleSave() {
 
 .form-hint {
   font-size: 12px;
-  color: var(--text-tertiary, #9ca3af);
+  color: var(--text-placeholder);
 }
 
 .form-field {
@@ -225,7 +225,7 @@ function handleSave() {
 .form-grid :deep(.el-form-item__label) {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary, #6b7280);
+  color: var(--text-placeholder);
 }
 
 .form-grid :deep(.el-input-number .el-input__wrapper) {

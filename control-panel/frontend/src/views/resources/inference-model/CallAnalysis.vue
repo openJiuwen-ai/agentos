@@ -143,11 +143,7 @@ function prepareTrendChartData(data: TrendResponse | null, range: DateRange) {
 }
 
 // 渲染趋势图
-function renderTrendChart(
-  chart: echarts.ECharts | null,
-  data: TrendResponse | null,
-  range: DateRange,
-) {
+function renderTrendChart(chart: echarts.ECharts | null, data: TrendResponse | null, range: DateRange) {
   if (!chart) return;
 
   const { dates, requests, tokens } = prepareTrendChartData(data, range);
@@ -345,11 +341,7 @@ async function loadActiveUserTrend(range: DateRange) {
 
 async function reloadFilteredPanels(range: DateRange) {
   if (isAdmin.value) {
-    await Promise.all([
-      loadTrend(range),
-      loadActiveUserTrend(range),
-      loadUserRank(range),
-    ]);
+    await Promise.all([loadTrend(range), loadActiveUserTrend(range), loadUserRank(range)]);
     return;
   }
 
@@ -403,23 +395,35 @@ function initChart(type: 'admin' | 'user' | 'activeUsers') {
 }
 
 // 监听DOM变化，初始化图表
-watch([adminChartRef, trendData], () => {
-  if (adminChartRef.value && trendData.value && !adminChart) {
-    initChart('admin');
-  }
-}, { flush: 'post' });
+watch(
+  [adminChartRef, trendData],
+  () => {
+    if (adminChartRef.value && trendData.value && !adminChart) {
+      initChart('admin');
+    }
+  },
+  { flush: 'post' },
+);
 
-watch([userChartRef, userTrendData], () => {
-  if (userChartRef.value && userTrendData.value && !userChart) {
-    initChart('user');
-  }
-}, { flush: 'post' });
+watch(
+  [userChartRef, userTrendData],
+  () => {
+    if (userChartRef.value && userTrendData.value && !userChart) {
+      initChart('user');
+    }
+  },
+  { flush: 'post' },
+);
 
-watch([activeUsersChartRef, activeUserTrendData], () => {
-  if (activeUsersChartRef.value && activeUserTrendData.value.length && !activeUsersChart) {
-    initChart('activeUsers');
-  }
-}, { flush: 'post' });
+watch(
+  [activeUsersChartRef, activeUserTrendData],
+  () => {
+    if (activeUsersChartRef.value && activeUserTrendData.value.length && !activeUsersChart) {
+      initChart('activeUsers');
+    }
+  },
+  { flush: 'post' },
+);
 
 async function loadData() {
   loading.value = true;
@@ -516,7 +520,9 @@ onUnmounted(() => {
             </header>
             <div class="overview-block__metrics">
               <div class="overview-metric overview-metric--hero">
-                <span class="overview-metric__value overview-metric__value--hero">{{ formatRequests(overviewStats.today.requests) }}</span>
+                <span class="overview-metric__value overview-metric__value--hero">{{
+                  formatRequests(overviewStats.today.requests)
+                }}</span>
                 <span class="overview-metric__label">今日</span>
               </div>
               <div class="overview-metric">
@@ -541,7 +547,9 @@ onUnmounted(() => {
             </header>
             <div class="overview-block__metrics">
               <div class="overview-metric overview-metric--hero">
-                <span class="overview-metric__value overview-metric__value--hero">{{ formatTokens(overviewStats.today.tokens) }}</span>
+                <span class="overview-metric__value overview-metric__value--hero">{{
+                  formatTokens(overviewStats.today.tokens)
+                }}</span>
                 <span class="overview-metric__label">今日</span>
               </div>
               <div class="overview-metric">
@@ -606,11 +614,7 @@ onUnmounted(() => {
         <div class="call-analysis__section-header">
           <h2 class="call-analysis__section-title">调用趋势</h2>
           <div class="call-analysis__filters">
-            <ElSegmented
-              :model-value="trendPreset"
-              :options="trendPresetOptions"
-              @change="handleTrendPresetChange"
-            />
+            <ElSegmented :model-value="trendPreset" :options="trendPresetOptions" @change="handleTrendPresetChange" />
             <ElDatePicker
               v-model="customDateRange"
               type="daterange"
@@ -663,11 +667,7 @@ onUnmounted(() => {
           <div class="call-analysis__card-header">
             <h2 class="call-analysis__card-title">我的调用趋势</h2>
             <div class="call-analysis__filters">
-              <ElSegmented
-                :model-value="trendPreset"
-                :options="trendPresetOptions"
-                @change="handleTrendPresetChange"
-              />
+              <ElSegmented :model-value="trendPreset" :options="trendPresetOptions" @change="handleTrendPresetChange" />
               <ElDatePicker
                 v-model="customDateRange"
                 type="daterange"
@@ -730,9 +730,8 @@ onUnmounted(() => {
 
 /* 概览指标条 */
 .call-analysis__overview-card {
-  background: #fff;
+  background: var(--bg-2);
   border-radius: 8px;
-  border: 1px solid #dfdfdf;
   padding: 20px 24px;
 }
 
@@ -763,7 +762,7 @@ onUnmounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #e6f5fd;
+  background: var(--tag-bg-info);
   flex-shrink: 0;
 }
 
@@ -771,7 +770,7 @@ onUnmounted(() => {
   font-size: 18px;
   font-weight: 500;
   line-height: 26px;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .overview-block__metrics {
@@ -797,7 +796,7 @@ onUnmounted(() => {
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
-  color: #191919;
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -809,14 +808,14 @@ onUnmounted(() => {
 .overview-metric__label {
   font-size: 14px;
   line-height: 22px;
-  color: #777;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .overview-divider {
   width: 1px;
   align-self: stretch;
-  background: #dfdfdf;
+  background: var(--border-separator);
   flex-shrink: 0;
 }
 
@@ -839,7 +838,7 @@ onUnmounted(() => {
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .call-analysis__filters {
@@ -858,9 +857,9 @@ onUnmounted(() => {
 
 .call-analysis__card {
   min-width: 0;
-  background: #fff;
+  background: var(--bg-2);
   border-radius: 8px;
-  border: 1px solid #dfdfdf;
+  border: 1px solid var(--border-separator);
   padding: 20px 24px;
 }
 
@@ -887,7 +886,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: 20px;
   font-weight: 500;
-  color: #191919;
+  color: var(--text-primary);
   line-height: 28px;
 }
 
@@ -904,7 +903,7 @@ onUnmounted(() => {
   gap: 24px;
   margin-top: 16px;
   padding: 16px;
-  background: #f9fafb;
+  background: var(--bg-2);
   border-radius: 8px;
 }
 
@@ -916,13 +915,13 @@ onUnmounted(() => {
 
 .call-analysis__summary-label {
   font-size: 12px;
-  color: #999;
+  color: var(--text-secondary);
 }
 
 .call-analysis__summary-value {
   font-size: 18px;
   font-weight: 600;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .call-analysis :deep(.el-table) {

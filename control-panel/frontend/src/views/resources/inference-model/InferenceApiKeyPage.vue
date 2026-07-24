@@ -266,16 +266,16 @@ onMounted(() => {
 .created-key-item label {
   font-size: 13px;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .created-key-value {
   padding: 10px 12px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 14px;
-  color: #1f2937;
+  color: var(--text-primary);
 }
 
 .created-key-value--full {

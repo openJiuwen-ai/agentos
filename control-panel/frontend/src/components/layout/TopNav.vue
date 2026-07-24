@@ -1,13 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import {
-  ElMenu,
-  ElMenuItem,
-  ElDropdown,
-  ElDropdownMenu,
-  ElDropdownItem,
-} from 'element-plus';
+import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus';
 import { topMenus } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 import personIcon from '@/assets/images/person-line.svg';
@@ -16,7 +10,7 @@ import rightArrow from '@/assets/images/right-arrow.svg';
 import arrowDownLine from '@/assets/images/arrow-down-line.svg';
 import logoutIcon from '@/assets/images/logout.svg';
 import logoImg from '@/assets/images/logo.png';
-import profileAvatarImg from '@/assets/images/profile-avatar.png';
+import profileAvatarImg from '@/assets/images/avatar.svg';
 
 const route = useRoute();
 const router = useRouter();
@@ -26,9 +20,7 @@ const activeTopMenu = computed(() => (route.meta.topMenu as string | undefined) 
 
 const workspace = ref<'admin' | 'user'>(localStorage.getItem('workspace') === 'user' ? 'user' : 'admin');
 
-const visibleTopMenus = computed(() =>
-  isAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly),
-);
+const visibleTopMenus = computed(() => (isAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly)));
 
 const workspaceLabel = computed(() => (workspace.value === 'admin' ? '管理工作台' : '个人工作台'));
 
@@ -116,18 +108,8 @@ function handleProfileCommand(command: string | number | object) {
         </button>
         <template #dropdown>
           <ElDropdownMenu>
-            <ElDropdownItem>
-              <span class="help-item">
-                <span class="help-item__icon">📘</span>
-                <span>帮助中心</span>
-              </span>
-            </ElDropdownItem>
-            <ElDropdownItem>
-              <span class="help-item">
-                <span class="help-item__icon">💬</span>
-                <span>反馈问题</span>
-              </span>
-            </ElDropdownItem>
+            <ElDropdownItem>帮助中心</ElDropdownItem>
+            <ElDropdownItem>反馈问题</ElDropdownItem>
           </ElDropdownMenu>
         </template>
       </ElDropdown>
@@ -172,8 +154,8 @@ function handleProfileCommand(command: string | number | object) {
   align-items: center;
   height: 48px;
   padding: 0 18px;
-  background: var(--bg-top-nav);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border-separator);
 }
 
 .top-nav__left {
@@ -193,7 +175,7 @@ function handleProfileCommand(command: string | number | object) {
   font-size: 18px;
   font-weight: 500;
   line-height: 26px;
-  color: #000;
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -204,9 +186,9 @@ function handleProfileCommand(command: string | number | object) {
   padding: 5px 12px;
   font-size: 14px;
   line-height: 22px;
-  color: #191919;
-  background: #ffffff;
-  border: 1px solid #c9c9c9;
+  color: var(--text-primary);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -240,7 +222,7 @@ function handleProfileCommand(command: string | number | object) {
 }
 
 .top-nav__icon-btn:hover {
-  background: var(--bg-hover);
+  background: var(--bg-6);
 }
 
 .top-nav__menu {
@@ -276,18 +258,6 @@ function handleProfileCommand(command: string | number | object) {
   font-weight: 400;
 }
 
-.help-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.help-item__icon {
-  width: 20px;
-  text-align: center;
-  opacity: 0.7;
-}
-
 .profile-header {
   display: flex;
   align-items: center;
@@ -300,7 +270,7 @@ function handleProfileCommand(command: string | number | object) {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #f3f3f3;
+  background: var(--bg-1);
   flex-shrink: 0;
 }
 
@@ -321,12 +291,12 @@ function handleProfileCommand(command: string | number | object) {
 .profile-header__name {
   font-size: 15px;
   font-weight: 500;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .profile-header__id {
   font-size: 12px;
-  color: #777777;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -353,18 +323,18 @@ function handleProfileCommand(command: string | number | object) {
 }
 
 .role-tag--admin {
-  color: #ffffff;
-  background: #ec6f1a;
+  color: var(--tag-text-alert);
+  background: var(--tag-bg-alert);
 }
 
 .role-tag--user {
-  color: #ffffff;
-  background: #1f55b5;
+  color: var(--tag-text-info);
+  background: var(--tag-bg-info);
 }
 
 .profile-logout,
 .profile-logout span {
-  color: rgba(224, 33, 40, 1) !important;
+  color: var(--error) !important;
 }
 
 .profile-logout__icon {
@@ -392,6 +362,6 @@ function handleProfileCommand(command: string | number | object) {
 }
 
 .profile-dropdown-menu li.profile-logout.el-dropdown-menu__item:hover {
-  background-color: #fee7e8 !important;
+  background-color: var(--error-subtler) !important;
 }
 </style>

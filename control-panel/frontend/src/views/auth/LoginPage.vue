@@ -107,7 +107,7 @@ async function handleLogin() {
   width: 100%;
   min-height: 100vh;
   padding-right: 10%;
-  background: #ffffff url('@/assets/images/login-bg.png') center / cover no-repeat;
+  background: var(--bg-2) url('@/assets/images/login-bg.png') center / cover no-repeat;
   overflow: hidden;
 }
 
@@ -121,7 +121,7 @@ async function handleLogin() {
   flex-direction: column;
   gap: 40px;
   padding: 32px;
-  background-color: #ffffff;
+  background-color: var(--bg-2);
   border-radius: 8px;
   box-shadow: 0px 16px 48px 0px rgba(0, 0, 0, 0.16);
 }
@@ -131,7 +131,7 @@ async function handleLogin() {
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .login-dialog__form {
@@ -139,12 +139,12 @@ async function handleLogin() {
   flex-direction: column;
   gap: 16px;
   width: 100%;
-  --el-input-border-color: #c9c9c9;
+  --el-input-border-color:  var(--border);
   --el-input-border-radius: 4px;
-  --el-input-hover-border-color: #c9c9c9;
+  --el-input-hover-border-color:  var(--border);
   --el-input-focus-border-color: var(--el-color-primary);
-  --el-input-text-color: #191919;
-  --el-input-placeholder-color: #aeaeae;
+  --el-input-text-color: var(--text-primary);
+  --el-input-placeholder-color: var(--text-placeholder);
 }
 
 /* remove default form-item bottom margin to honour the 16px gap */

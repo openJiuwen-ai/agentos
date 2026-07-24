@@ -65,7 +65,7 @@ const grafanaIframeSrc = computed(() => {
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
-  color: #191919;
+  color: var(--text-primary);
 }
 
 .tab-panel__iframe {

@@ -125,9 +125,7 @@ function downloadCsv() {
     const s = v == null ? '' : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const rows = batchResults.value.map((r) =>
-    headers.map((h) => escape(r[h as keyof typeof r])).join(','),
-  );
+  const rows = batchResults.value.map((r) => headers.map((h) => escape(r[h as keyof typeof r])).join(','));
   const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n');
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -158,11 +156,11 @@ async function copyToClipboard(text: string) {
 
 async function handleResetPassword(user: UserItem) {
   try {
-    await ElMessageBox.confirm(
-      `确定要重置 ${user.username} 的密码吗？系统将生成一个新的随机密码。`,
-      '重置密码',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' },
-    );
+    await ElMessageBox.confirm(`确定要重置 ${user.username} 的密码吗？系统将生成一个新的随机密码。`, '重置密码', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
   } catch {
     return;
   }
@@ -190,11 +188,11 @@ function closeResetModal() {
 
 async function handleDelete(user: UserItem) {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除用户 ${user.username} 吗？此操作不可撤销。`,
-      '删除用户',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    );
+    await ElMessageBox.confirm(`确定要删除用户 ${user.username} 吗？此操作不可撤销。`, '删除用户', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
   } catch {
     return;
   }
@@ -298,13 +296,7 @@ function formatDate(iso: string | null) {
               <ElButton link type="primary" title="复制用户ID" @click="copyToClipboard(row.user_id)">
                 <img :src="docIcon" alt="" width="16" height="16" class="row-actions__icon" />
               </ElButton>
-              <ElButton
-                link
-                type="primary"
-                title="重置密码"
-                :loading="resetLoading"
-                @click="handleResetPassword(row)"
-              >
+              <ElButton link type="primary" title="重置密码" :loading="resetLoading" @click="handleResetPassword(row)">
                 <img :src="keyIcon" alt="" width="16" height="16" class="row-actions__icon" />
               </ElButton>
               <ElButton link type="danger" title="删除" @click="handleDelete(row)">
@@ -329,12 +321,7 @@ function formatDate(iso: string | null) {
     </div>
 
     <!-- 批量新建用户 -->
-    <ElDialog
-      v-model="showBatchModal"
-      width="640px"
-      class="batch-dialog"
-      destroy-on-close
-    >
+    <ElDialog v-model="showBatchModal" width="640px" class="batch-dialog" destroy-on-close>
       <template #header>
         <div class="batch-dialog__header">
           <span class="batch-dialog__title">批量新建用户</span>
@@ -410,16 +397,11 @@ function formatDate(iso: string | null) {
     </ElDialog>
 
     <!-- 密码重置结果 -->
-    <ElDialog
-      v-model="showResetModal"
-      title="密码重置成功"
-      width="480px"
-      destroy-on-close
-      @closed="resetResult = null"
-    >
+    <ElDialog v-model="showResetModal" title="密码重置成功" width="480px" destroy-on-close @closed="resetResult = null">
       <template v-if="resetResult">
         <p class="reset-desc">
-          请将以下新密码告知用户 <strong>{{ resetResult.username }}</strong>。该密码仅显示一次，请妥善保存。
+          请将以下新密码告知用户 <strong>{{ resetResult.username }}</strong
+          >。该密码仅显示一次，请妥善保存。
         </p>
         <div class="reset-fields">
           <div class="reset-field">
@@ -471,7 +453,7 @@ function formatDate(iso: string | null) {
   flex-direction: column;
   min-height: 0;
   padding: 20px 24px;
-  background: #fff;
+  background: var(--bg-2);
   border-radius: 8px;
 }
 
@@ -541,13 +523,13 @@ function formatDate(iso: string | null) {
 }
 
 .role-tag--admin {
-  color: #c25100 !important;
-  background: #fde2bd !important;
+  color: var(--tag-text-alert) !important;
+  background: var(--tag-bg-alert) !important;
 }
 
 .role-tag--user {
-  color: #1f55b5 !important;
-  background: rgb(208 216 253 / 50%) !important;
+  color: var(--tag-text-info) !important;
+  background: var(--tag-bg-info) !important;
 }
 
 .login-status {
@@ -562,11 +544,11 @@ function formatDate(iso: string | null) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #aeaeae;
+  background: var(--bg-mask);
 }
 
 .login-status--online .login-status__dot {
-  background: #2da769;
+  background: var(--success);
 }
 
 .row-actions {
@@ -620,7 +602,7 @@ function formatDate(iso: string | null) {
 }
 
 .error-text {
-  color: var(--color-error);
+  color: var(--error);
   font-size: 13px;
 }
 
@@ -642,12 +624,12 @@ function formatDate(iso: string | null) {
   align-items: center;
   gap: 16px;
   padding: 10px 12px;
-  background: #fafafa;
+  background: var(--bg-2);
   border-radius: 4px;
 }
 
 .reset-field--highlight {
-  background: #e6f2fd;
+  background: var(--bg-active);
 }
 
 .reset-field__label {
@@ -673,7 +655,7 @@ function formatDate(iso: string | null) {
 :deep(.user-mgmt__table .el-table__header th) {
   color: var(--text-secondary);
   font-weight: 500;
-  background: rgb(25 25 25 / 5%);
+  background: var(--bg-6);
 }
 
 :deep(.user-mgmt__search .el-input__wrapper) {

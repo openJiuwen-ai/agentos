@@ -146,8 +146,8 @@ watch(
   width: 216px;
   flex-shrink: 0;
   padding: 8px 0 0;
-  background: var(--bg-side-nav);
-  border-right: 1px solid var(--border-color);
+  background: var(--bg-2);
+  border-right: 1px solid var(--border-separator);
   overflow-y: auto;
 }
 
@@ -175,7 +175,7 @@ watch(
 
 .side-menu__icon--placeholder {
   border-radius: 0;
-  background-color: var(--border-color);
+  background-color: var(--border-separator);
   mask-image: none;
   -webkit-mask-image: none;
 }
@@ -201,7 +201,7 @@ watch(
 
 .side-menu :deep(.el-menu-item:hover),
 .side-menu :deep(.el-sub-menu__title:hover) {
-  background: var(--bg-hover);
+  background: var(--bg-6);
   color: var(--text-primary);
 }
 
@@ -232,7 +232,7 @@ watch(
 }
 
 .side-menu :deep(.el-sub-menu .el-menu) {
-  background: rgb(243 243 243 / 50%);
+  background: var(--bg-1);
 }
 
 .side-menu :deep(.el-sub-menu .el-menu-item) {
@@ -248,6 +248,6 @@ watch(
   right: 16px;
   margin-top: -5px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-placeholder);
 }
 </style>

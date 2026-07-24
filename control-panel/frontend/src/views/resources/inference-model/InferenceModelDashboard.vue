@@ -16,10 +16,25 @@ import { Search } from '@element-plus/icons-vue';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
-import { fetchModelList, fetchModelDetail, createModel, updateModel, deleteModel, restartModel, fetchUsageOverview, fetchUserUsage } from '@/api/inference';
+import {
+  fetchModelList,
+  fetchModelDetail,
+  createModel,
+  updateModel,
+  deleteModel,
+  restartModel,
+  fetchUsageOverview,
+  fetchUserUsage,
+} from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
 import { useAuth } from '@/composables/useAuth';
-import { calculateOverviewTotals, calculateUserTotals, formatTokens, getDateRange, USAGE_ALL_TIME_START } from './utils/usage';
+import {
+  calculateOverviewTotals,
+  calculateUserTotals,
+  formatTokens,
+  getDateRange,
+  USAGE_ALL_TIME_START,
+} from './utils/usage';
 
 const router = useRouter();
 const { isAdmin, userId } = useAuth();
@@ -48,9 +63,7 @@ const drawerVisible = ref(false);
 const drawerMode = ref<'view' | 'edit'>('view');
 const selectedModel = ref<ModelDetail | null>(null);
 
-const filters = [
-  { key: 'all', label: '全部模型' },
-];
+const filters = [{ key: 'all', label: '全部模型' }];
 
 // 调用概览数据
 const overviewData = ref({
@@ -108,26 +121,27 @@ async function loadModels() {
   try {
     const data = await fetchModelList({ keyword: searchQuery.value });
     // 将后端数据转换为ModelCard期望的格式
-    models.value = data?.items?.map(item => {
-      const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
-        healthy: { status: 'success', statusText: '健康' },
-        unhealthy: { status: 'error', statusText: '异常' },
-      };
-      const { status, statusText } = statusMap[item.status ?? ''] ?? { status: 'warning', statusText: '未知' };
-      return {
-        id: item.id,
-        name: item.model_name,
-        status,
-        statusText,
-        tags: [],
-        e2eP95: '--',
-        todayCalls: '--',
-        todayTokens: '--',
-        meta: [item.litellm_params.model],
-        iconSrc: undefined,
-        contextWindow: item.model_info?.context_window,
-      };
-    }) ?? [];
+    models.value =
+      data?.items?.map((item) => {
+        const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
+          healthy: { status: 'success', statusText: '健康' },
+          unhealthy: { status: 'error', statusText: '异常' },
+        };
+        const { status, statusText } = statusMap[item.status ?? ''] ?? { status: 'warning', statusText: '未知' };
+        return {
+          id: item.id,
+          name: item.model_name,
+          status,
+          statusText,
+          tags: [],
+          e2eP95: '--',
+          todayCalls: '--',
+          todayTokens: '--',
+          meta: [item.litellm_params.model],
+          iconSrc: undefined,
+          contextWindow: item.model_info?.context_window,
+        };
+      }) ?? [];
   } catch (e) {
     models.value = [];
     listError.value = e instanceof Error ? e.message : '加载模型列表失败';
@@ -136,7 +150,9 @@ async function loadModels() {
   }
 }
 
-function goToModel(id: string) { router.push({ name: 'inference-model-detail', params: { id } }); }
+function goToModel(id: string) {
+  router.push({ name: 'inference-model-detail', params: { id } });
+}
 async function handleDeleteModel(id: string) {
   try {
     await ElMessageBox.confirm('确定要删除这个模型吗？删除后将无法恢复。', '确认删除', {
@@ -175,9 +191,29 @@ async function handleSaveModel(data: Partial<ModelDetail>) {
   }
 }
 
-async function handleRestartModel(id: string) { try { await restartModel(id); await loadModels(); } catch (e) { console.error(e); } }
+async function handleRestartModel(id: string) {
+  try {
+    await restartModel(id);
+    await loadModels();
+  } catch (e) {
+    console.error(e);
+  }
+}
 
-async function handleAddModel(formData: { name: string; type: string; contextLength: number | null; deployName: string; deployFramework: string; serviceIp: string; servicePort: number | null; metricsUrl: string; apiKey?: string; paramSize?: string; tags?: string; description?: string }) {
+async function handleAddModel(formData: {
+  name: string;
+  type: string;
+  contextLength: number | null;
+  deployName: string;
+  deployFramework: string;
+  serviceIp: string;
+  servicePort: number | null;
+  metricsUrl: string;
+  apiKey?: string;
+  paramSize?: string;
+  tags?: string;
+  description?: string;
+}) {
   // 必填项验证
   if (!formData.name?.trim()) {
     ElMessage.warning('请输入模型名称');
@@ -219,8 +255,13 @@ async function handleAddModel(formData: { name: string; type: string; contextLen
   }
 }
 
-watch([activeFilter, searchQuery], () => { loadModels(); });
-onMounted(() => { loadModels(); loadOverviewData(); });
+watch([activeFilter, searchQuery], () => {
+  loadModels();
+});
+onMounted(() => {
+  loadModels();
+  loadOverviewData();
+});
 </script>
 
 <template>
@@ -240,29 +281,50 @@ onMounted(() => { loadModels(); loadOverviewData(); });
           查看详情
         </ElButton>
       </div>
-      <ElAlert
-        v-if="overviewError"
-        :title="`加载失败: ${overviewError}`"
-        type="error"
-        show-icon
-        :closable="false"
-      />
+      <ElAlert v-if="overviewError" :title="`加载失败: ${overviewError}`" type="error" show-icon :closable="false" />
       <div v-else class="overview-card__content">
         <div class="overview-card__section">
           <div class="overview-card__section-header"><span>调用次数</span></div>
           <div class="overview-card__metrics">
-            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">{{ overviewData.today.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">{{ overviewData.week.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">{{ overviewData.total.requests.toLocaleString() }}<span class="overview-card__metric-unit">次</span></span></div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">今日</span
+              ><span class="overview-card__metric-value"
+                >{{ overviewData.today.requests.toLocaleString()
+                }}<span class="overview-card__metric-unit">次</span></span
+              >
+            </div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">本周</span
+              ><span class="overview-card__metric-value"
+                >{{ overviewData.week.requests.toLocaleString()
+                }}<span class="overview-card__metric-unit">次</span></span
+              >
+            </div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">累计</span
+              ><span class="overview-card__metric-value"
+                >{{ overviewData.total.requests.toLocaleString()
+                }}<span class="overview-card__metric-unit">次</span></span
+              >
+            </div>
           </div>
         </div>
         <div class="overview-card__divider"></div>
         <div class="overview-card__section">
           <div class="overview-card__section-header"><span>Token数</span></div>
           <div class="overview-card__metrics">
-            <div class="overview-card__metric"><span class="overview-card__metric-label">今日</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.today.tokens) }}</span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">本周</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.week.tokens) }}</span></div>
-            <div class="overview-card__metric"><span class="overview-card__metric-label">累计</span><span class="overview-card__metric-value">{{ formatTokens(overviewData.total.tokens) }}</span></div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">今日</span
+              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.today.tokens) }}</span>
+            </div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">本周</span
+              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.week.tokens) }}</span>
+            </div>
+            <div class="overview-card__metric">
+              <span class="overview-card__metric-label">累计</span
+              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.total.tokens) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -278,28 +340,46 @@ onMounted(() => { loadModels(); loadOverviewData(); });
         <ElRadioGroup v-model="activeFilter">
           <ElRadioButton v-for="f in filters" :key="f.key" :value="f.key">{{ f.label }}</ElRadioButton>
         </ElRadioGroup>
-        <ElInput v-model="searchQuery" placeholder="请输入搜索内容" :prefix-icon="Search" clearable style="width: 240px" />
+        <ElInput
+          v-model="searchQuery"
+          placeholder="请输入搜索内容"
+          :prefix-icon="Search"
+          clearable
+          style="width: 240px"
+        />
       </div>
       <div v-if="loading" class="model-list-state">
         <ElSkeleton :rows="6" animated />
       </div>
-      <ElAlert
-        v-else-if="listError"
-        :title="listError"
-        type="error"
-        show-icon
-        :closable="false"
-      />
+      <ElAlert v-else-if="listError" :title="listError" type="error" show-icon :closable="false" />
       <div v-else-if="!models.length" class="model-list-state">
         <ElEmpty description="暂无推理模型" :image-size="80" />
       </div>
       <div v-else class="model-grid">
-        <ModelCard v-for="model in models" :key="model.id" v-bind="model" :icon-src="model.iconSrc" :is-admin="isAdmin" @click="goToModel(model.id)" @delete="handleDeleteModel(model.id)" @edit="handleEditModel(model.id)" @restart="handleRestartModel(model.id)" />
+        <ModelCard
+          v-for="model in models"
+          :key="model.id"
+          v-bind="model"
+          :icon-src="model.iconSrc"
+          :is-admin="isAdmin"
+          @click="goToModel(model.id)"
+          @delete="handleDeleteModel(model.id)"
+          @edit="handleEditModel(model.id)"
+          @restart="handleRestartModel(model.id)"
+        />
       </div>
     </div>
 
     <AddModelModal :visible="showAddModal" @close="showAddModal = false" @save="handleAddModel" />
-    <ModelInfoDrawer :visible="drawerVisible" :mode="drawerMode" :model="selectedModel" @close="drawerVisible = false" @edit="drawerMode = 'edit'" @save="handleSaveModel" @export="() => {}" />
+    <ModelInfoDrawer
+      :visible="drawerVisible"
+      :mode="drawerMode"
+      :model="selectedModel"
+      @close="drawerVisible = false"
+      @edit="drawerMode = 'edit'"
+      @save="handleSaveModel"
+      @export="() => {}"
+    />
   </section>
 </template>
 
@@ -312,9 +392,27 @@ onMounted(() => { loadModels(); loadOverviewData(); });
   box-sizing: border-box;
 }
 
-.overview-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 20px; margin-top: 20px; flex-shrink: 0; }
-.overview-card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.overview-card__title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: #111827; }
+.overview-card {
+  background: var(--bg-2);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+  flex-shrink: 0;
+}
+.overview-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.overview-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
 .overview-card__detail {
   display: inline-flex;
   align-items: center;
@@ -323,17 +421,55 @@ onMounted(() => { loadModels(); loadOverviewData(); });
   height: auto;
   padding: 0;
 }
-.overview-card__content { display: flex; gap: 0; }
-.overview-card__section { flex: 1; padding: 0 20px; }
-.overview-card__section:first-child { padding-left: 0; }
-.overview-card__section:last-child { padding-right: 0; }
-.overview-card__divider { width: 1px; background: #e5e7eb; margin: 0 20px; }
-.overview-card__section-header { font-size: 13px; color: #6b7280; margin-bottom: 12px; }
-.overview-card__metrics { display: flex; gap: 24px; margin-bottom: 16px; }
-.overview-card__metric { display: flex; flex-direction: column; gap: 2px; }
-.overview-card__metric-label { font-size: 12px; color: #9ca3af; }
-.overview-card__metric-value { font-size: 24px; font-weight: 600; color: #111827; }
-.overview-card__metric-unit { font-size: 12px; font-weight: 400; color: #6b7280; margin-left: 2px; }
+.overview-card__content {
+  display: flex;
+  gap: 0;
+}
+.overview-card__section {
+  flex: 1;
+  padding: 0 20px;
+}
+.overview-card__section:first-child {
+  padding-left: 0;
+}
+.overview-card__section:last-child {
+  padding-right: 0;
+}
+.overview-card__divider {
+  width: 1px;
+  background: var(--border);
+  margin: 0 20px;
+}
+.overview-card__section-header {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+.overview-card__metrics {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+.overview-card__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.overview-card__metric-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.overview-card__metric-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.overview-card__metric-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
 
 .model-list-card {
   flex: 1;
@@ -343,8 +479,20 @@ onMounted(() => { loadModels(); loadOverviewData(); });
   margin-top: 24px;
 }
 
-.model-section__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-shrink: 0; }
-.model-section__toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; flex-shrink: 0; }
+.model-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+.model-section__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
 .model-list-state {
   flex: 1;
   min-height: 160px;

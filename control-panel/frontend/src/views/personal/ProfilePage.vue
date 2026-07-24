@@ -18,8 +18,8 @@ import {
 } from 'element-plus';
 import { getMe, changeMyPassword } from '@/api/users';
 import { useAuth } from '@/composables/useAuth';
-import profileBannerImg from '@/assets/images/profile-banner.png';
-import profileAvatarImg from '@/assets/images/profile-avatar.png';
+import profileBannerImg from '@/assets/images/bg.svg';
+import profileAvatarImg from '@/assets/images/avatar.svg';
 
 const route = useRoute();
 const router = useRouter();
@@ -172,14 +172,13 @@ async function handleLogout() {
               </div>
               <div class="info-item">
                 <span class="info-label">账号状态</span>
-                <ElTag
-                  size="small"
-                  effect="light"
-                  class="status-tag"
-                  :class="profile.is_active ? 'status-tag--active' : 'status-tag--inactive'"
+                <span
+                  class="login-status"
+                  :class="profile.is_active ? 'login-status--online' : 'login-status--offline'"
                 >
+                  <span class="login-status__dot" />
                   {{ profile.is_active ? '正常' : '停用' }}
-                </ElTag>
+                </span>
               </div>
               <div class="info-item">
                 <span class="info-label">用户角色</span>
@@ -278,9 +277,7 @@ async function handleLogout() {
       </ElForm>
       <template #footer>
         <ElButton @click="showResetDialog = false">取消</ElButton>
-        <ElButton type="primary" :loading="resetLoading" @click="handleResetPassword">
-          保存修改
-        </ElButton>
+        <ElButton type="primary" :loading="resetLoading" @click="handleResetPassword"> 保存修改 </ElButton>
       </template>
     </ElDialog>
   </div>
@@ -318,7 +315,7 @@ async function handleLogout() {
   margin-top: -56px;
   border: 4px solid #fff;
   border-radius: 50%;
-  background: #f3f3f3;
+  background: var(--bg-1);
   object-fit: cover;
 }
 
@@ -357,7 +354,7 @@ async function handleLogout() {
 
 .profile-tabs :deep(.el-tabs__nav-wrap::after) {
   height: 1px;
-  background-color: var(--border-color);
+  background-color: var(--border-separator);
 }
 
 .profile-tabs :deep(.el-tabs__item) {
@@ -386,7 +383,7 @@ async function handleLogout() {
 
 .profile-card {
   padding: 20px 24px 24px;
-  background: #fff;
+  background: var(--bg-2);
   border-radius: 12px;
 }
 
@@ -431,27 +428,27 @@ async function handleLogout() {
 }
 
 .profile-action-btn.el-button {
-  --el-button-bg-color: #fff;
-  --el-button-text-color: rgba(25, 25, 25, 1);
-  --el-button-border-color: rgba(201, 201, 201, 1);
-  --el-button-hover-bg-color: var(--bg-hover);
-  --el-button-hover-text-color: rgba(25, 25, 25, 1);
-  --el-button-hover-border-color: rgba(201, 201, 201, 1);
-  --el-button-active-bg-color: var(--bg-hover);
-  --el-button-active-text-color: rgba(25, 25, 25, 1);
-  --el-button-active-border-color: rgba(201, 201, 201, 1);
+  --el-button-bg-color: var(--bg-2);
+  --el-button-text-color: var(--text-primary);
+  --el-button-border-color: var(--border);
+  --el-button-hover-bg-color: var(--bg-mask);
+  --el-button-hover-text-color: var(--text-primary);
+  --el-button-hover-border-color: var(--border);
+  --el-button-active-bg-color: var(--bg-mask);
+  --el-button-active-text-color: var(--text-primary);
+  --el-button-active-border-color: var(--border);
 }
 
 .profile-action-btn.el-button--danger.is-plain {
-  --el-button-bg-color: #fff;
-  --el-button-text-color: rgba(224, 33, 40, 1);
-  --el-button-border-color: rgba(224, 33, 40, 1);
-  --el-button-hover-bg-color: rgba(224, 33, 40, 0.05);
-  --el-button-hover-text-color: rgba(224, 33, 40, 1);
-  --el-button-hover-border-color: rgba(224, 33, 40, 1);
-  --el-button-active-bg-color: rgba(224, 33, 40, 0.05);
-  --el-button-active-text-color: rgba(224, 33, 40, 1);
-  --el-button-active-border-color: rgba(224, 33, 40, 1);
+  --el-button-bg-color: var(--bg-2);
+  --el-button-text-color: var(--error);
+  --el-button-border-color: var(--error);
+  --el-button-hover-bg-color: var(--error-subtler);
+  --el-button-hover-text-color: var(--error);
+  --el-button-hover-border-color: var(--error);
+  --el-button-active-bg-color: var(--error-subtle);
+  --el-button-active-text-color: var(--error);
+  --el-button-active-border-color: var(--error);
 }
 
 .info-grid {
@@ -489,7 +486,7 @@ async function handleLogout() {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: #f3f3f3;
+  background: var(--bg-1);
   object-fit: cover;
 }
 
@@ -498,27 +495,32 @@ async function handleLogout() {
 }
 
 .role-tag--admin {
-  color: #fff !important;
-  background: #ec6f1a !important;
+  color: var(--tag-text-alert) !important;
+  background: var(--tag-bg-alert) !important;
 }
 
 .role-tag--user {
-  color: #fff !important;
-  background: #1f55b5 !important;
+  color: var(--tag-text-info) !important;
+  background: var(--tag-bg-info) !important;
 }
 
-.status-tag {
-  border: none !important;
+.login-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
 }
 
-.status-tag--active {
-  color: #316614 !important;
-  background: #dff4cc !important;
+.login-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bg-mask);
 }
 
-.status-tag--inactive {
-  color: #777 !important;
-  background: #f3f3f3 !important;
+.login-status--online .login-status__dot {
+  background: var(--success);
 }
 
 .reset-hint {

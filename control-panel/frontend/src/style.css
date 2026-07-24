@@ -1,5 +1,21 @@
 @import 'element-plus/dist/index.css';
 
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('./assets/fonts/HarmonyOS_Sans_SC.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  src: url('./assets/fonts/HarmonyOS_Sans.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 *,
 *::before,
 *::after {
@@ -9,30 +25,61 @@
 :root {
   --color-primary: #0067d1;
   --el-color-primary: #0067d1;
+  --el-font-family: 'HarmonyOS Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+ 
+  /* 文本色 */
   --text-primary: #191919;
   --text-secondary: #777777;
-  --text-muted: #aeaeae;
-  --bg-hover: rgb(25 25 25 / 5%);
+  --text-placeholder: #aeaeae;
+  --text-disabled: #c9c9c9;
+  --text-inverse: #ffffff; 
+  --text-on: #0067d1;
+
+  /* 背景色 */
+  --bg-1: #f3f3f3;
+  --bg-2: #ffffff;
+  --bg-6: #c9c9c933;
+  --bg-mask: #1919194D;
   --bg-active: #e6f2fd;
   --bg-page: #f6f7f7;
-  --bg-side-nav: #ffffff;
-  --bg-top-nav: #ffffff;
-  --border-color: #dfdfdf;
 
-  /* Status colors */
-  --color-success: #22c55e;
-  --color-error: #e02128;
-  --color-warning: #f59e0b;
-  --color-info: #2563eb;
+  /* 边框色 */
+  --border: #c9c9c9;
+  --border-hover: #191919;
+  --border-focus: #0067d1;
+  --border-active: #b8d9f9;
+  --border-disabled: #c9c9c9;
+  --border-separator: #dfdfdf;
+  --border-separator-subtle: #f3f3f3;
 
-  /* Card */
-  --bg-card: #ffffff;
-  --radius-card: 12px;
-  --radius-card-sm: 8px;
+  /* tag */
+  --tag-text-alert: #954304;
+  --tag-bg-alert: #fde2bd;
+  --tag-text-info: #1f55b5;
+  --tag-bg-info: #d0d8fd80;
 
-  /* Form */
-  --border-input: #c9c9c9;
-  --radius-input: 4px;
+  /* success */
+  --success: #09aa71;
+
+  /* error */
+  --error: #e02128;
+  --error-hover: #e7434a;
+  --error-active: #c7000b;
+  --error-disabled: #fabdc1;
+  --error-subtle: #f59297;
+  --error-subtler: #fee7e8;
+
+  /* alert */
+  --alert: #f4840c;
+  --alert-hover: #f69e39;
+  --alert-active: #c76207;
+  --alert-disabled: #fde2bd;
+
+  /* raduis */
+  --radius-base: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 }
 
 html,
@@ -40,6 +87,7 @@ body,
 #app {
   margin: 0;
   min-height: 100%;
+  font-family: 'HarmonyOS Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .page {
@@ -57,7 +105,7 @@ body,
 .filter-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-separator);
   flex-shrink: 0;
 }
 
@@ -106,23 +154,23 @@ body,
   align-items: center;
   justify-content: center;
   padding: 8px 16px;
-  border-radius: var(--radius-card-sm);
+  border-radius: var(--radius-lg);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
+  border: 1px solid var(--border-separator);
+  background: var(--bg-2);
   color: var(--text-primary);
 }
 
 .btn:hover {
-  background: var(--bg-hover);
+  background: var(--bg-mask);
 }
 
 .btn--primary {
   background: var(--color-primary);
-  color: #ffffff;
+  color: var(--text-inverse);
   border-color: var(--color-primary);
 }
 
@@ -131,8 +179,8 @@ body,
 }
 
 .btn--danger {
-  color: var(--color-error);
-  border-color: var(--color-error);
+  color: var(--error);
+  border-color: var(--error);
 }
 
 .btn--danger:hover {
@@ -146,13 +194,13 @@ body,
 }
 
 .btn--text:hover {
-  background: var(--bg-hover);
+  background: var(--bg-mask);
 }
 
 /* White card container */
 .card {
-  background: var(--bg-card);
-  border-radius: var(--radius-card);
+  background: var(--bg-2);
+  border-radius: var(--radius-xl);
   padding: 20px 24px;
 }
 
@@ -168,13 +216,13 @@ body,
   padding: 12px 16px;
   font-weight: 500;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-separator);
 }
 
 .data-table td {
   padding: 12px 16px;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-separator);
 }
 
 .data-table tr:last-child td {

@@ -34,7 +34,10 @@ const metadata = computed(() => {
 
 async function loadModelDetail() {
   const id = route.params.id as string;
-  if (!id) { error.value = '模型 ID 不能为空'; return; }
+  if (!id) {
+    error.value = '模型 ID 不能为空';
+    return;
+  }
   loading.value = true;
   error.value = null;
   try {
@@ -66,8 +69,15 @@ async function handleSave(data: Partial<ModelDetail> | Record<string, unknown>) 
   }
 }
 
-watch(() => route.params.id, (newId) => { if (newId) loadModelDetail(); });
-onMounted(() => { loadModelDetail(); });
+watch(
+  () => route.params.id,
+  (newId) => {
+    if (newId) loadModelDetail();
+  },
+);
+onMounted(() => {
+  loadModelDetail();
+});
 </script>
 
 <template>
@@ -86,7 +96,9 @@ onMounted(() => { loadModelDetail(); });
           <div class="detail-header__name">
             <span style="font-size: 20px; font-weight: 600">{{ modelData.model_name }}</span>
           </div>
-          <span style="font-size: 12px; color: var(--text-secondary)">模型类型 {{ modelData.litellm_params?.model || '--' }}</span>
+          <span style="font-size: 12px; color: var(--text-secondary)"
+            >模型类型 {{ modelData.litellm_params?.model || '--' }}</span
+          >
         </div>
         <ElButton class="detail-link" link type="primary" @click="openDrawer('view')">模型详情</ElButton>
       </div>
@@ -104,14 +116,42 @@ onMounted(() => { loadModelDetail(); });
       />
     </template>
 
-    <ModelInfoDrawer :visible="drawerVisible" :mode="drawerMode" :model="modelData" @close="drawerVisible = false" @edit="drawerMode = 'edit'" @save="handleSave" @export="() => {}" />
+    <ModelInfoDrawer
+      :visible="drawerVisible"
+      :mode="drawerMode"
+      :model="modelData"
+      @close="drawerVisible = false"
+      @edit="drawerMode = 'edit'"
+      @save="handleSave"
+      @export="() => {}"
+    />
   </section>
 </template>
 
 <style scoped>
-.detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.detail-header__icon { width: 44px; height: 44px; border-radius: 10px; background: #f3f4f6; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
-.detail-header__icon img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.detail-header__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.detail-header__icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
 .detail-link {
   margin-left: auto;
   font-size: 14px;
@@ -127,18 +167,72 @@ onMounted(() => { loadModelDetail(); });
 .detail-back:hover {
   color: var(--text-primary);
 }
-.detail-header__info { display: flex; flex-direction: column; gap: 4px; }
-.detail-header__name { display: flex; align-items: center; gap: 12px; }
-.status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #374151; }
-.status-badge__dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
-.status-badge--success .status-badge__dot { background: #22c55e; }
-.status-badge--error .status-badge__dot { background: #ef4444; }
-.status-badge--warning .status-badge__dot { background: #f59e0b; }
-.metadata-bar { display: flex; gap: 24px; padding: 12px 0; border-bottom: 1px solid var(--border-color); margin-bottom: 24px; flex-wrap: wrap; }
-.metadata-item { display: flex; flex-direction: column; gap: 4px; }
-.metadata-item__label { font-size: 12px; color: var(--text-secondary); }
-.metadata-item__value { font-size: 14px; color: var(--text-primary); }
-.performance-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-.chart-metrics { display: flex; gap: 40px; }
+.detail-header__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.detail-header__name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.status-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+.status-badge--success .status-badge__dot {
+  background: var(--success);
+}
+.status-badge--error .status-badge__dot {
+  background: var(--error);
+}
+.status-badge--warning .status-badge__dot {
+  background: var(--alert);
+}
+.metadata-bar {
+  display: flex;
+  gap: 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-separator);
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.metadata-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.metadata-item__label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.metadata-item__value {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.performance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.chart-metrics {
+  display: flex;
+  gap: 40px;
+}
 </style>
