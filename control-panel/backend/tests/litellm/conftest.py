@@ -65,51 +65,49 @@ from app.iam.deps import get_current_user as _orig_get_current_user
 from app.iam.deps import require_admin as _orig_require_admin
 from app.iam.deps import require_permission as _orig_require_permission
 
-# 保存原始 overrides，包级 fixture 在 litellm 测试结束后恢复，避免污染非 litellm 测试
-_SAVED_OVERRIDES = dict(app.dependency_overrides)
-
-app.dependency_overrides[_orig_get_session] = _override_get_session
-
-# ── 覆盖 get_current_user → 测试用固定用户 ────────────────────────────────
-
 
 async def _override_get_current_user():
     from app.iam.tokens import TokenData
     return TokenData(user_id="test-user-001", username="test-user", role="user")
-
-app.dependency_overrides[_orig_get_current_user] = _override_get_current_user
-
-# ── 覆盖 require_admin → 测试用 admin 用户 ──────────────────────────────────
 
 
 async def _override_require_admin():
     from app.iam.tokens import TokenData
     return TokenData(user_id="test-admin-001", username="test-admin", role="admin")
 
-app.dependency_overrides[_orig_require_admin] = _override_require_admin
-
-# ── 覆盖 require_permission → 测试环境放行所有权限校验 ─────────────────────
-
 
 async def _override_require_permission():
     from app.iam.tokens import TokenData
     return TokenData(user_id="test-user-001", username="test-user", role="user")
 
-app.dependency_overrides[_orig_require_permission] = _override_require_permission
+
+def _apply_litellm_overrides():
+    """Apply dependency overrides for litellm tests."""
+    _app = app
+    _app.dependency_overrides[_orig_get_session] = _override_get_session
+    _app.dependency_overrides[_orig_get_current_user] = _override_get_current_user
+    _app.dependency_overrides[_orig_require_admin] = _override_require_admin
+    _app.dependency_overrides[_orig_require_permission] = _override_require_permission
+
+
+def _remove_litellm_overrides():
+    """Remove litellm dependency overrides from the global app."""
+    _app = app
+    for _key in (
+        _orig_get_session,
+        _orig_get_current_user,
+        _orig_require_admin,
+        _orig_require_permission,
+    ):
+        _app.dependency_overrides.pop(_key, None)
 
 
 @pytest.fixture(scope="package", autouse=True)
-def _restore_dependency_overrides():
-    """包级 teardown：litellm 测试全部结束后恢复原始 overrides。
-
-    作用域为 ``scope="package"``，确保在离开 ``tests/litellm/`` 目录时
-    立即清理，而非等到整个 session 结束。这样非 litellm 测试（如 test_auth）
-    不会受到本模块 pollute 的 overrides 影响。
-    """
+def _litellm_overrides():
+    """Apply overrides for litellm tests, restore on teardown."""
+    _apply_litellm_overrides()
     yield
-    from app.main import app as _app
-    _app.dependency_overrides.clear()
-    _app.dependency_overrides.update(_SAVED_OVERRIDES)
+    _remove_litellm_overrides()
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

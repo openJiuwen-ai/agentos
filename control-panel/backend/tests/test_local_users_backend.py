@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from app.config import settings
+from app.schemas.user import ListUsersParams
 
 
 # ── 管理员初始化 ─────────────────────────────────────────────────────
@@ -29,7 +30,9 @@ async def test_seed_initial_admin(backend, test_data):
 async def test_seed_initial_admin_idempotent(backend):
     """重复初始化管理员不会报错，也不会产生重复用户。"""
     await backend.seed_initial_admin()
-    result = await backend.list_users(page=1, page_size=100)
+    result = await backend.list_users(
+        ListUsersParams(page=1, page_size=100)
+    )
     assert result.total == 1
 
 
@@ -141,7 +144,7 @@ async def test_list_users(backend, test_data):
     batch = test_data["users"]["batch"]
     for name in batch[:2]:
         await backend.create_user(name)
-    result = await backend.list_users()
+    result = await backend.list_users(ListUsersParams())
     assert result.total >= 3  # admin + batch[0] + batch[1]
     usernames = [u.username for u in result.items]
     assert test_data["admin"]["username"] in usernames
@@ -155,7 +158,7 @@ async def test_list_users_pagination(backend, test_data):
     batch = test_data["users"]["batch"]
     for name in batch[2:4]:
         await backend.create_user(name)
-    result = await backend.list_users(page=1, page_size=2)
+    result = await backend.list_users(ListUsersParams(page=1, page_size=2))
     assert len(result.items) <= 2
     assert result.total >= 3
 
@@ -238,7 +241,7 @@ async def test_change_password_too_short(backend, test_data):
     passwords = test_data["passwords"]
     record, _ = await backend.create_user("chpwd3", password=pw_data["chpwd3"])
     user_id = uuid.UUID(record.user_id)
-    with pytest.raises(ValueError, match="至少 8 位"):
+    with pytest.raises(ValueError, match="密码长度需为 8-16 位"):
         await backend.change_password(user_id, pw_data["chpwd3"], passwords["too_short"])
 
 
@@ -291,3 +294,66 @@ async def test_get_engine(backend):
     """get_engine() 返回已初始化的异步引擎实例。"""
     engine = backend.get_engine()
     assert engine is not None
+
+
+class TestChangePasswordStrength:
+    """Integration tests for password strength enforcement in change_password."""
+
+    async def test_rejects_too_short(self, backend):
+        """change_password rejects passwords < 8 chars."""
+        user, old_pwd = await backend.create_user("strengthtest1")
+        with pytest.raises(ValueError) as exc:
+            await backend.change_password(
+                uuid.UUID(user.user_id), old_pwd, "Ab1"
+            )
+        assert "8-16" in str(exc.value)
+
+    async def test_rejects_same_as_current(self, backend):
+        """change_password rejects new password equal to current."""
+        from app.services.local_users.password import hash_password
+        old_pwd = "ValidPwd1"
+        user, _ = await backend.create_user("strengthtest2", old_pwd)
+        with pytest.raises(ValueError) as exc:
+            await backend.change_password(
+                uuid.UUID(user.user_id), old_pwd, old_pwd
+            )
+        assert "相同" in str(exc.value)
+
+    async def test_accepts_strong_password(self, backend):
+        """change_password succeeds with a strong new password."""
+        user, _ = await backend.create_user("strengthtest3", "OldValid1")
+        # First change the password to something so we know the old one
+        await backend.change_password(
+            uuid.UUID(user.user_id), "OldValid1", "NewValid2"
+        )
+        # If we get here, it succeeded — verify by authenticating
+        creds = await backend.authenticate("strengthtest3", "NewValid2")
+        assert creds is not None
+
+
+class TestListUsersRoleFilter:
+    """Integration tests for role filtering in list_users."""
+
+    async def test_filter_admin_only(self, backend):
+        """list_users(role='admin') returns only admins."""
+        await backend.seed_initial_admin()
+        await backend.create_user("filteruser1")
+        result = await backend.list_users(ListUsersParams(role="admin"))
+        assert all(u.role == "admin" for u in result.items)
+        assert result.total >= 1
+
+    async def test_filter_user_only(self, backend):
+        """list_users(role='user') returns only non-admins."""
+        await backend.seed_initial_admin()
+        await backend.create_user("filteruser2")
+        result = await backend.list_users(ListUsersParams(role="user"))
+        assert all(u.role == "user" for u in result.items)
+
+    async def test_filter_all(self, backend):
+        """list_users without role returns all users."""
+        await backend.seed_initial_admin()
+        await backend.create_user("filteruser3")
+        all_result = await backend.list_users(ListUsersParams())
+        admin_result = await backend.list_users(ListUsersParams(role="admin"))
+        user_result = await backend.list_users(ListUsersParams(role="user"))
+        assert all_result.total == admin_result.total + user_result.total

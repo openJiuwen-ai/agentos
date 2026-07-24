@@ -35,6 +35,7 @@ export function getUsers(params?: {
   sort?: string;
   order?: string;
   search?: string;
+  role?: string;
 }): Promise<PaginatedUsers> {
   return get<PaginatedUsers>('/api/v1/users', params);
 }

@@ -10,7 +10,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.schemas.user import PaginatedUsers, UserCredentials, UserRecord
+from app.schemas.user import (
+    ListUsersParams,
+    PaginatedUsers,
+    UserCredentials,
+    UserRecord,
+)
 
 
 class AbstractUserBackend(ABC):
@@ -51,15 +56,8 @@ class AbstractUserBackend(ABC):
         ...
 
     @abstractmethod
-    async def list_users(
-        self,
-        page: int = 1,
-        page_size: int = 20,
-        sort: str = "created_at",
-        order: str = "desc",
-        search: str | None = None,
-    ) -> PaginatedUsers:
-        """Paginated user list, optionally filtered by username search."""
+    async def list_users(self, params: ListUsersParams) -> PaginatedUsers:
+        """Paginated user list, optionally filtered by username search and role."""
         ...
 
     @abstractmethod

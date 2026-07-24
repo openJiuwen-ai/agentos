@@ -48,6 +48,18 @@ class PaginatedUsers:
     total: int
 
 
+@dataclass
+class ListUsersParams:
+    """Parameter bundle for ``list_users()``."""
+
+    page: int = 1
+    page_size: int = 20
+    sort: str = "created_at"
+    order: str = "desc"
+    search: str | None = None
+    role: str | None = None
+
+
 # ── HTTP request / response schemas ─────────────────────────────────────
 
 
@@ -72,7 +84,7 @@ class UserItem(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
-    new_password: str = Field(..., min_length=8)
+    new_password: str = Field(..., min_length=8, max_length=64)
 
 
 class UpdateUserRequest(BaseModel):

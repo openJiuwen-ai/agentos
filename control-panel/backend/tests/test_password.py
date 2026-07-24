@@ -8,6 +8,7 @@ from app.services.local_users.password import (
     verify_password,
     generate_random_password,
     get_public_key_pem,
+    validate_password_strength,
 )
 from tests.conftest import load_test_data
 
@@ -87,3 +88,79 @@ def test_rsa_encrypt_decrypt_roundtrip():
         ),
     )
     assert decrypted == plaintext
+
+
+class TestValidatePasswordStrength:
+    """Unit tests for validate_password_strength()."""
+
+    @staticmethod
+    def test_valid_lower_upper_digit():
+        """小写+大写+数字 → 有效（三类满足）。"""
+        assert validate_password_strength("Abcdef12", "user") == []
+
+    @staticmethod
+    def test_valid_lower_digit_special():
+        """小写+数字+特殊字符 → 有效。"""
+        assert validate_password_strength("abcdef1!", "user") == []
+
+    @staticmethod
+    def test_valid_lower_upper():
+        """小写+大写 → 有效（恰好两类）。"""
+        assert validate_password_strength("Abcdefgh", "user") == []
+
+    @staticmethod
+    def test_valid_upper_digit():
+        """大写+数字 → 有效（恰好两类）。"""
+        assert validate_password_strength("ABCDEF12", "user") == []
+
+    @staticmethod
+    def test_valid_exactly_8_chars():
+        """边界：恰好 8 位且两类 → 有效。"""
+        assert validate_password_strength("Abcde123", "user") == []
+
+    @staticmethod
+    def test_valid_exactly_16_chars():
+        """边界：恰好 16 位 → 有效。"""
+        assert validate_password_strength("Abcdefghij123456", "user") == []
+
+    @staticmethod
+    def test_too_short():
+        """少于 8 位 → 返回错误。"""
+        errors = validate_password_strength("Ab1", "user")
+        assert any("8-16" in e for e in errors)
+
+    @staticmethod
+    def test_too_long():
+        """超过 16 位 → 返回错误。"""
+        errors = validate_password_strength("A" * 17 + "b1", "user")
+        assert any("8-16" in e for e in errors)
+
+    @staticmethod
+    def test_only_one_category():
+        """仅小写字母 → 返回错误。"""
+        errors = validate_password_strength("abcdefgh", "user")
+        assert any("两类" in e for e in errors)
+
+    @staticmethod
+    def test_only_digits():
+        """仅数字 → 返回错误。"""
+        errors = validate_password_strength("12345678", "user")
+        assert any("两类" in e for e in errors)
+
+    @staticmethod
+    def test_username_in_password():
+        """密码包含用户名 → 返回错误。"""
+        errors = validate_password_strength("MyTestuser1", "testuser")
+        assert any("用户名" in e for e in errors)
+
+    @staticmethod
+    def test_username_case_insensitive():
+        """大小写不敏感的用户名检查。"""
+        errors = validate_password_strength("AbTESTUSER1", "testuser")
+        assert any("用户名" in e for e in errors)
+
+    @staticmethod
+    def test_empty_username_not_in_password():
+        """用户名为空时不应误判包含。"""
+        errors = validate_password_strength("Abcdef1!", "")
+        assert not any("用户名" in e for e in errors)

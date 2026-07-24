@@ -4,6 +4,7 @@ Thin orchestration layer — delegates to ``AbstractUserBackend`` for all
 user CRUD and to ``iam.deps`` for auth dependencies.  Backend-agnostic.
 """
 
+import typing
 import uuid
 from dataclasses import dataclass
 
@@ -13,6 +14,7 @@ from app.iam.deps import get_current_user, get_user_backend, require_admin, Toke
 from app.schemas.user import (
     BatchCreateRequest,
     ChangePasswordRequest,
+    ListUsersParams,
     UpdateUserRequest,
 )
 from app.services.base import AbstractUserBackend
@@ -25,13 +27,32 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 @dataclass
 class _ListUsersQuery:
-    """Bundle list_users query params to keep the function signature lean."""
+    """Bundle list_users query params with input validation."""
 
-    page: int = Query(1, ge=1)
+    _ALLOWED_SORT: typing.ClassVar[frozenset[str]] = frozenset(
+        {"username", "role", "is_active", "created_at"}
+    )
+    _ALLOWED_ORDER: typing.ClassVar[frozenset[str]] = frozenset({"asc", "desc"})
+
+    page: int = Query(1, ge=1, le=10000000)
     page_size: int = Query(20, ge=1, le=100)
     sort: str = Query("created_at")
     order: str = Query("desc")
     search: str | None = Query(None)
+
+    def __post_init__(self) -> None:
+        if self.sort not in self._ALLOWED_SORT:
+            raise HTTPException(
+                status_code=400, detail=f"无效的排序字段: {self.sort}"
+            )
+        if self.order not in self._ALLOWED_ORDER:
+            raise HTTPException(
+                status_code=400, detail=f"无效的排序方向: {self.order}"
+            )
+        if self.search is not None:
+            sanitized = self.search.replace("\x00", "")
+            if sanitized != self.search:
+                object.__setattr__(self, "search", sanitized)
 
 
 # ── Admin routes ────────────────────────────────────────────────────────
@@ -75,7 +96,15 @@ async def list_users(
     _admin: TokenData = Depends(require_admin),
 ):
     """Admin: paginated user list with optional username search."""
-    result = await backend.list_users(q.page, q.page_size, q.sort, q.order, q.search)
+    result = await backend.list_users(
+        ListUsersParams(
+            page=q.page,
+            page_size=q.page_size,
+            sort=q.sort,
+            order=q.order,
+            search=q.search,
+        )
+    )
     items = [
         {
             "user_id": u.user_id,

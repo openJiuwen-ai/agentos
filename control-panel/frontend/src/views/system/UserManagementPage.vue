@@ -11,8 +11,9 @@ import {
   ElMessage,
   ElMessageBox,
   ElIcon,
+  ElPopover,
 } from 'element-plus';
-import { Search } from '@element-plus/icons-vue';
+import { Search, Filter } from '@element-plus/icons-vue';
 import {
   getUsers,
   batchCreateUsers,
@@ -34,6 +35,12 @@ const search = ref('');
 const listLoading = ref(false);
 const selectedRows = ref<UserItem[]>([]);
 
+// ── sort & filter ──
+const sortKey = ref('created_at');
+const sortOrder = ref<'asc' | 'desc'>('desc');
+const roleFilter = ref('');
+
+// ── batch create modal ──
 const showBatchModal = ref(false);
 const batchInput = ref('');
 const batchResults = ref<BatchCreateResult[]>([]);
@@ -55,6 +62,9 @@ async function loadUsers() {
       page: page.value,
       page_size: pageSize.value,
       search: search.value || undefined,
+      sort: sortKey.value,
+      order: sortOrder.value,
+      role: roleFilter.value || undefined,
     });
     users.value = data.items;
     total.value = data.total;
@@ -66,7 +76,24 @@ async function loadUsers() {
   }
 }
 
+function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+  if (!order) {
+    sortKey.value = 'created_at';
+    sortOrder.value = 'desc';
+  } else {
+    sortKey.value = prop;
+    sortOrder.value = order === 'ascending' ? 'asc' : 'desc';
+  }
+  page.value = 1;
+  loadUsers();
+}
+
 function handleSearch() {
+  page.value = 1;
+  loadUsers();
+}
+
+function handleRoleFilter() {
   page.value = 1;
   loadUsers();
 }
@@ -241,16 +268,21 @@ function formatDate(iso: string | null) {
         </div>
       </div>
 
-      <ElTable
-        v-loading="listLoading"
-        :data="users"
+      <div class="user-mgmt__table-area">
+        <div v-if="listLoading" class="table-loading-overlay">
+          <span class="table-loading-spinner" />
+        </div>
+
+        <ElTable
+          :data="users"
         row-key="user_id"
         class="user-mgmt__table"
         empty-text="暂无数据"
         @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
       >
         <ElTableColumn type="selection" width="48" />
-        <ElTableColumn label="用户名" min-width="160">
+        <ElTableColumn label="用户名" min-width="160" prop="username" sortable="custom">
           <template #default="{ row }">
             <div class="user-cell">
               <img :src="userAvatar" :alt="row.username" class="user-cell__avatar" />
@@ -263,7 +295,34 @@ function formatDate(iso: string | null) {
             <span class="cell-mono">{{ row.user_id }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="用户角色" width="120">
+        <ElTableColumn width="120">
+          <template #header>
+            <div class="role-header">
+              <span>用户角色</span>
+              <ElPopover placement="bottom" :width="120" trigger="click">
+                <template #reference>
+                  <ElIcon :size="14" :class="{ 'role-filter-icon--active': roleFilter }" class="role-filter-icon"><Filter /></ElIcon>
+                </template>
+                <div class="role-filter-popover">
+                  <div
+                    class="role-filter-option"
+                    :class="{ 'role-filter-option--active': !roleFilter }"
+                    @click="roleFilter = ''; handleRoleFilter()"
+                  >全部角色</div>
+                  <div
+                    class="role-filter-option"
+                    :class="{ 'role-filter-option--active': roleFilter === 'admin' }"
+                    @click="roleFilter = 'admin'; handleRoleFilter()"
+                  >管理员</div>
+                  <div
+                    class="role-filter-option"
+                    :class="{ 'role-filter-option--active': roleFilter === 'user' }"
+                    @click="roleFilter = 'user'; handleRoleFilter()"
+                  >普通用户</div>
+                </div>
+              </ElPopover>
+            </div>
+          </template>
           <template #default="{ row }">
             <ElTag
               size="small"
@@ -318,6 +377,7 @@ function formatDate(iso: string | null) {
           background
         />
       </div>
+      </div>
     </div>
 
     <!-- 批量新建用户 -->
@@ -329,7 +389,7 @@ function formatDate(iso: string | null) {
         </div>
       </template>
 
-      <p class="batch-dialog__desc">每行一个用户名，或用逗号分隔。密码将自动生成。</p>
+      <p class="batch-dialog__desc">每行一个用户名，或用逗号分隔。密码将自动生成。<br /><strong>用户名将自动转换为小写。</strong></p>
       <ElInput
         v-model="batchInput"
         type="textarea"
@@ -460,10 +520,9 @@ function formatDate(iso: string | null) {
 .user-mgmt__toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  margin-bottom: 20px;
   flex-shrink: 0;
+  margin-bottom: 20px;
 }
 
 .user-mgmt__search {
@@ -473,10 +532,115 @@ function formatDate(iso: string | null) {
 .user-mgmt__actions {
   display: flex;
   gap: 8px;
+  margin-left: auto;
+}
+
+.user-mgmt__table-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+}
+
+.table-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #0067d1;
+  border-radius: 50%;
+  animation: table-spin 0.8s linear infinite;
+}
+
+@keyframes table-spin {
+  to { transform: rotate(360deg); }
 }
 
 .user-mgmt__table {
   flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  line-height: 22px;
+  color: #191919;
+  background: transparent;
+}
+
+.search-input::placeholder {
+  color: #aeaeae;
+}
+
+.role-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.role-filter-icon {
+  color: #aeaeae;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.role-filter-icon:hover,
+.role-filter-icon--active {
+  color: #0067d1;
+}
+
+.role-filter-popover {
+  display: flex;
+  flex-direction: column;
+}
+
+.role-filter-option {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #191919;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.role-filter-option:hover {
+  background: #f3f3f3;
+}
+
+.role-filter-option--active {
+  color: #0067d1;
+  background: #e8f4fd;
+}
+
+.th-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.th-sortable:hover {
+  color: #0067d1;
+}
+
+.th-sortable:hover .sort-icon {
+  color: #0067d1;
+}
+
+/* ── table ── */
+.table-wrap {
+  margin-top: 16px;
+  background: #ffffff;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.table {
   width: 100%;
 }
 

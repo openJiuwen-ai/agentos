@@ -11,11 +11,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.config import settings
-from app.schemas.user import PaginatedUsers, UserCredentials, UserRecord
+from app.schemas.user import (
+    ListUsersParams,
+    PaginatedUsers,
+    UserCredentials,
+    UserRecord,
+)
 from app.services.base import AbstractUserBackend
 from app.services.local_users.password import (
     generate_random_password,
     hash_password,
+    validate_password_strength,
     verify_password,
 )
 from app.services.local_users.models import User
@@ -178,18 +184,26 @@ class LocalUsersBackend(AbstractUserBackend):
             user = await _get_user_by_username(session, username)
             return self._to_record(user) if user else None
 
-    async def list_users(self, page=1, page_size=20, sort="created_at", order="desc", search=None) -> PaginatedUsers:
+    async def list_users(self, params: ListUsersParams) -> PaginatedUsers:
         async with self._session_maker() as session:
-            sort_col = getattr(User, sort, User.created_at)
-            order_clause = sort_col.desc() if order == "desc" else sort_col.asc()
+            sort_col = getattr(User, params.sort, User.created_at)
+            order_clause = (
+                sort_col.desc() if params.order == "desc" else sort_col.asc()
+            )
 
             base_query = select(User)
-            if search:
-                base_query = base_query.where(User.username.ilike(f"%{search}%"))
+            if params.search:
+                base_query = base_query.where(
+                    User.username.ilike(f"%{params.search}%")
+                )
+            if params.role:
+                base_query = base_query.where(User.role == params.role)
 
             total = (await session.execute(select(func.count()).select_from(base_query.subquery()))).scalar()
             result = await session.execute(
-                base_query.order_by(order_clause).offset((page - 1) * page_size).limit(page_size)
+                base_query.order_by(order_clause)
+                .offset((params.page - 1) * params.page_size)
+                .limit(params.page_size)
             )
             return PaginatedUsers(
                 items=[self._to_record(u) for u in result.scalars().all()],
@@ -297,11 +311,25 @@ class LocalUsersBackend(AbstractUserBackend):
             user = await _get_user_by_id(session, user_id)
             if not user:
                 raise ValueError("用户不存在或密码错误")
+
+            # 1. Verify old password
             valid, new_hash = verify_password(old_password, user.hashed_password)
             if not valid:
                 raise ValueError("原密码错误")
-            if len(new_password) < 8:
-                raise ValueError("新密码长度至少 8 位")
+
+            # 2. Strength check
+            strength_errors = validate_password_strength(
+                new_password, user.username
+            )
+            if strength_errors:
+                raise ValueError("；".join(strength_errors))
+
+            # 3. Must not be same as current password
+            same, _ = verify_password(new_password, user.hashed_password)
+            if same:
+                raise ValueError("新密码不能与当前密码相同")
+
+            # 4. Store and bump version
             user.hashed_password = hash_password(new_password)
             user.token_version += 1
             await session.commit()

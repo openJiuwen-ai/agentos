@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   ElTabs,
@@ -70,6 +70,33 @@ const resetRules: FormRules = {
     },
   ],
 };
+
+// ── password strength ──
+const passwordChecks = computed(() => ({
+  hasLower: /[a-z]/.test(resetForm.value.newPassword),
+  hasUpper: /[A-Z]/.test(resetForm.value.newPassword),
+  hasDigit: /[0-9]/.test(resetForm.value.newPassword),
+  hasSpecial: /[^a-zA-Z0-9]/.test(resetForm.value.newPassword),
+}));
+
+const passwordCategoryCount = computed(() => {
+  const c = passwordChecks.value;
+  return (c.hasLower ? 1 : 0) + (c.hasUpper ? 1 : 0) +
+         (c.hasDigit ? 1 : 0) + (c.hasSpecial ? 1 : 0);
+});
+
+const passwordLengthOk = computed(() =>
+  resetForm.value.newPassword.length >= 8 && resetForm.value.newPassword.length <= 16
+);
+
+const passwordHasUsername = computed(() => {
+  if (!resetForm.value.newPassword || !profile.value.username) return false;
+  return resetForm.value.newPassword.toLowerCase().includes(profile.value.username.toLowerCase());
+});
+
+const passwordStrengthValid = computed(() =>
+  passwordLengthOk.value && passwordCategoryCount.value >= 2 && !passwordHasUsername.value
+);
 
 async function loadProfile() {
   try {
@@ -260,10 +287,49 @@ async function handleLogout() {
             v-model="resetForm.newPassword"
             type="password"
             show-password
-            placeholder="至少 8 位字符"
+            :class="{ 'form-input--error': resetForm.newPassword.length > 0 && !passwordStrengthValid }"
+            placeholder="8-16 位，需包含至少两类字符"
             autocomplete="new-password"
             :disabled="resetLoading"
           />
+          <div v-if="resetForm.newPassword.length > 0" class="strength-checklist">
+            <div class="strength-row">
+              <span class="strength-counter" :class="passwordLengthOk ? 'check-pass' : 'check-fail'">
+                {{ resetForm.newPassword.length }}/16
+              </span>
+              <span class="strength-label">长度 8-16 位</span>
+            </div>
+            <div class="strength-row">
+              <span class="check-mark" :class="passwordChecks.hasLower ? 'check-pass' : 'check-fail'">
+                {{ passwordChecks.hasLower ? '✓' : '✗' }}
+              </span>
+              <span class="strength-label">小写字母 (a-z)</span>
+            </div>
+            <div class="strength-row">
+              <span class="check-mark" :class="passwordChecks.hasUpper ? 'check-pass' : 'check-fail'">
+                {{ passwordChecks.hasUpper ? '✓' : '✗' }}
+              </span>
+              <span class="strength-label">大写字母 (A-Z)</span>
+            </div>
+            <div class="strength-row">
+              <span class="check-mark" :class="passwordChecks.hasDigit ? 'check-pass' : 'check-fail'">
+                {{ passwordChecks.hasDigit ? '✓' : '✗' }}
+              </span>
+              <span class="strength-label">数字 (0-9)</span>
+            </div>
+            <div class="strength-row">
+              <span class="check-mark" :class="passwordChecks.hasSpecial ? 'check-pass' : 'check-fail'">
+                {{ passwordChecks.hasSpecial ? '✓' : '✗' }}
+              </span>
+              <span class="strength-label">特殊字符 (!@#$...)</span>
+            </div>
+            <div v-if="passwordCategoryCount < 2" class="strength-msg strength-msg--warn">
+              需至少满足两类
+            </div>
+            <div v-if="passwordHasUsername" class="strength-msg strength-msg--error">
+              密码不能包含用户名
+            </div>
+          </div>
         </ElFormItem>
         <ElFormItem label="确认新密码" prop="confirmPassword">
           <ElInput
@@ -537,5 +603,121 @@ async function handleLogout() {
   .profile-content {
     padding: 0 16px 24px;
   }
+}
+
+.form-input::placeholder {
+  color: #aeaeae;
+}
+
+.form-input--error {
+  border-color: #e02128;
+}
+
+.strength-checklist {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.strength-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.check-mark {
+  width: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.check-pass {
+  color: #09aa71;
+}
+
+.check-fail {
+  color: #aeaeae;
+}
+
+.strength-counter {
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.strength-label {
+  color: #777777;
+}
+
+.strength-msg {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.strength-msg--warn {
+  color: #ec6f1a;
+}
+
+.strength-msg--error {
+  color: #e02128;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.msg {
+  margin: 0;
+  font-size: 13px;
+}
+
+.msg--error {
+  color: #e02128;
+}
+
+/* ── buttons ── */
+.btn {
+  padding: 5px 20px;
+  font-size: 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn--primary {
+  color: #ffffff;
+  background: #0067d1;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #0055b3;
+}
+
+.btn--primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn--secondary {
+  color: #191919;
+  background: #f3f3f3;
+}
+
+.btn--secondary:hover {
+  background: #e8e8e8;
+}
+
+.btn--danger {
+  color: #ffffff;
+  background: #e02128;
+  padding: 5px 34px;
+}
+
+.btn--danger:hover {
+  background: #c01c22;
 }
 </style>
