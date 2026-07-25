@@ -46,7 +46,7 @@ export const appRouteTree: AppRouteNode[] = [
         path: '/resources/appliance',
         name: 'appliance',
         icon: applianceIcon,
-        component: () => import('@/views/resources/AppliancePage.vue'),
+        component: () => import('@/views/resources/appliance/AppliancePage.vue'),
       },
       {
         key: 'inference-model',

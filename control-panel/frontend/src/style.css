@@ -57,6 +57,10 @@
   --tag-bg-alert: #fde2bd;
   --tag-text-info: #1f55b5;
   --tag-bg-info: #d0d8fd80;
+  --tag-text-success: #036142;
+  --tag-bg-success: #dff4cc;
+  --tag-text-error: var(--error-active);
+  --tag-bg-error: var(--error-subtler);
 
   /* success */
   --success: #09aa71;
