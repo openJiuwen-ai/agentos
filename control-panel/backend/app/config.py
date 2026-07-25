@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
     LOG_BACKUP_COUNT: int = 5
 
+    # ── Thirdparty Agents ──
+    AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
+    THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB
+    AGENT_REGISTRY_HOST: str = "agent-registry"  # 注册中心主机名
+    AGENT_REGISTRY_PORT: int = 8000                # 注册中心端口
+    AGENT_IMAGE_MODULE_VERSION: str = "1.0"         # 镜像模块版本
+
     # ── VictoriaMetrics agent metrics config ──
     AGENT_METRICS_CONFIG_PATH: str = "/etc/vm/agent-metrics.json"
 
@@ -61,6 +68,5 @@ class Settings(BaseSettings):
                 f"缺少必填配置: {', '.join(missing)}。"
                 f"请在 .env 文件中设置。参考 .env.example"
             )
-
 
 settings = Settings()

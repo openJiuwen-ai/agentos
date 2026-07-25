@@ -22,6 +22,9 @@ services:
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
     volumes:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
+      - /usr/bin/docker:/usr/bin/docker
+      - /run/docker.sock:/run/docker.sock
+      - agentos-home-data:${AGENTOS_HOME_BASE:-/home/agentos/users}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -135,6 +138,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  agentos-home-data:
   postgres-data:
   vm-data:
   grafana-data:

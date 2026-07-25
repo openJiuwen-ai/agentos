@@ -5,16 +5,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.v1.thirdparty_agent import router as thirdparty_agent_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.litellm_key import router as litellm_key_router
 from app.api.v1.litellm_model import router as litellm_router
 from app.api.v1.litellm_usage import router as litellm_usage_router
 from app.api.v1.users import router as users_router
-
 from app.core.logging import setup_file_logging
 from app.iam.engine import ensure_iam_tables
 from app.services import get_user_backend
 from app.services.litellm_service import LitellmService
+from app.thirdparty_agent import ensure_thirdparty_agent_tables
 
 logger = logging.getLogger("app")
 
@@ -34,10 +35,11 @@ async def lifespan(fastapi_app: FastAPI):
     await backend.on_startup()
     await backend.seed_initial_admin()
 
-    # 3. Create IAM tables on the same engine.
+    # 3. Create IAM and thirdparty_agent tables on the same engine.
     engine = backend.get_engine()
     if engine is not None:
         await ensure_iam_tables(engine)
+        await ensure_thirdparty_agent_tables(engine)
 
     logger.info("backend-api started (backend: %s)", type(backend).__name__)
 
@@ -70,6 +72,7 @@ app.include_router(users_router)
 app.include_router(litellm_router)
 app.include_router(litellm_key_router)
 app.include_router(litellm_usage_router)
+app.include_router(thirdparty_agent_router)
 
 
 @app.get("/")
