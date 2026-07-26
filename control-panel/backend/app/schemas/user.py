@@ -58,6 +58,7 @@ class ListUsersParams:
     order: str = "desc"
     search: str | None = None
     role: str | None = None
+    is_active: bool | None = None
 
 
 # ── HTTP request / response schemas ─────────────────────────────────────

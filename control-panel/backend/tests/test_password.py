@@ -127,13 +127,13 @@ class TestValidatePasswordStrength:
     def test_too_short():
         """少于 8 位 → 返回错误。"""
         errors = validate_password_strength("Ab1", "user")
-        assert any("8-16" in e for e in errors)
+        assert any("8-64" in e for e in errors)
 
     @staticmethod
     def test_too_long():
-        """超过 16 位 → 返回错误。"""
-        errors = validate_password_strength("A" * 17 + "b1", "user")
-        assert any("8-16" in e for e in errors)
+        """超过 64 位 → 返回错误。"""
+        errors = validate_password_strength("A" * 64 + "b1", "user")
+        assert any("8-64" in e for e in errors)
 
     @staticmethod
     def test_only_one_category():

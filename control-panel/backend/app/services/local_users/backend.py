@@ -198,6 +198,8 @@ class LocalUsersBackend(AbstractUserBackend):
                 )
             if params.role:
                 base_query = base_query.where(User.role == params.role)
+            if params.is_active is not None:
+                base_query = base_query.where(User.is_active == params.is_active)
 
             total = (await session.execute(select(func.count()).select_from(base_query.subquery()))).scalar()
             result = await session.execute(

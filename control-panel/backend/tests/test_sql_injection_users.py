@@ -15,6 +15,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.schemas.user import ListUsersParams
 
 
 # ── Helper ────────────────────────────────────────────────────────────
@@ -234,7 +235,9 @@ async def test_sort_parameter_is_not_injectable(backend):
     # Test each malicious sort value directly against the backend
     for payload in SORT_PAYLOADS:
         try:
-            result = await backend.list_users(page=1, page_size=10, sort=payload)
+            result = await backend.list_users(
+                ListUsersParams(page=1, page_size=10, sort=payload)
+            )
             # If it doesn't crash, verify it returned valid data (fallback to default sort)
             assert result.total >= 1
         except (AttributeError, TypeError):

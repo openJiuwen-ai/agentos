@@ -55,6 +55,7 @@ const resetRules: FormRules = {
   newPassword: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
     { min: 8, message: '新密码长度至少 8 位', trigger: 'blur' },
+    { max: 64, message: '新密码长度最多 64 位', trigger: 'blur' },
   ],
   confirmPassword: [
     { required: true, message: '请确认新密码', trigger: 'blur' },
@@ -86,7 +87,7 @@ const passwordCategoryCount = computed(() => {
 });
 
 const passwordLengthOk = computed(() =>
-  resetForm.value.newPassword.length >= 8 && resetForm.value.newPassword.length <= 16
+  resetForm.value.newPassword.length >= 8 && resetForm.value.newPassword.length <= 64
 );
 
 const passwordHasUsername = computed(() => {
@@ -288,16 +289,16 @@ async function handleLogout() {
             type="password"
             show-password
             :class="{ 'form-input--error': resetForm.newPassword.length > 0 && !passwordStrengthValid }"
-            placeholder="8-16 位，需包含至少两类字符"
+            placeholder="8-64 位，需包含至少两类字符"
             autocomplete="new-password"
             :disabled="resetLoading"
           />
           <div v-if="resetForm.newPassword.length > 0" class="strength-checklist">
             <div class="strength-row">
               <span class="strength-counter" :class="passwordLengthOk ? 'check-pass' : 'check-fail'">
-                {{ resetForm.newPassword.length }}/16
+                {{ resetForm.newPassword.length }}/64
               </span>
-              <span class="strength-label">长度 8-16 位</span>
+              <span class="strength-label">长度 8-64 位</span>
             </div>
             <div class="strength-row">
               <span class="check-mark" :class="passwordChecks.hasLower ? 'check-pass' : 'check-fail'">

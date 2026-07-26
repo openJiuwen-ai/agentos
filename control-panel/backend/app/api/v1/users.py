@@ -22,6 +22,18 @@ from app.services.base import AbstractUserBackend
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
+def _parse_bool_query(value: str | None) -> bool | None:
+    """Parse a query-string boolean: 'true'/'1' → True, 'false'/'0' → False, else None."""
+    if value is None:
+        return None
+    v = value.lower()
+    if v in ("true", "1"):
+        return True
+    if v in ("false", "0"):
+        return False
+    return None
+
+
 # ── Query parameter bundles ──────────────────────────────────────────────
 
 
@@ -33,12 +45,15 @@ class _ListUsersQuery:
         {"username", "role", "is_active", "created_at"}
     )
     _ALLOWED_ORDER: typing.ClassVar[frozenset[str]] = frozenset({"asc", "desc"})
+    _ALLOWED_ROLE: typing.ClassVar[frozenset[str]] = frozenset({"admin", "user"})
 
     page: int = Query(1, ge=1, le=10000000)
     page_size: int = Query(20, ge=1, le=100)
     sort: str = Query("created_at")
     order: str = Query("desc")
     search: str | None = Query(None)
+    role: str | None = Query(None)
+    is_active: str | None = Query(None)
 
     def __post_init__(self) -> None:
         if self.sort not in self._ALLOWED_SORT:
@@ -48,6 +63,10 @@ class _ListUsersQuery:
         if self.order not in self._ALLOWED_ORDER:
             raise HTTPException(
                 status_code=400, detail=f"无效的排序方向: {self.order}"
+            )
+        if self.role is not None and self.role not in self._ALLOWED_ROLE:
+            raise HTTPException(
+                status_code=400, detail=f"无效的角色筛选值: {self.role}"
             )
         if self.search is not None:
             sanitized = self.search.replace("\x00", "")
@@ -103,6 +122,8 @@ async def list_users(
             sort=q.sort,
             order=q.order,
             search=q.search,
+            role=q.role,
+            is_active=_parse_bool_query(q.is_active),
         )
     )
     items = [

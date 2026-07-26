@@ -241,7 +241,7 @@ async def test_change_password_too_short(backend, test_data):
     passwords = test_data["passwords"]
     record, _ = await backend.create_user("chpwd3", password=pw_data["chpwd3"])
     user_id = uuid.UUID(record.user_id)
-    with pytest.raises(ValueError, match="密码长度需为 8-16 位"):
+    with pytest.raises(ValueError, match="密码长度需为 8-64 位"):
         await backend.change_password(user_id, pw_data["chpwd3"], passwords["too_short"])
 
 
@@ -306,7 +306,7 @@ class TestChangePasswordStrength:
             await backend.change_password(
                 uuid.UUID(user.user_id), old_pwd, "Ab1"
             )
-        assert "8-16" in str(exc.value)
+        assert "8-64" in str(exc.value)
 
     async def test_rejects_same_as_current(self, backend):
         """change_password rejects new password equal to current."""
