@@ -20,6 +20,7 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_KEY_ENCRYPTION_KEY: ${LITELLM_KEY_ENCRYPTION_KEY}
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - /usr/bin/docker:/usr/bin/docker

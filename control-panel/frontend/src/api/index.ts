@@ -2,6 +2,16 @@ import axios from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import type { ApiResponse } from './types';
 
+/** HTTP 错误：携带状态码，供调用方按 status 精确判别（如 503 未配置）。 */
+export class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 const instance = axios.create({
   timeout: 30_000,
   headers: {
@@ -50,6 +60,12 @@ instance.interceptors.response.use(
     return response;
   },
   async (error) => {
+    // 取消的请求归一化为 message='canceled'，避免 fetch adapter 下 message
+    // 随环境变化（'This operation was aborted' 等）导致页面取消判断失效。
+    if (axios.isCancel(error)) {
+      return Promise.reject(new Error('canceled'));
+    }
+
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
     // Only attempt refresh on 401, not on the refresh/login endpoints themselves
@@ -108,7 +124,7 @@ instance.interceptors.response.use(
     }
 
     const message = error.response?.data?.detail || error.response?.data?.message || error.message || '网络异常';
-    return Promise.reject(new Error(message));
+    return Promise.reject(new ApiError(message, error.response?.status));
   },
 );
 

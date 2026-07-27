@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.v1.thirdparty_agent import router as thirdparty_agent_router
+from app.api.v1.agent import router as agent_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.litellm_key import router as litellm_key_router
 from app.api.v1.litellm_model import router as litellm_router
@@ -69,6 +70,7 @@ app = FastAPI(
 # ── 注册路由 ──────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(agent_router)
 app.include_router(litellm_router)
 app.include_router(litellm_key_router)
 app.include_router(litellm_usage_router)

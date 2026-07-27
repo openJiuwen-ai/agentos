@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
+import { ElConfigProvider } from 'element-plus';
+import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import AppLayout from '@/components/layout/AppLayout.vue';
 
 const route = useRoute();
@@ -10,6 +12,8 @@ const inShell = computed(() => route.meta.topMenu !== undefined);
 </script>
 
 <template>
-  <AppLayout v-if="inShell" />
-  <RouterView v-else />
+  <ElConfigProvider :locale="zhCn">
+    <AppLayout v-if="inShell" />
+    <RouterView v-else />
+  </ElConfigProvider>
 </template>

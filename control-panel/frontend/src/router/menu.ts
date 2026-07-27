@@ -105,6 +105,7 @@ export const appRouteTree: AppRouteNode[] = [
             order: 1,
             path: '/resources/agent/monitor',
             name: 'agent-monitor',
+            adminOnly: true,
             component: () => import('@/views/resources/agent/AgentMonitorPage.vue'),
           },
           {

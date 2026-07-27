@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     LITELLM_REQUEST_TIMEOUT: float = 30.0
     LITELLM_DATABASE_URL: str = ""
 
+    # ── 注册中心后端 (选填；未配置时智能体监控功能不可用) ──
+    AGENT_REGISTER_URL: str = ""
+
+    @property
+    def agent_register_enabled(self) -> bool:
+        """注册中心后端是否已配置。"""
+        return bool(self.AGENT_REGISTER_URL.strip())
+
     def validate_required(self) -> None:
         """校验必填配置项，启动时调用。"""
         required = [
