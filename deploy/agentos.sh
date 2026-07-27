@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
-MODULES=("jiuwenbox" "yuanrong" "jiuwenswarm")
+MODULES=("jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
 
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"

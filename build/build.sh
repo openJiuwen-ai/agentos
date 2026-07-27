@@ -18,6 +18,9 @@ YUANRONG_DAILY_VERSION="9.9.9"
 YR_SCHEDULE_TIME=""
 YR_RELEASE_DOWNLOAD_BASE=""
 DOWNLOAD_JOBS=3
+REGISTRY_RELEASE_TAG="agentos-registry-prerelease-v0.2.1"
+REGISTRY_WHL_VERSION="0.3.3"
+RQLITE_VERSION="10.2.7"
 # ./ build parameters
 
 YUANRONG_DAILY_INDEX_URL="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html"
@@ -414,6 +417,17 @@ build_openyuanrong() {
     "${OPENYUANRONG_PACKAGES[@]}"
 }
 
+build_agent_gateway() {
+  echo "==> build_agent_gateway"
+  mkdir -p "${DOWNLOAD_DIR}/agent-gateway"
+
+  download_packages \
+    "https://gitcode.com/WeiZheng96/agent-protocol/releases/download/${REGISTRY_RELEASE_TAG}" \
+    "${DOWNLOAD_DIR}/agent-gateway" \
+    "a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl" \
+    "rqlite-${RQLITE_VERSION}-1.${ARCH}.rpm"
+}
+
 build_conch() {
   echo "==> build_conch"
 }
@@ -457,6 +471,9 @@ pack() {
     fi
   done
 
+  cp "${DOWNLOAD_DIR}/agent-gateway/"*.whl "${server_staging}/"
+  cp "${DOWNLOAD_DIR}/agent-gateway/"*.rpm "${server_staging}/"
+
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
@@ -497,6 +514,7 @@ main() {
   build_manager_app
   build_openyuanrong
   build_jiuwenswarm
+  build_agent_gateway
   build_conch
   pack
   echo "done"
