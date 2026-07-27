@@ -151,13 +151,23 @@ yr_install_packages() {
     done
     local cp_tag="cp${python_version//./}"
 
-    local packages=(
-        "openyuanrong-${yr_version}-py3-none-manylinux_2_34_${arch}.whl"
-        "openyuanrong_sdk-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
-        "openyuanrong_runtime-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
-        "openyuanrong_datasystem-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
-        "openyuanrong_functionsystem-${yr_version}-py3-none-manylinux_2_34_${arch}.whl"
-        "openyuanrong_faas-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+    # 包名前缀（不含版本号），版本号通过 glob 通配匹配，不再要求显式指定 YR_VERSION
+    local pkg_prefixes=(
+        "openyuanrong"
+        "openyuanrong_sdk"
+        "openyuanrong_runtime"
+        "openyuanrong_datasystem"
+        "openyuanrong_functionsystem"
+        "openyuanrong_faas"
+    )
+    # 每个包对应的 wheel 文件名 glob 模式
+    local pkg_globs=(
+        "openyuanrong-*-py3-none-manylinux_2_34_${arch}.whl"
+        "openyuanrong_sdk-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+        "openyuanrong_runtime-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+        "openyuanrong_datasystem-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+        "openyuanrong_functionsystem-*-py3-none-manylinux_2_34_${arch}.whl"
+        "openyuanrong_faas-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
     )
 
     # 判断 pkg_base 是远程URL还是本地路径
@@ -172,10 +182,39 @@ yr_install_packages() {
         info "Using remote package base URL: ${pkg_base}"
     fi
 
+    # 本地路径: 用 glob 解析每个包的实际文件名（自动匹配任意版本号）
+    # 远程URL : 仍用 YR_VERSION 拼接具体文件名
+    local packages=()
+    if [ "${is_local_path}" = "true" ]; then
+        for idx in "${!pkg_globs[@]}"; do
+            local glob="${pkg_globs[$idx]}"
+            local prefix="${pkg_prefixes[$idx]}"
+            # 取第一个匹配到的文件
+            local matched
+            matched=$(ls -1 "${pkg_base}"/${glob} 2>/dev/null | head -n 1)
+            if [ -z "${matched}" ]; then
+                error "No wheel matched pattern '${glob}' in ${pkg_base} (expected package: ${prefix})"
+            fi
+            # 仅保留文件名
+            local fname
+            fname=$(basename "${matched}")
+            packages+=("${fname}")
+            info "Matched wheel for ${prefix}: ${fname}"
+        done
+    else
+        # 远程URL仍按 YR_VERSION 拼接固定文件名
+        packages+=("openyuanrong-${yr_version}-py3-none-manylinux_2_34_${arch}.whl")
+        packages+=("openyuanrong_sdk-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
+        packages+=("openyuanrong_runtime-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
+        packages+=("openyuanrong_datasystem-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
+        packages+=("openyuanrong_functionsystem-${yr_version}-py3-none-manylinux_2_34_${arch}.whl")
+        packages+=("openyuanrong_faas-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
+    fi
+
     # 本地路径且目标主机非本机时,先把whl拷贝到目标主机
     local remote_pkg_dir=""
     if [ "${is_local_path}" = "true" ] && ! is_local_host "${host}"; then
-        remote_pkg_dir="/tmp/yr_packages_${yr_version}_${arch}"
+        remote_pkg_dir="/tmp/yr_packages_${arch}"
         info "Copying whl packages to ${host}:${remote_pkg_dir}..."
         exec_on_host "${host}" "mkdir -p ${remote_pkg_dir}"
         for package in "${packages[@]}"; do
@@ -204,11 +243,14 @@ yr_install_packages() {
         info "Installing on ${host}: ${package}"
         if exec_on_host "${host}" "python${python_version} -m pip install '${install_target}' --quiet"; then
             # 加固：pip show 确认包确实已注册到当前 Python 环境
-            local pkg_name="${package%%-${yr_version}-*}"
-            if exec_on_host "${host}" "python${python_version} -m pip show '${pkg_name}' >/dev/null 2>&1"; then
+            # 从 wheel 文件名解析包名: 取第一个 '-' 之前的部分（openyuanrong_sdk -> openyuanrong.sdk 的分发名）
+            local pkg_name="${package%%-*}"
+            # pip 包名规范化: wheel 文件名用下划线，pip show 用连字符/点
+            local pkg_show_name="${pkg_name//_/.}"
+            if exec_on_host "${host}" "python${python_version} -m pip show '${pkg_show_name}' >/dev/null 2>&1"; then
                 success "Installed on ${host}: ${package}"
             else
-                error "pip install returned success but 'pip show ${pkg_name}' failed on ${host} (wheel may be corrupted or installed to wrong env)"
+                error "pip install returned success but 'pip show ${pkg_show_name}' failed on ${host} (wheel may be corrupted or installed to wrong env)"
             fi
         else
             error "Failed to install on ${host}: ${package}"
@@ -222,6 +264,7 @@ yr_uninstall_packages() {
 
     local pkg_names=(
         "openyuanrong"
+        "openyuanrong_sdk"
         "openyuanrong_runtime"
         "openyuanrong_datasystem"
         "openyuanrong_functionsystem"
@@ -321,7 +364,8 @@ yr_start_master() {
 
     local startup_log="/tmp/yr_startup_${master_host}.log"
 
-    exec_on_host "${master_host}" "yr start --master \
+    # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
+    exec_on_host "${master_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --master \
         -s 'values.host_ip=\"${master_host}\"' \
         -s 'mode.master.frontend=true' \
         -s 'mode.master.function_scheduler=true' \
@@ -361,7 +405,8 @@ yr_start_agent() {
     fi
 
     info "Starting openyuanrong agent on ${agent_host}, master_address=${master_address}..."
-    if exec_on_host "${agent_host}" "yr start -s 'values.host_ip=\"${agent_host}\"' --master_address=${master_address}" 2>&1; then
+    # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --master_address=${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
@@ -466,9 +511,6 @@ deploy_yr_up() {
     if [ ${#YR_HOST_LIST[@]} -gt 1 ]; then
         echo "  Agents: ${YR_HOST_LIST[@]:1}"
     fi
-    echo ""
-    echo "  Stop all services:"
-    echo "    ./$(basename "$0") down --hosts ${hosts_str}"
     echo "=========================================="
 
     # 成功完成，清除失败清理 trap，避免影响后续命令
@@ -491,8 +533,12 @@ deploy_yr_install() {
 
     info "Installing openyuanrong packages on local machine"
     info "Python version: ${YR_PYTHON_VERSION}"
-    info "YR version: ${YR_VERSION}"
-    info "Package base: ${YR_PKG_BASE:-default OBS URL}"
+    if [ -n "${YR_PKG_BASE:-}" ] && [[ "${YR_PKG_BASE}" != http://* && "${YR_PKG_BASE}" != https://* && "${YR_PKG_BASE}" != ftp://* ]]; then
+        info "Package base: ${YR_PKG_BASE} (local directory, version auto-detected from whl filename)"
+    else
+        info "Package base: ${YR_PKG_BASE:-default OBS URL}"
+        info "YR version: ${YR_VERSION} (used for remote URL path)"
+    fi
 
     yr_check_python "${local_host}"
     yr_ensure_pip "${local_host}"
@@ -586,7 +632,9 @@ Options:
 
 Environment Variables:
   YR_PYTHON_VERSION  Python版本（默认 3.11）
-  YR_VERSION         openyuanrong release版本号（默认 0.9.0）
+  YR_VERSION         openyuanrong release版本号（默认 0.9.0）。
+                     仅当 YR_PKG_BASE 为远程URL时用于拼接下载路径，需与远端目录结构一致。
+                     YR_PKG_BASE 为本地目录时无需指定，版本号会自动从 whl 文件名匹配。
   YR_PKG_BASE        whl包来源，可为远程URL基址或本地目录路径。
                      不指定时默认使用华为云OBS地址。
                      本地目录：目录下需包含与命名格式匹配的whl文件，远程主机会自动拷贝whl到目标机再安装。
@@ -595,13 +643,13 @@ Environment Variables:
 
 Examples:
   # 典型流程：先在各主机安装whl包，再启动集群
-  ./$(basename "$0") install                                          # 本机安装whl包
-  YR_PKG_BASE=/data/yr_whls ./$(basename "$0") install               # 本机安装，使用本地whl目录
+  ./$(basename "$0") install                                          # 本机安装whl包（从默认OBS下载）
+  YR_PKG_BASE=/data/yr_whls ./$(basename "$0") install               # 本机安装，使用本地whl目录（版本自动匹配）
   ./$(basename "$0") up --hosts 192.168.1.1                          # 单机启动集群
   ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2,192.168.1.3  # 多机启动集群
   ./$(basename "$0") up                                              # 默认本机启动集群
   ./$(basename "$0") down --hosts 192.168.1.1                        # 停止集群
-  YR_VERSION=0.9.0 ./$(basename "$0") install                        # 指定版本安装
+  YR_VERSION=0.9.0 ./$(basename "$0") install                        # 从OBS安装指定版本
   ./$(basename "$0") uninstall                                        # 本机卸载whl包
 
 注意:
