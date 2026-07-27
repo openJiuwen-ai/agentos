@@ -23,6 +23,7 @@ services:
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
+      - ./exports:/var/log/agentos_exports
       - /usr/bin/docker:/usr/bin/docker
       - /run/docker.sock:/run/docker.sock
       - agentos-home-data:${AGENTOS_HOME_BASE:-/home/agentos/users}
@@ -67,7 +68,7 @@ services:
   # LiteLLM Proxy
   # =========================================================================
   litellm:
-    image: ghcr.io/berriai/litellm-database:v1.91.1
+    image: ghcr.nju.edu.cn/berriai/litellm-database:v1.91.1
     ports: ["${LITELLM_PORT:-4000}:4000"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm

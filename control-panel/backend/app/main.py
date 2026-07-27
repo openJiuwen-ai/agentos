@@ -11,11 +11,14 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.litellm_key import router as litellm_key_router
 from app.api.v1.litellm_model import router as litellm_router
 from app.api.v1.litellm_usage import router as litellm_usage_router
+from app.api.v1.logs import router as logs_router
+from app.api.v1.logs_ws import ws_router as logs_ws_router
 from app.api.v1.users import router as users_router
 from app.core.logging import setup_file_logging
 from app.iam.engine import ensure_iam_tables
 from app.services import get_user_backend
 from app.services.litellm_service import LitellmService
+from app.services.log_export import start_log_services, stop_log_services
 from app.thirdparty_agent import ensure_thirdparty_agent_tables
 
 logger = logging.getLogger("app")
@@ -40,6 +43,7 @@ async def lifespan(fastapi_app: FastAPI):
     engine = backend.get_engine()
     if engine is not None:
         await ensure_iam_tables(engine)
+        await _create_log_tables(engine)
         await ensure_thirdparty_agent_tables(engine)
 
     logger.info("backend-api started (backend: %s)", type(backend).__name__)
@@ -52,13 +56,25 @@ async def lifespan(fastapi_app: FastAPI):
     register_litellm_svc(litellm_svc)
     logger.info("LitellmService attached to app.state")
 
+    # 5. 日志中心 — 定时任务 + 导出 Worker
+    await start_log_services()
+
     yield
 
     # ── 清理 ──────────────────────────────────────────────────────────────
+    await stop_log_services()
     await litellm_svc.close()
     await backend.on_shutdown()
     await _db.dispose_engine()
     logger.info("backend-api shut down.")
+
+
+async def _create_log_tables(engine):
+    from app.models.base import Base
+    from app.models.log import LogComponent, LogExportTask  # noqa: F401
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 app = FastAPI(
@@ -74,6 +90,8 @@ app.include_router(agent_router)
 app.include_router(litellm_router)
 app.include_router(litellm_key_router)
 app.include_router(litellm_usage_router)
+app.include_router(logs_router)
+app.include_router(logs_ws_router)
 app.include_router(thirdparty_agent_router)
 
 

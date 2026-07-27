@@ -6,3 +6,5 @@ dist/
 __pycache__/
 .mimocode/
 *.db
+/control-panel/deployment/logs
+/control-panel/deployment/component_logs

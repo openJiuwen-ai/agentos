@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB
     LOG_BACKUP_COUNT: int = 5
 
+    # ── Log Center ──
+    LOG_EXPORT_PATH: str = "/var/log/agentos"
+    LOG_INITIAL_TAIL_LINES: int = 100
+    LOG_MAX_LINE_LENGTH: int = 10000
+    LOG_MAX_FILES_PER_WS: int = 5
+    LOG_EXPORT_MAX_CONCURRENT: int = 2
+    LOG_EXPORT_RETENTION_DAYS: int = 7
+    LOG_EXPORT_CLEANUP_HOUR: int = 3
+    LOG_EXPORT_MAX_SIZE_BYTES: int = 536_870_912  # 512 MB
     # ── Thirdparty Agents ──
     AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB
