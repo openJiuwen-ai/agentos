@@ -33,8 +33,6 @@ class Settings(BaseSettings):
     # ── Thirdparty Agents ──
     AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB
-    AGENT_REGISTRY_HOST: str = "agent-registry"  # 注册中心主机名
-    AGENT_REGISTRY_PORT: int = 8000                # 注册中心端口
     AGENT_IMAGE_MODULE_VERSION: str = "1.0"         # 镜像模块版本
 
     # ── VictoriaMetrics agent metrics config ──

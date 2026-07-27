@@ -45,9 +45,6 @@ _BASE_IMAGE = "agent-base:1.0"
 class BuildError(Exception):
     """Raised when image build fails."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-
 
 class BuildResult(NamedTuple):
     image: str
@@ -136,15 +133,21 @@ class DockerBuilder(AbstractBuilder):
         await self._stream(proc, fail_msg)
 
     async def _stream(self, proc: asyncio.subprocess.Process, fail_msg: str) -> None:
+        lines: list[str] = []
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
-            logger.debug("%s", line.decode(errors="replace").rstrip())
+            decoded = line.decode(errors="replace").rstrip()
+            logger.debug("%s", decoded)
+            lines.append(decoded)
         await proc.wait()
         if proc.returncode != 0:
             logger.error("%s (exit %d)", fail_msg, proc.returncode)
-            raise BuildError(f"{fail_msg} (exit {proc.returncode})")
+            output = "\n".join(lines)
+            if len(output) > 800:
+                output = "…\n" + output[-800:]
+            raise BuildError(f"{fail_msg} (exit {proc.returncode}):\n{output}")
 
 
 # ── Builder ─────────────────────────────────────────────────────────────

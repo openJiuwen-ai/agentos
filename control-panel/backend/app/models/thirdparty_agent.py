@@ -2,13 +2,16 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-
-from sqlalchemy import and_, select
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer, String, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+from app.thirdparty_agent.exceptions import ThirdpartyAgentError
+
+
+class ConcurrentBuildLimitError(ThirdpartyAgentError):
+    """Too many builds are already in progress."""
 
 
 @dataclass
@@ -113,6 +116,7 @@ class BuildTask(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     @staticmethod
     async def get_by_name(session: AsyncSession, agent_name: str, version: str
@@ -128,23 +132,62 @@ class BuildTask(Base):
         return await session.get(BuildTask, task_id)
 
     @staticmethod
+    async def latest_for(session: AsyncSession, agent_name: str, version: str
+                         ) -> "BuildTask | None":
+        result = await session.execute(
+            select(BuildTask)
+            .where(and_(BuildTask.agent_name == agent_name,
+                        BuildTask.version == version))
+            .order_by(BuildTask.created_at.desc())
+            .limit(1))
+        return result.scalars().first()
+
+    @staticmethod
     async def count_active(session: AsyncSession) -> int:
-        from sqlalchemy import func
         result = await session.execute(
             select(func.count()).select_from(BuildTask)
             .where(BuildTask.status.in_(["pending", "building"])))
         return result.scalar() or 0
 
     @staticmethod
-    async def create(session: AsyncSession, agent_name: str, version: str, task_id: str
-                     ) -> "BuildTask":
-        task = BuildTask(
-            task_id=task_id, agent_name=agent_name, version=version,
-            status="pending", progress=0, created_at=datetime.now(timezone.utc))
-        session.add(task)
-        await session.commit()
-        await session.refresh(task)
-        return task
+    async def try_insert(
+        session: AsyncSession, task: "BuildTask", *,
+        max_concurrent: int,
+    ) -> tuple["BuildTask", bool]:
+        """Atomically insert *task* if no active task exists for the same key
+        and the concurrency limit has not been reached.
+
+        Returns ``(task, True)`` when the task was inserted,
+        ``(existing, False)`` when an active task already exists.
+        Raises ``ConcurrentBuildLimitError`` when *max_concurrent* has
+        been reached.
+        """
+        # Use a savepoint (nested transaction) so this is safe to call
+        # inside an existing transaction without side effects.
+        async with session.begin_nested():
+            # 1. Active task for same agent+version?
+            result = await session.execute(
+                select(BuildTask)
+                .where(and_(BuildTask.agent_name == task.agent_name,
+                            BuildTask.version == task.version),
+                       BuildTask.status.in_(["pending", "building"]))
+                .order_by(BuildTask.created_at.desc())
+            )
+            existing = result.scalars().first()
+            if existing is not None:
+                return (existing, False)
+
+            # 2. Concurrency limit?
+            count_r = await session.execute(
+                select(func.count()).select_from(BuildTask)
+                .where(BuildTask.status.in_(["pending", "building"])))
+            if (count_r.scalar() or 0) >= max_concurrent:
+                raise ConcurrentBuildLimitError(
+                    f"max concurrent builds ({max_concurrent}) reached")
+
+            # 3. All clear — insert and commit on scope exit.
+            session.add(task)
+            return (task, True)
 
     @staticmethod
     async def mark_building(session: AsyncSession, task_id: str) -> "BuildTask | None":
@@ -175,9 +218,12 @@ class BuildTask(Base):
         await session.commit()
 
     @staticmethod
-    async def mark_failed(session: AsyncSession, task_id: str) -> None:
+    async def mark_failed(session: AsyncSession, task_id: str,
+                          error_message: str = "") -> None:
         task = await session.get(BuildTask, task_id)
         if task is not None:
             task.status = "failed"
             task.finished_at = datetime.now(timezone.utc)
+            if error_message:
+                task.error_message = error_message
         await session.commit()

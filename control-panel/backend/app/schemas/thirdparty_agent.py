@@ -6,10 +6,17 @@ from pydantic import BaseModel
 
 
 class AgentInstallerUploadResult(BaseModel):
+    """POST /installers response."""
     agent_name: str
     version: str
     display_name: str
     entrypoint: str
+
+
+class InstallerListItem(AgentInstallerUploadResult):
+    """GET /installers list item — extends upload result with build info."""
+    build_status: str | None = None
+    build_task_id: str | None = None
 
 
 class BuildTaskRequest(BaseModel):
@@ -34,3 +41,4 @@ class BuildStatusResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     registered: bool = False
+    error_message: str | None = None

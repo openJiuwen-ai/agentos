@@ -3,6 +3,8 @@
 All routes require admin role (``require_admin`` dependency).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,34 +17,49 @@ from app.schemas.thirdparty_agent import (
     BuildStatusResponse,
     BuildTaskRequest,
     BuildTaskResponse,
+    InstallerListItem,
 )
+
+from app.thirdparty_agent.exceptions import ThirdpartyAgentError
+from app.thirdparty_agent.package import PackageExtractError
+from app.models.thirdparty_agent import ConcurrentBuildLimitError
 from app.services.thirdparty_agent_service import (
     AgentAlreadyExistsError,
     AgentNotFoundError,
     ThirdpartyAgentService,
-    BuildTaskConflictError,
-    InvalidPackageError,
     PackageTooLargeError,
 )
 
 _svc = ThirdpartyAgentService()
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/thirdparty_agent", tags=["thirdparty_agent"])
 
 # ── 领域异常 → HTTP 状态码 ──────────────────────────────────────────────
 
-_EXCEPTION_STATUS = {
-    PackageTooLargeError: 400,
-    InvalidPackageError: 400,
-    AgentAlreadyExistsError: 409,
-    AgentNotFoundError: 404,
-    BuildTaskConflictError: 409,
-}
+_EXCEPTION_STATUS: list[tuple[type[ThirdpartyAgentError], int]] = [
+    (PackageExtractError, 400),        # covers all subclasses via isinstance
+    (PackageTooLargeError, 400),
+    (ConcurrentBuildLimitError, 409),
+    (AgentAlreadyExistsError, 409),
+    (AgentNotFoundError, 404),
+]
+
+
+def _to_http(exc: ThirdpartyAgentError) -> HTTPException:
+    """Convert domain exception to HTTPException via isinstance mapping."""
+    status = 500
+    for cls, code in _EXCEPTION_STATUS:
+        if isinstance(exc, cls):
+            status = code
+            break
+    return HTTPException(status_code=status, detail={"message": str(exc)})
 
 # ── Routes ──────────────────────────────────────────────────────────────
 
 
-@router.get("/installers", response_model=ApiResponse[list[AgentInstallerUploadResult]])
+@router.get("/installers", response_model=ApiResponse[list[InstallerListItem]])
 async def installer_list(
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
@@ -61,11 +78,9 @@ async def installer_upload(
     """Upload an Agent offline package (.tgz)."""
     try:
         result = await _svc.upload(session, _admin.username, package)
-    except tuple(_EXCEPTION_STATUS) as e:
-        raise HTTPException(
-            status_code=_EXCEPTION_STATUS[type(e)],
-            detail={"message": str(e)},
-        ) from e
+    except ThirdpartyAgentError as e:
+        logger.warning("upload failed: %s", e)
+        raise _to_http(e) from e
     return ApiResponse(data=result)
 
 
@@ -88,11 +103,9 @@ async def build_task_create(
             body.display_name,
             body.entrypoint,
         )
-    except tuple(_EXCEPTION_STATUS) as e:
-        raise HTTPException(
-            status_code=_EXCEPTION_STATUS[type(e)],
-            detail={"message": str(e)},
-        ) from e
+    except ThirdpartyAgentError as e:
+        logger.warning("build failed: %s", e)
+        raise _to_http(e) from e
     return ApiResponse(data=task)
 
 
@@ -105,6 +118,7 @@ async def build_task_status(
     """Query the build status and progress for a build task."""
     result = await _svc.get_build_task(session, task_id)
     if result is None:
+        logger.warning("build task not found: %s", task_id)
         raise HTTPException(
             status_code=404,
             detail={"message": f"build task not found: {task_id}"},
