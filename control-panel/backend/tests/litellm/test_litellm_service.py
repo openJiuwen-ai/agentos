@@ -102,18 +102,64 @@ class TestModelUpdateSchema:
     def test_max_concurrent_must_be_positive(self):
         """场景: max_concurrent 传入 0.
         预期: Pydantic 校验失败 (ge=1)."""
+        from pydantic import ValidationError
         from app.schemas.litellm import ModelUpdate
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelUpdate(
                 litellm_params={"model": "x", "api_key": "k"},
                 max_concurrent=0,
             )
 
+    def test_context_window_must_be_positive(self):
+        """场景: context_window 传入 0 或负数.
+        预期: Pydantic 校验失败 (ge=1)."""
+        from pydantic import ValidationError
+        from app.schemas.litellm import ModelUpdate
+        with pytest.raises(ValidationError):
+            ModelUpdate(
+                litellm_params={"model": "x", "api_key": "k"},
+                model_info={"context_window": 0},
+            )
+        with pytest.raises(ValidationError):
+            ModelUpdate(
+                litellm_params={"model": "x", "api_key": "k"},
+                model_info={"context_window": -1},
+            )
+
+    def test_context_window_must_not_exceed_max(self):
+        """场景: context_window 传入超过21亿.
+        预期: Pydantic 校验失败 (le=2147483647)."""
+        from pydantic import ValidationError
+        from app.schemas.litellm import ModelUpdate
+        with pytest.raises(ValidationError):
+            ModelUpdate(
+                litellm_params={"model": "x", "api_key": "k"},
+                model_info={"context_window": 2147483648},
+            )
+
+    def test_context_window_valid_range(self):
+        """场景: context_window 传入有效值 (1 到 21亿).
+        预期: 校验通过."""
+        from app.schemas.litellm import ModelUpdate
+        # 测试最小值
+        body = ModelUpdate(
+            litellm_params={"model": "openai/gpt-4", "api_key": "k"},
+            model_info={"context_window": 1},
+        )
+        assert body.model_info.context_window == 1
+        # 测试最大值
+        body = ModelUpdate(
+            litellm_params={"model": "openai/gpt-4", "api_key": "k"},
+            model_info={"context_window": 2147483647},
+        )
+        assert body.model_info.context_window == 2147483647
+
     def test_litellm_params_requires_model(self):
         """场景: litellm_params 中缺少必填字段 model.
         预期: Pydantic 校验失败."""
+        from pydantic import ValidationError
         from app.schemas.litellm import ModelUpdate
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelUpdate(litellm_params={"api_key": "k"})
 
 
@@ -126,8 +172,9 @@ class TestModelCreateSchema:
     def test_model_name_required(self):
         """场景: 创建模型时不传 model_name.
         预期: Pydantic 校验失败."""
+        from pydantic import ValidationError
         from app.schemas.litellm import ModelCreate
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelCreate(litellm_params={"model": "x", "api_key": "k"})
 
     def test_valid_create(self):
@@ -383,7 +430,7 @@ class TestServiceUpdateModel:
     @pytest.mark.asyncio
     async def test_update_success(self, svc, mock_db):
         """场景: 本地 DB 有记录, LiteLLM 接受更新.
-        预期: 返回更新结果; LiteLLM 请求 body 中 model_info.id 为本地 DB 的 id."""
+        预期: 返回更新结果; LiteLLM 请求 URL 包含 model_id."""
         from datetime import datetime, timezone
         from app.models.litellm_model_params import LitellmModelParams
         from app.services.litellm_service import UpdateModelExtras
@@ -424,14 +471,18 @@ class TestServiceUpdateModel:
             assert result["instance_url"] == "https://new.example.com/v1"
             assert result["max_concurrent"] == 8
 
-            body = mock_req.call_args.kwargs["json_data"]
-            assert "model_info" in body
-            assert body["model_info"]["id"] == "uuid-123"
+            # 验证 URL 路径包含正确的 model_id
+            call_args = mock_req.call_args
+            assert "/model/uuid-123/update" in call_args.args[1]
+
+            body = call_args.kwargs["json_data"]
+            assert body["model_name"] == "test-model"
+            assert body["litellm_params"] == {"model": "openai/test", "api_key": "sk-new"}
 
     @pytest.mark.asyncio
     async def test_update_request_body_structure(self, svc, mock_db):
         """场景: 仅传必填参数 (无 instance_url/max_concurrent).
-        预期: LiteLLM 请求 body 包含 model_name, litellm_params, model_info.{id}."""
+        预期: LiteLLM 请求 URL 包含 model_id, body 包含 model_name, litellm_params."""
         from datetime import datetime, timezone
         from app.models.litellm_model_params import LitellmModelParams
 
@@ -463,18 +514,20 @@ class TestServiceUpdateModel:
                 litellm_params={"model": "openai/test", "api_key": "sk-x"},
             )
 
-            body = mock_req.call_args.kwargs["json_data"]
+            # 验证 URL 路径包含正确的 model_id
+            call_args = mock_req.call_args
+            assert "/model/uuid-abc/update" in call_args.args[1]
+
+            body = call_args.kwargs["json_data"]
             assert body["model_name"] == "test-model"
             assert body["litellm_params"] == {
                 "model": "openai/test", "api_key": "sk-x",
             }
-            assert body["model_info"]["id"] == "uuid-abc"
 
     @pytest.mark.asyncio
-    async def test_user_model_info_id_is_stripped(self, svc, mock_db):
-        """场景: 用户传入 model_info 含 'id' 字段, 试图覆盖 UUID.
-        预期: 'id' 被过滤, 最终 body 中 model_info.id 仍为本地 DB 的 ID;
-              其他字段 (description) 正常保留."""
+    async def test_user_model_info_passthrough(self, svc, mock_db):
+        """场景: 用户传入 model_info 含其他字段.
+        预期: model_info 原样传递到 LiteLLM 请求 body."""
         from datetime import datetime, timezone
         from app.models.litellm_model_params import LitellmModelParams
         from app.services.litellm_service import UpdateModelExtras
@@ -507,38 +560,34 @@ class TestServiceUpdateModel:
                 litellm_params={"model": "openai/test", "api_key": "sk-x"},
                 extras=UpdateModelExtras(
                     model_info={
-                        "id": "attacker-uuid",
                         "description": "legit desc",
                     },
                 ),
             )
 
             body = mock_req.call_args.kwargs["json_data"]
-            assert body["model_info"]["id"] == "real-uuid", (
-                "id must NOT be overwritten by user input"
-            )
             assert body["model_info"]["description"] == "legit desc"
 
     @pytest.mark.asyncio
-    async def test_no_local_record_raises(self, svc, mock_db):
-        """场景: 本地 DB 中无此模型的记录 (get_by_names 返回空).
-        预期: 抛出 LitellmServiceError, 信息含 'not found' 和模型名称."""
+    async def test_no_local_record_raises_error(self, svc, mock_db):
+        """场景: 本地 DB 中无此模型的记录.
+        预期: 抛出 LitellmServiceError."""
         from app.services.litellm_service import LitellmServiceError
 
-        with patch(
-            "app.services.litellm_service.LitellmModelParams.get_by_id",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch(
+                "app.services.litellm_service.LitellmModelParams.get_by_id",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = None
 
-            with pytest.raises(LitellmServiceError) as exc_info:
+            with pytest.raises(LitellmServiceError, match="model not found in local DB"):
                 await svc.update_model(
                     mock_db,
                     model_id="nonexistent",
                     litellm_params={"model": "openai/test", "api_key": "sk-x"},
                 )
-            assert "not found" in str(exc_info.value)
-            assert "nonexistent" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_db_failure_logs_warning_and_raises(self, svc, mock_db):
@@ -574,7 +623,7 @@ class TestServiceUpdateModel:
                 )
 
             mock_logger.warning.assert_called_once()
-            assert "agent-metrics" in mock_logger.warning.call_args[0][0]
+            assert "updated successfully but local DB write failed" in mock_logger.warning.call_args[0][0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

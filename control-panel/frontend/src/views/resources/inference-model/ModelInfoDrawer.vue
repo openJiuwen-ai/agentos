@@ -28,6 +28,12 @@ const emit = defineEmits<{
   export: [];
 }>();
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '--';
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? '--' : date.toLocaleString();
+}
+
 interface FormData {
   id: string;
   model_name: string;
@@ -179,8 +185,8 @@ function handleSave() {
         <h3 class="info-section__title">服务信息</h3>
         <div class="info-grid">
           <ModelInfoRow label="模型监控URL" :value="model.instance_url" />
-          <ModelInfoRow label="创建时间" :value="model.created_at" />
-          <ModelInfoRow label="更新时间" :value="model.updated_at" />
+          <ModelInfoRow label="创建时间" :value="formatDateTime(model.created_at)" />
+          <ModelInfoRow label="更新时间" :value="formatDateTime(model.updated_at)" />
         </div>
       </div>
     </template>
@@ -217,6 +223,9 @@ function handleSave() {
               v-model="formData.model_info.context_window"
               :controls="false"
               :min="0"
+              :max="2147483647"
+              :precision="0"
+              :step="1"
               placeholder="例如: 4096"
               class="form-field"
             />

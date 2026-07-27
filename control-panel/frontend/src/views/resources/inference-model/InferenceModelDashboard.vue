@@ -244,6 +244,7 @@ async function handleAddModel(formData: {
         api_base: serviceUrl,
         api_key: formData.apiKey || 'sk-1234',
       },
+      model_info: formData.contextLength ? { context_window: formData.contextLength } : undefined,
       instance_url: formData.metricsUrl || undefined,
       inference_engine: formData.deployFramework || undefined,
     });

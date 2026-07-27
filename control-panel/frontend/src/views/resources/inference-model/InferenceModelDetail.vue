@@ -27,10 +27,16 @@ const metadata = computed(() => {
     { label: '部署框架', value: d.inference_engine || '--', isTag: false },
     { label: '模型描述', value: d.model_info?.description || '--', isTag: false },
     { label: '模型监控URL', value: d.instance_url || '--', isTag: false },
-    { label: '创建时间', value: d.created_at || '--', isTag: false },
-    { label: '更新时间', value: d.updated_at || '--', isTag: false },
+    { label: '创建时间', value: formatDateTime(d.created_at), isTag: false },
+    { label: '更新时间', value: formatDateTime(d.updated_at), isTag: false },
   ];
 });
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '--';
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? '--' : date.toLocaleString();
+}
 
 async function loadModelDetail() {
   const id = route.params.id as string;

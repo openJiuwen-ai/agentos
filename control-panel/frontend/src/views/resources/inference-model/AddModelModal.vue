@@ -22,6 +22,7 @@ interface ModelFormData {
   description: string;
   deployName: string;
   deployFramework: string;
+  apiKey: string | undefined;
   serviceIp: string;
   servicePort: number | null;
   metricsUrl: string;
@@ -45,6 +46,7 @@ const defaultFormData: ModelFormData = {
   description: '',
   deployName: '',
   deployFramework: 'vLLM',
+  apiKey: undefined,
   serviceIp: '',
   servicePort: null,
   metricsUrl: '',
@@ -100,6 +102,9 @@ function handleSave() {
             v-model="formData.contextLength"
             :controls="false"
             :min="0"
+            :max="2147483647"
+            :precision="0"
+            :step="1"
             placeholder="请输入上下文长度"
             class="form-field"
           />
@@ -139,6 +144,10 @@ function handleSave() {
             <ElOption label="vLLM" value="vLLM" />
             <ElOption label="SGLang" value="SGLang" />
           </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="API Key" class="form-grid__item form-grid__item--full">
+          <ElInput v-model="formData.apiKey" type="password" placeholder="调用模型所需的API Key（可选）" />
+          <span class="form-hint">用于调用第三方模型服务的认证密钥</span>
         </ElFormItem>
       </ElForm>
     </div>

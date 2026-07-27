@@ -30,14 +30,14 @@ class LitellmModelParams(Base):
     max_concurrent: Mapped[int | None] = mapped_column(nullable=True)
     extra_params: Mapped[dict | None] = mapped_column(JSON, default={}, nullable=True)
     inference_engine: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+    created_at: Mapped[str | None] = mapped_column(
+        String(64),
+        default=lambda: datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+    updated_at: Mapped[str | None] = mapped_column(
+        String(64),
+        default=lambda: datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        onupdate=lambda: datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
     )
 
     @staticmethod
@@ -91,7 +91,7 @@ class LitellmModelParams(Base):
         None 语义：保留已有值；空串与非空值：覆盖写入。
         """
         ext = ext or LocalModelExtension()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         _ex_url = literal_column("excluded.instance_url")
         _ex_mc = literal_column("excluded.max_concurrent")
         _ex_extra = literal_column("excluded.extra_params")
@@ -135,6 +135,9 @@ class LitellmModelParams(Base):
             },
         )
         await db.execute(stmt)
+        await db.flush()
+        # Expire cached objects to force re-read from DB
+        db.expire_all()
         return (
             (
                 await db.execute(

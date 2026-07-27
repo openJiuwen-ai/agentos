@@ -669,12 +669,8 @@ class LitellmService:
 
         local = await LitellmModelParams.get_by_id(db, model_id)
         if not local:
-            # 本地记录不存在，先创建
-            local = await LitellmModelParams.upsert(
-                db,
-                model_id,
-                model_name or model_id,
-                LocalModelExtension(),
+            raise LitellmServiceError(
+                f"Cannot update model '{model_id}': model not found in local DB."
             )
 
         # 使用新名称或保留原名称

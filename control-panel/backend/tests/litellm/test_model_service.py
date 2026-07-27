@@ -186,11 +186,17 @@ class TestCreateModel:
 
         预期: model_id 正确, 本地记录可查询
         """
-        with patch.object(
-            svc, "request",
-            new=AsyncMock(return_value={
-                "model_name": "ds", "model_info": {"id": "uuid-new"},
-            }),
+        with (
+            patch.object(
+                svc, "request",
+                new=AsyncMock(return_value={
+                    "model_name": "ds", "model_info": {"id": "uuid-new"},
+                }),
+            ),
+            patch(
+                "app.services.litellm_service._sync_metrics_on_create",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             r = await svc.create_model(
                 db_session, model_name="ds",

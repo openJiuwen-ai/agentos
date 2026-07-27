@@ -1,5 +1,7 @@
 """LitellmModelParams ORM CRUD 测试"""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.models.litellm_model_params import LitellmModelParams, LocalModelExtension
@@ -184,3 +186,61 @@ class TestLitellmModelParams:
         assert row1 is not None and row1.model_name == "my-model"
         assert row2 is not None and row2.model_name == "my-model"
         assert row1.id != row2.id
+
+    async def test_created_at_is_iso_string_with_timezone(self, db_session):
+        """
+        场景: upsert 后检查 created_at 格式.
+
+        预期: created_at 为 ISO 8601 字符串，带 +00:00 时区后缀
+        """
+        row = await LitellmModelParams.upsert(
+            db_session, "uuid-tz", "tz-model",
+            LocalModelExtension(),
+        )
+        assert isinstance(row.created_at, str)
+        assert "+00:00" in row.created_at or row.created_at.endswith("Z")
+        parsed = datetime.fromisoformat(row.created_at.replace("Z", "+00:00"))
+        assert parsed.tzinfo is not None
+
+    async def test_updated_at_is_iso_string_with_timezone(self, db_session):
+        """
+        场景: upsert 后检查 updated_at 格式.
+
+        预期: updated_at 为 ISO 8601 字符串，带 +00:00 时区后缀
+        """
+        row = await LitellmModelParams.upsert(
+            db_session, "uuid-tz2", "tz-model2",
+            LocalModelExtension(),
+        )
+        assert isinstance(row.updated_at, str)
+        assert "+00:00" in row.updated_at or row.updated_at.endswith("Z")
+        parsed = datetime.fromisoformat(row.updated_at.replace("Z", "+00:00"))
+        assert parsed.tzinfo is not None
+
+    async def test_upsert_updates_updated_at(self, db_session):
+        """
+        场景: 首次 upsert 后再次 upsert 同一 ID.
+
+        预期: updated_at 被 onupdate 更新为新的时间戳
+        """
+        import time
+
+        row1 = await LitellmModelParams.upsert(
+            db_session, "uuid-upd", "upd-model",
+            LocalModelExtension(instance_url="http://old"),
+        )
+        ts1 = row1.updated_at
+        assert isinstance(ts1, str)
+
+        time.sleep(0.1)
+
+        await LitellmModelParams.upsert(
+            db_session, "uuid-upd", "upd-model",
+            LocalModelExtension(instance_url="http://new"),
+        )
+
+        row2 = await LitellmModelParams.get_by_id(db_session, "uuid-upd")
+        ts2 = row2.updated_at
+        assert isinstance(ts2, str)
+        assert ts2.endswith("Z")
+        assert ts2 > ts1

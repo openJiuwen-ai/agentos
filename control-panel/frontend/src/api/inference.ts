@@ -104,18 +104,18 @@ export async function fetchModelDetail(id: string) {
 }
 
 /** 更新模型信息 */
-export async function updateModel(model_name: string, data: Partial<ModelDetail>) {
-  return put<ModelDetail>(`/api/v1/litellm/model/${model_name}`, data);
+export async function updateModel(model_id: string, data: Partial<ModelDetail>) {
+  return put<ModelDetail>(`/api/v1/litellm/model/${model_id}`, data);
 }
 
 /** 删除模型 */
-export async function deleteModel(model_name: string) {
-  return del(`/api/v1/litellm/model/${model_name}`);
+export async function deleteModel(model_id: string) {
+  return del(`/api/v1/litellm/model/${model_id}`);
 }
 
 /** 重启模型（文档规范中无此接口，保留供前端使用） */
-export async function restartModel(model_name: string) {
-  return post(`/api/v1/litellm/model/${model_name}/restart`);
+export async function restartModel(model_id: string) {
+  return post(`/api/v1/litellm/model/${model_id}/restart`);
 }
 
 /** 创建模型 */

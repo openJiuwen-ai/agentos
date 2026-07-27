@@ -47,7 +47,12 @@ class ModelInfo(BaseModel):
     """模型信息"""
 
     description: str | None = Field(None, description="模型描述")
-    context_window: int | None = Field(None, description="上下文窗口大小")
+    context_window: int | None = Field(
+        None,
+        description="上下文窗口大小",
+        ge=1,
+        le=2147483647,
+    )
 
 
 class ModelCreate(BaseModel):
