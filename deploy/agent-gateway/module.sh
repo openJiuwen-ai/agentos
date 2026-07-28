@@ -27,25 +27,42 @@ agent-gateway_install() {
     [ -n "${whl}" ] || error "registry whl not found in ${AGENTOS_ROOT}"
 
     pm=$(command -v dnf || command -v yum) || error "neither dnf nor yum found"
-    "${pm}" install -y "${rpm}" || error "Failed to install rqlite rpm"
-    # --break-system-packages 兼容 PEP 668 externally-managed 环境
-    "python${YR_PYTHON_VERSION}" -m pip install "${whl}" --quiet --break-system-packages \
+    "${pm}" install -y "${rpm}" \a
+        python3-requests python3-httpx python3-fastapi \
+        python3-pydantic python3-python-multipart python3-uvicorn python3-websockets \
+        || error "Failed to install rqlite rpm or system deps"
+    # --no-deps: 依赖已由系统包提供，不再从 PyPI 拉取
+    python3 -m pip install "${whl}" --quiet --no-deps \
         || error "Failed to install a2x-registry whl"
 
-    py=$(command -v "python${YR_PYTHON_VERSION}") || error "python${YR_PYTHON_VERSION} not found"
+    py=$(command -v "python3") || error "python3 not found"
     cat > "${AGENTREGISTRY_UNIT}" <<EOF
 [Unit]
 Requires=rqlited.service
 After=rqlited.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 [Service]
 ExecStart=${py} -m a2x_registry.backend
 Restart=on-failure
 RestartSec=3
-StartLimitIntervalSec=60
-StartLimitBurst=5
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # rqlited 单节点 drop-in: -node-id + -bootstrap-expect 1 使其自动选主
+    local rqlite_dropin_dir="/etc/systemd/system/rqlited.service.d"
+    mkdir -p "${rqlite_dropin_dir}"
+    cat > "${rqlite_dropin_dir}/single-node.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/bin/rqlited -node-id 1 -bootstrap-expect 1 /var/lib/rqlite/data
+EOF
+
+    # 清理旧 Raft 状态，确保单节点能重新 bootstrap 为 leader
+    systemctl stop rqlited 2>/dev/null || true
+    rm -rf /var/lib/rqlite/data/*
+
     systemctl daemon-reload
     success "agent-gateway installed"
 }
@@ -75,10 +92,17 @@ Environment=A2X_REGISTRY_DB_KIND=rqlite
 Environment=A2X_REGISTRY_DB_ENDPOINT=${endpoint}
 EOF
     systemctl daemon-reload
-    systemctl enable --now rqlited "${AGENTREGISTRY_SVC}" || error "Failed to start rqlited or ${AGENTREGISTRY_SVC}"
+    # 先启动 rqlited，等其选主完成后再启动 agent-registry
+    systemctl enable --now rqlited || error "Failed to start rqlited"
+    for i in $(seq 1 15); do
+        curl -sf --noproxy '*' "http://127.0.0.1:4001/leader" | grep -q '"node_id"' \
+            && break
+        sleep 1
+    done
+    systemctl enable --now "${AGENTREGISTRY_SVC}" || error "Failed to start ${AGENTREGISTRY_SVC}"
 
     for i in $(seq 1 15); do
-        curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/datasets" \
+        curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/images" \
             && { success "agent-gateway up on http://${bind}:${port}"; return 0; }
         sleep 1
     done
@@ -94,9 +118,10 @@ agent-gateway_down() {
 # ===== uninstall: 停服务 + 删 unit + 卸 whl/rpm =====
 agent-gateway_uninstall() {
     systemctl disable --now "${AGENTREGISTRY_SVC}" rqlited 2>/dev/null || true
-    rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}"
+    rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}" \
+        "/etc/systemd/system/rqlited.service.d"
     systemctl daemon-reload
-    "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
+    python3 -m pip uninstall -y a2x-registry || true
     rpm -e rqlite 2>/dev/null || true
     success "agent-gateway uninstalled"
 }
