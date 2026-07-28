@@ -10,3 +10,7 @@
 [submodule "Conch"]
 	path = Conch
 	url = https://gitcode.com/openeuler/Conch.git
+[submodule "agent-protocol"]
+	path = agent-protocol
+	url = https://gitcode.com/openJiuwen/agent-protocol.git
+	branch = feature/Agentregistry-dev

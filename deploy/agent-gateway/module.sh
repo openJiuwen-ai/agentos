@@ -27,7 +27,7 @@ agent-gateway_install() {
     [ -n "${whl}" ] || error "registry whl not found in ${AGENTOS_ROOT}"
 
     pm=$(command -v dnf || command -v yum) || error "neither dnf nor yum found"
-    "${pm}" install -y "${rpm}" \a
+    "${pm}" install -y "${rpm}" \
         python3-requests python3-httpx python3-fastapi \
         python3-pydantic python3-python-multipart python3-uvicorn python3-websockets \
         || error "Failed to install rqlite rpm or system deps"

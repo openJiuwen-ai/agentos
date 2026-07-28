@@ -1,6 +1,6 @@
 # AgentOS 构建说明
 
-`build.sh` 用于下载 JiuwenSwarm、openYuanrong 依赖包，并与 `deploy/` 目录一起打包为可分发的 tar 包。
+`build.sh` 用于下载 JiuwenSwarm、openYuanrong、agent-gateway 依赖包，并与 `deploy/` 目录一起打包为可分发的 tar 包。
 
 支持两种构建模式：
 
@@ -54,6 +54,7 @@
 | yuanrong 每日构建时间 | `--yr-schedule-time` | 自动获取 | 仅 `daily` 模式，OBS 路径中的时间戳 |
 | yuanrong release 下载路径 | `--yr-release-download-base` | 自动拼接 | 仅 `release` 模式，对应 `YR_RELEASE_DOWNLOAD_BASE` |
 | 并行下载数 | `--download-jobs` | `3` | 同时下载的最大文件数 |
+| agent-gateway 版本 | （脚本内 `REGISTRY_RELEASE_TAG` / `REGISTRY_WHL_VERSION` / `RQLITE_VERSION`）| 见 `build.sh` 顶部 | 无命令行选项 |
 也可在 `build.sh` 顶部 `# build parameters` 区域直接修改默认值。
 
 ## 构建流程
@@ -66,8 +67,9 @@
 | 4 | `build_manager_app` | 打包 `control-panel/deploy/` → `AgentOS-Manager.tgz` |
 | 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
 | 6 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
-| 7 | `build_conch` | 预留步骤（当前为空） |
-| 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server-${ARCH}.tgz` |
+| 7 | `build_agent_gateway` | 下载 agent-gateway 依赖包 |
+| 8 | `build_conch` | 预留步骤（当前为空） |
+| 9 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server-${ARCH}.tgz` |
 
 任一步骤失败时，脚本会因 `set -e` 立即退出。
 
@@ -148,6 +150,7 @@
 build/dist/downloads/jiuwenswarm/       # wheel 包
 build/dist/downloads/jiuwenswarm_src/   # jiuwenswarm git 源码
 build/dist/downloads/openyuanrong/      # openyuanrong wheel 包
+build/dist/downloads/agent-gateway/     # 注册中心 wheel、rqlite rpm
 ```
 
 ## 输出产物
@@ -176,6 +179,7 @@ build/dist/downloads/openyuanrong/      # openyuanrong wheel 包
 
 - `jiuwenswarm-<version>-py3-none-any.whl`
 - 上述 openYuanrong wheel（daily 6 个 / release 6 个）
+- agent-gateway 依赖包（注册中心 wheel、rqlite rpm）
 - `deploy/` 目录（来自仓库 `deploy/`）
 - `deploy/jiuwenswarm/` 部署脚本（来自 `jiuwenswarm_src/deploy/yuanrong/`，与仓库 `deploy/jiuwenswarm/` 合并）
 
