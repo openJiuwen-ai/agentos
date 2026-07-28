@@ -24,7 +24,7 @@ import deviceImage from '@/assets/images/device.png';
 import {
   formatBytes,
   formatBytesPerSecParts,
-  formatMegabytes,
+  formatHbmGigabytes,
   formatUsagePercent,
   getNpuHealthMeta,
   listDiskMounts,
@@ -283,7 +283,7 @@ onUnmounted(() => {
               </ElTag>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="利用率" min-width="148">
+          <ElTableColumn label="AI Core 利用率" min-width="148">
             <template #default="{ row }">
               <div class="metric-detail-table__metric">
                 <div class="metric-detail-table__metric-head">
@@ -304,7 +304,7 @@ onUnmounted(() => {
                 <div class="metric-detail-table__metric-head">
                   <span class="metric-detail-table__metric-value">{{ formatUsagePercent(row.hbm_usage) }}%</span>
                   <span class="metric-detail-table__metric-sub">
-                    {{ `${formatMegabytes(row.hbm_used_mb)}/${formatMegabytes(row.hbm_total_mb)}` }}
+                    {{ `${formatHbmGigabytes(row.hbm_used_mb)}/${formatHbmGigabytes(row.hbm_total_mb)}` }}
                   </span>
                 </div>
                 <ElProgress

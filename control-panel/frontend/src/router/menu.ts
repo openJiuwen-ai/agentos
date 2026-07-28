@@ -46,6 +46,7 @@ export const appRouteTree: AppRouteNode[] = [
         path: '/resources/appliance',
         name: 'appliance',
         icon: applianceIcon,
+        adminOnly: true,
         component: () => import('@/views/resources/appliance/AppliancePage.vue'),
       },
       {
@@ -359,6 +360,30 @@ export function findSideMenuParentKey(tree: AppRouteNode[], routeName: string | 
   }
 
   return null;
+}
+
+export function findFirstAccessibleSideMenuRoute(
+  menus: SideMenuItem[] | undefined,
+  isAdmin: boolean,
+): string | undefined {
+  if (!menus) {
+    return undefined;
+  }
+
+  for (const item of menus) {
+    if (item.adminOnly && !isAdmin) {
+      continue;
+    }
+    if (item.routeName) {
+      return item.routeName;
+    }
+    const nested = findFirstAccessibleSideMenuRoute(item.children, isAdmin);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return undefined;
 }
 
 export function findAdminOnlyRouteNames(tree: AppRouteNode[]): string[] {

@@ -20,13 +20,24 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_KEY_ENCRYPTION_KEY: ${LITELLM_KEY_ENCRYPTION_KEY}
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      AGENTOS_HOME_BASE: ${AGENTOS_BASE:-/home/agentos}/users
+      # ── Hardware monitoring ──
+      NODE_EXPORTER_HOST: ${NODE_EXPORTER_HOST:-host.docker.internal}
+      NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-8084}
+      NPU_EXPORTER_HOST: ${NPU_EXPORTER_HOST:-host.docker.internal}
+      NPU_EXPORTER_PORT: ${NPU_EXPORTER_PORT:-8083}
+      AGENTOS_HOSTNAME: ${AGENTOS_HOSTNAME:-}
+      AGENTOS_PRODUCT_NAME: ${AGENTOS_PRODUCT_NAME:-}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
       - /usr/bin/docker:/usr/bin/docker
       - /run/docker.sock:/run/docker.sock
-      - agentos-home-data:${AGENTOS_HOME_BASE:-/home/agentos/users}
+      - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users
+      - ${AGENTOS_BASE:-/home/agentos}/supervisor:${AGENTOS_BASE:-/home/agentos}/supervisor:ro
+      - ${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:ro
+      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -68,7 +79,7 @@ services:
   # LiteLLM Proxy
   # =========================================================================
   litellm:
-    image: ghcr.nju.edu.cn/berriai/litellm-database:v1.91.1
+    image: ghcr.io/berriai/litellm-database:v1.91.1
     ports: ["${LITELLM_PORT:-4000}:4000"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
@@ -140,7 +151,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  agentos-home-data:
   postgres-data:
   vm-data:
   grafana-data:

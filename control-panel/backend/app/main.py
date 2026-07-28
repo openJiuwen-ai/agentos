@@ -14,6 +14,8 @@ from app.api.v1.litellm_usage import router as litellm_usage_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.logs_ws import ws_router as logs_ws_router
 from app.api.v1.users import router as users_router
+from app.api.v1.hardware import router as hardware_router
+from app.api.v1.thirdparty_agent import router as thirdparty_agent_router
 from app.core.logging import setup_file_logging
 from app.iam.engine import ensure_iam_tables
 from app.services import get_user_backend
@@ -56,12 +58,24 @@ async def lifespan(fastapi_app: FastAPI):
     register_litellm_svc(litellm_svc)
     logger.info("LitellmService attached to app.state")
 
-    # 5. 日志中心 — 定时任务 + 导出 Worker
+    # 5. Hardware monitoring service
+    from app.config import settings
+    from app.services.hardware_monitor import HardwareMonitorService
+    from app.services.npu_monitor import NpuMonitor
+
+    hw_svc = HardwareMonitorService()
+    npu_monitor = NpuMonitor(npu_url=settings.npu_exporter_url)
+    fastapi_app.state.hardware_svc = hw_svc
+    fastapi_app.state.npu_monitor = npu_monitor
+    logger.info("HardwareMonitorService + NpuMonitor attached to app.state")
+
+    # 6. 日志中心 — 定时任务 + 导出 Worker
     await start_log_services()
 
     yield
 
     # ── 清理 ──────────────────────────────────────────────────────────────
+    await hw_svc.close()
     await stop_log_services()
     await litellm_svc.close()
     await backend.on_shutdown()
@@ -90,6 +104,7 @@ app.include_router(agent_router)
 app.include_router(litellm_router)
 app.include_router(litellm_key_router)
 app.include_router(litellm_usage_router)
+app.include_router(hardware_router)
 app.include_router(logs_router)
 app.include_router(logs_ws_router)
 app.include_router(thirdparty_agent_router)

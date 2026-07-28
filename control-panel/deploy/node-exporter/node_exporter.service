@@ -1,0 +1,24 @@
+[Unit]
+Description=Node Exporter
+Documentation=https://github.com/prometheus/node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=node_exporter
+Group=node_exporter
+ExecStart=/usr/bin/node_exporter \
+    --web.listen-address=__LISTEN_ADDR__ \
+    --collector.filesystem \
+    --collector.diskstats \
+    --collector.systemd \
+    --collector.processes \
+    --collector.filesystem.mount-points-exclude="^/(sys|proc|dev|run|mnt/wslg)($|/)" \
+    --collector.filesystem.fs-types-include="^(ext4|xfs|btrfs|zfs|ntfs|ext3|ext2)$" \
+    --collector.diskstats.device-exclude="^(ram|loop|fd|sr)"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

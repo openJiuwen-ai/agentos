@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     LITELLM_REQUEST_TIMEOUT: float = 30.0
     LITELLM_DATABASE_URL: str = ""
 
+    # ── Hardware monitoring ──
+    NPU_EXPORTER_HOST: str = "host.docker.internal"
+    NPU_EXPORTER_PORT: int = 8083
+    NODE_EXPORTER_HOST: str = "host.docker.internal"
+    NODE_EXPORTER_PORT: int = 8084
+
+    @property
+    def npu_exporter_url(self) -> str:
+        return f"http://{self.NPU_EXPORTER_HOST}:{self.NPU_EXPORTER_PORT}"
+
+    @property
+    def node_exporter_url(self) -> str:
+        return f"http://{self.NODE_EXPORTER_HOST}:{self.NODE_EXPORTER_PORT}"
+
+    AGENTOS_PRODUCT_NAME: str = ""  # 物理机型号，从 .env 配置（dmidecode -s system-product-name）
+    AGENTOS_HOSTNAME: str = ""  # 物理机 hostname，从 .env 配置
+
     # ── 注册中心后端 (选填；未配置时智能体监控功能不可用) ──
     AGENT_REGISTER_URL: str = ""
 

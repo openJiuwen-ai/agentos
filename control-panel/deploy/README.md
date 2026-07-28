@@ -13,11 +13,14 @@ control-panel/
 │   ├── Dockerfile
 │   └── nginx.conf
 └── deploy/                     # 运行时 compose 与监控配置
+    ├── deploy.sh               # 一键部署脚本（完整流程）
     ├── docker-compose.yml
     ├── .env.example
     ├── README.md
     ├── litellm/
     │   └── config.yaml             # LiteLLM Proxy 配置
+    ├── node-exporter/
+    │   └── node_exporter.service   # systemd unit 文件（deploy.sh 引用）
     ├── victoriametrics/
     │   ├── scrape.yml              # VM promscrape 配置
     │   └── agent-metrics.json      # 采集目标（file_sd）
@@ -40,6 +43,12 @@ control-panel/
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.135.0` | `VICTORIAMETRICS_PORT` | 8428 | 指标存储 |
 | `grafana` | `grafana/grafana:12.4.2` | -- | 3000 | 监控面板 |
 
+**宿主机原生服务（非容器）：**
+
+| 服务 | 二进制 | 端口 | 说明 |
+|------|--------|------|------|
+| `node_exporter` | `/usr/bin/node_exporter` | 8084 | 主机指标采集（systemd） |
+
 ## 配置说明
 
 | 宿主机文件 | 容器内路径 | 作用 |
@@ -51,6 +60,7 @@ control-panel/
 | `grafana/victoriametrics.yml` | provisioning datasources | 自动连 VM |
 | `grafana/default.yml` | provisioning dashboards | Dashboard 加载规则 |
 | `grafana/*-perf.json` | `/var/lib/grafana/dashboards/` | 面板 JSON |
+| `node-exporter/node_exporter.service` | `/etc/systemd/system/node_exporter.service` | systemd unit（deploy.sh 内联安装） |
 
 生产环境：`agent-metrics.json` 建议放在 `/var/lib/agentos/monitoring/`，compose 改挂载路径即可。
 
@@ -63,10 +73,33 @@ control-panel/
 | 配置文件 | 上表所列文件齐全 |
 | 环境变量 | 复制 `.env.example` → `.env`，修改密码与 master key |
 | 前端镜像 | CI 已构建并推送到仓库，或通过 `docker load` 导入本机 |
+| systemd | 宿主机使用 systemd init（Ubuntu / Debian / CentOS 等） |
+| 网络 | 目标机可访问 GitHub Releases（否则手动下载二进制） |
 
 ---
 
 ## 部署流程
+
+### 快速部署（一键脚本）
+
+```bash
+cd control-panel/deploy
+
+# 三步完成：
+sudo bash deploy.sh install     # 安装：.env + 镜像拉取 + node_exporter 注册
+sudo bash deploy.sh up          # 启动：node_exporter → docker compose
+sudo bash deploy.sh status      # 验证服务状态
+```
+
+其他命令：
+- `deploy.sh down`      停止：docker compose → node_exporter（反序）
+- `deploy.sh uninstall` 卸载：停止服务 + 清理 .env + 注销 systemd
+
+---
+
+### 分步部署
+
+以下为手动分步流程，与一键脚本等价。
 
 ### 1. 准备镜像
 
@@ -122,7 +155,20 @@ docker images | grep -E 'agentos|postgres|litellm|victoria-metrics|grafana'
 ```
 
 
-### 3. 一键拉起
+### 2. 部署 node_exporter（宿主机）
+
+node_exporter 运行在宿主机（非容器），提供 CPU / 内存 / 磁盘 / 网络等指标。
+
+前置条件：将解压后的 `node_exporter` 二进制放入 `deploy/node-exporter/` 目录，`deploy.sh install` 会自动拷贝到 `/usr/bin` 并注册 systemd 服务。
+
+**检查状态**：
+
+```bash
+systemctl status node_exporter
+curl -s http://127.0.0.1:8084/metrics | head -5
+```
+
+### 3. 一键拉起（docker compose）
 
 ```bash
 cd control-panel/deploy

@@ -19,6 +19,9 @@ export function formatMonitorTimestamp(iso: string): string {
 }
 
 export function formatUptimeSeconds(seconds: number): string {
+  if (seconds === -1) {
+    return '--';
+  }
   const days = Math.floor(seconds / SECONDS_PER_DAY);
   const hours = Math.floor((seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR);
   return `${days} 天 ${hours} 小时`;
@@ -74,22 +77,30 @@ export function pickNpuAll(data: ApplianceMonitorData) {
   return data.npus.find((item) => item.device_id === 'all');
 }
 
+function compareNpuDeviceId(left: string, right: string): number {
+  const leftId = Number(left);
+  const rightId = Number(right);
+  if (!Number.isNaN(leftId) && !Number.isNaN(rightId)) {
+    return leftId - rightId;
+  }
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
 export function listNpuDevices(data: ApplianceMonitorData) {
-  return data.npus.filter((item) => item.device_id !== 'all');
+  return data.npus
+    .filter((item) => item.device_id !== 'all')
+    .sort((left, right) => compareNpuDeviceId(left.device_id, right.device_id));
 }
 
 export function listDiskMounts(data: ApplianceMonitorData) {
   return data.disks.filter((item) => item.mount_point !== 'all');
 }
 
-export function formatMegabytes(mb: number): string {
+export function formatHbmGigabytes(mb: number): string {
   if (mb <= 0) {
-    return '0.0 MB';
+    return '0.0 GB';
   }
-  if (mb >= 1024) {
-    return `${(mb / 1024).toFixed(1)} GB`;
-  }
-  return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 export function getNpuHealthMeta(health: number): { tagClass: string; text: string } {

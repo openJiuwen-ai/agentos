@@ -423,11 +423,6 @@ async function handleDelete(user: UserItem) {
       cancelButtonText: '取消',
       type: 'warning',
     });
-    await ElMessageBox.confirm(`确定要删除用户 ${user.username} 吗？此操作不可撤销。`, '删除用户', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    });
   } catch {
     return;
   }

@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus';
-import { topMenus } from '@/router/menu';
+import { appRouteTree, findAdminOnlyRouteNames, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
+
+const adminOnlyRouteNames = new Set(findAdminOnlyRouteNames(appRouteTree));
 import { useAuth } from '@/composables/useAuth';
 import personIcon from '@/assets/images/person-line.svg';
 import helpIcon from '@/assets/images/help.svg';
@@ -49,7 +51,11 @@ function handleTopMenuSelect(key: string) {
   }
 
   if (menu.defaultRouteName) {
-    router.push({ name: menu.defaultRouteName });
+    let target = menu.defaultRouteName;
+    if (!isAdmin.value && adminOnlyRouteNames.has(target)) {
+      target = findFirstAccessibleSideMenuRoute(menu.sideMenus, false) ?? target;
+    }
+    router.push({ name: target });
   }
 }
 

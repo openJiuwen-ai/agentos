@@ -7,7 +7,7 @@ export type ModelStatus = 'success' | 'error' | 'warning';
 
 /** LiteLLM 模型信息 */
 export interface LiteLLMModelInfo {
-  id: string;
+  id?: string;
   db_model?: boolean;
   blocked?: boolean;
   description?: string;

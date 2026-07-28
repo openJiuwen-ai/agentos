@@ -1,0 +1,16 @@
+[Unit]
+Description=Ascend npu exporter
+Documentation=hiascend.com
+
+[Service]
+ExecStart=/usr/local/bin/npu-exporter -ip=__NPU_LISTEN_ADDR__ -port=__NPU_PORT__ -logFile=/var/log/mindx-dl/npu-exporter/npu-exporter.log
+Restart=always
+RestartSec=2
+Environment="GOGC=50"
+Environment="GOMAXPROCS=2"
+Environment="GODEBUG=madvdontneed=1"
+User=hwMindX
+Group=hwMindX
+
+[Install]
+WantedBy=multi-user.target
