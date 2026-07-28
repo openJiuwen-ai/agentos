@@ -39,6 +39,8 @@ OPENYUANRONG_PACKAGES=()
 CLIENT_TUI_PACKAGES=()
 SERVER_PACKAGES=()
 
+TUI_LAUNCHER_DIR="${PROJECT_ROOT}/tui-launcher"
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [daily|release] [options]
@@ -432,6 +434,29 @@ build_conch() {
   echo "==> build_conch"
 }
 
+build_tui_launcher() {
+  echo "==> build_tui_launcher"
+  local dist_dir="${DOWNLOAD_DIR}/tui-launcher"
+  mkdir -p "${dist_dir}"
+
+  # 使用 pip wheel 构建 tui-launcher 的 wheel 包（不下载依赖）
+  # 构建产物放在 DOWNLOAD_DIR/tui-launcher 下，后续 pack 阶段会将其与 jiuwenswarm_tui 放在同一目录
+  if command -v python >/dev/null 2>&1; then
+    python -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
+  else
+    echo "error: python is required to build tui-launcher" >&2
+    return 1
+  fi
+
+  for whl in "${dist_dir}"/*.whl; do
+    if [[ -f "${whl}" ]]; then
+      echo "  built: $(basename "${whl}")"
+    fi
+  done
+}
+
 build_manager_app() {
   echo "==> build_manager_app (version=${MANAGER_VERSION})"
 
@@ -462,6 +487,9 @@ pack() {
   for pkg in "${CLIENT_TUI_PACKAGES[@]}"; do
     cp "${DOWNLOAD_DIR}/jiuwenswarm/${pkg}" "${client_staging}/"
   done
+
+  # tui-launcher whl 与 jiuwenswarm_tui 放在同一目录（client 包），因为 tui-launcher 依赖 jiuwenswarm 运行时
+  cp "${DOWNLOAD_DIR}/tui-launcher/"*.whl "${client_staging}/" 2>/dev/null || true
 
   for pkg in "${SERVER_PACKAGES[@]}"; do
     if [[ "${pkg}" == jiuwenswarm-* ]]; then
@@ -514,6 +542,7 @@ main() {
   build_manager_app
   build_openyuanrong
   build_jiuwenswarm
+  build_tui_launcher
   build_agent_gateway
   build_conch
   pack
