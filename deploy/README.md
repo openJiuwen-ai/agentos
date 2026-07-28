@@ -128,8 +128,35 @@ bash agentos.sh restart --hosts 192.168.1.1
 | `YR_PYTHON_VERSION` | Python 版本 | `3.11` |
 | `YR_VERSION` | openyuanrong release 版本号 | `0.9.0` |
 | `YR_PKG_BASE` | whl 包来源（远程 URL 基址或本地目录路径） | `install` 时默认指向 agentos 根目录 |
+| `AGENTOS_SSH_KEY` | agent SSH 直连私钥路径（host/backend/client 三处混用） | `/root/.ssh/agent_key` |
+| `AGENTOS_SSH_BACKEND_PUBLIC_DIR` | 挂进实例的公钥目录（须含 `authorized_keys`） | `/root/.ssh/agent_pub` |
 
 详见 `yuanrong_deploy.sh -h`。
+
+**agent SSH 直连密钥配置**：`up` 默认启用 SSH 直连（frontend bastion `:2222` + function_proxy tcp tunnel + 平台公钥挂载），不提供关闭开关（三方 agent 镜像自带 sshd，frontend→实例 sshd 段必需）。密钥由用户自行生成，部署脚本不生成；`yuanrong_deploy.sh` 启动前会校验，缺失则报错并提示。
+
+简便模式 host/backend/client 三处用途混用同一套密钥，默认路径在 `/root/.ssh/` 下，部署前生成（**已存在则无需重复创建**）：
+
+```bash
+# 1. 生成密钥对（默认 /root/.ssh/agent_key + agent_key.pub）
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+
+# 2. 准备公钥目录（挂进实例 /run/openyuanrong/ssh，供实例 sshd 读取）
+mkdir -p /root/.ssh/agent_pub
+cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+
+# 3. 设置权限（sshd StrictModes 默认开，group/other 可写会被拒绝认证）
+chmod 644 /root/.ssh/agent_pub/authorized_keys
+chmod 755 /root/.ssh/agent_pub
+```
+
+权限说明：`authorized_keys` 与公钥目录不能被 group/other 可写，否则实例 sshd（以非 root 跑）的 `StrictModes` 校验失败、拒绝 backend key 认证。`0644` 文件 + `0755` 目录 + root 属主实测可用。
+
+注意事项：
+
+- `AGENTOS_SSH_BACKEND_PUBLIC_DIR` 不能放在 `/etc` 下（docker executor 的 `IsSafeBindSource` 黑名单含 `/etc`，会拒挂载）。默认 `/root/.ssh/agent_pub` 已避开。
+- docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。
+- 生产环境建议改回三套独立密钥（host/backend/client 分开）。
 
 #### jiuwenswarm
 

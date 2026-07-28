@@ -17,6 +17,19 @@ YR_VERSION="${YR_VERSION:-0.9.0}"
 CLUSTER_HOSTS=""
 CMD=""
 
+# ===== agent SSH 直连密钥路径（默认 /root/.ssh 下，用户自行生成，部署脚本不生成）=====
+# 简便模式：host / backend / client 三处用途混用同一套密钥（私钥 + 公钥）。
+#   AGENTOS_SSH_KEY            私钥，同时用作 frontend host key、backend key、外部 client key
+#   AGENTOS_SSH_BACKEND_PUBLIC_DIR  公钥目录，挂进实例 /run/openyuanrong/ssh，
+#                              内含 authorized_keys 文件（即该私钥的公钥）
+# backend_public_dir 必须非 /etc 等黑名单路径
+# 权限要求（影响挂进容器能否被实例 sshd 接受，StrictModes 默认开）：
+#   - authorized_keys：0644，属主 root；不能 group/other 可写
+#   - 公钥目录本身：0755，不能 group/other 可写
+#   0644/0755 + root 属主实测可用；权限过松会被 sshd 拒绝认证
+AGENTOS_SSH_KEY="${AGENTOS_SSH_KEY:-/root/.ssh/agent_key}"
+AGENTOS_SSH_BACKEND_PUBLIC_DIR="${AGENTOS_SSH_BACKEND_PUBLIC_DIR:-/root/.ssh/agent_pub}"
+
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # ===== 日志函数 =====
@@ -26,13 +39,33 @@ warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error() { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
 
 # ===== SSH 工具函数 =====
+# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 /etc/hosts 和 ifconfig。
+_get_local_ips() {
+    local ips
+    ips=$(hostname -I 2>/dev/null || true)
+    if [ -n "${ips}" ]; then
+        echo "${ips}"
+        return
+    fi
+    # 回退 1：/etc/hosts 里本机 hostname 对应的 IP
+    local hname
+    hname=$(cat /etc/hostname 2>/dev/null || true)
+    if [ -n "${hname}" ]; then
+        grep -E "^[0-9.]+[[:space:]]+.*${hname}" /etc/hosts 2>/dev/null | awk '{print $1}'
+    fi
+    # 回退 2：ifconfig 的 inet 地址
+    if command -v ifconfig >/dev/null 2>&1; then
+        ifconfig 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+    fi
+}
+
 is_local_host() {
     local host="$1"
     if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
         return 0
     fi
     local local_ips
-    local_ips=$(hostname -I 2>/dev/null || echo "")
+    local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
         if [ "${host}" = "${ip}" ]; then
             return 0
@@ -43,7 +76,7 @@ is_local_host() {
 
 get_local_ip() {
     local local_ips
-    local_ips=$(hostname -I 2>/dev/null || echo "")
+    local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
         if [ "${ip}" != "127.0.0.1" ] && [ "${ip}" != "localhost" ]; then
             echo "${ip}"
@@ -99,6 +132,48 @@ yr_check_ssh() {
 }
 
 # ===== openyuanrong 安装/启动函数 =====
+yr_check_ssh_keys() {
+    local host="$1"
+
+    info "Checking agent SSH keys on ${host}..."
+    local missing=""
+    local pub_key="${AGENTOS_SSH_KEY}.pub"
+    local backend_authorized="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}/authorized_keys"
+    # 混用一套：私钥 + 私钥对应的 .pub（frontend client 白名单）+ backend 公钥目录的 authorized_keys（挂进实例）
+    for f in "${AGENTOS_SSH_KEY}" "${pub_key}" "${backend_authorized}"; do
+        # 不抑制 stderr：SSH/连接失败要让用户看到真实原因，而非误报文件缺失
+        if ! exec_on_host "${host}" "test -f '${f}'"; then
+            missing="${missing} ${f}"
+        fi
+    done
+
+    # 权限检查（sshd StrictModes 默认开，group/other 可写会被拒绝认证）
+    # 022 = group 写(020) 或 other 写(002)，任一存在即不安全；stat 不可用时跳过，留给 sshd 运行时校验
+    local perm bad_perm=""
+    perm=$(exec_on_host "${host}" "stat -c '%a' '${backend_authorized}' 2>/dev/null" | tr -d '\r')
+    if [ -n "${perm}" ]; then
+        if [ $(( 8#${perm} & 022 )) -ne 0 ] 2>/dev/null; then
+            bad_perm="${backend_authorized}(${perm})"
+        fi
+    fi
+
+    if [ -n "${missing}" ] || [ -n "${bad_perm}" ]; then
+        local msg="Agent SSH key check failed on ${host}:"
+        [ -n "${missing}" ] && msg="${msg}
+  missing:${missing}
+Generate a keypair and place its public key as ${backend_authorized}:
+  ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+  mkdir -p /root/.ssh/agent_pub && cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys"
+        [ -n "${bad_perm}" ] && msg="${msg}
+  unsafe perms: ${bad_perm} is writable by group/other (sshd StrictModes rejects)"
+        msg="${msg}
+Mind permissions:
+  chmod 644 ${backend_authorized} && chmod 755 ${AGENTOS_SSH_BACKEND_PUBLIC_DIR}
+Or set AGENTOS_SSH_KEY / AGENTOS_SSH_BACKEND_PUBLIC_DIR to existing paths."
+        error "${msg}"
+    fi
+    success "Agent SSH keys present on ${host}"
+}
 yr_detect_arch() {
     local host="$1"
     local arch
@@ -364,13 +439,23 @@ yr_start_master() {
 
     local startup_log="/tmp/yr_startup_${master_host}.log"
 
+    # SSH 直连参数：frontend bastion :2222 + function_proxy tcp tunnel + 平台公钥挂载。
+    # 简便模式：host/backend/client 三处密钥混用同一套（AGENTOS_SSH_KEY）。
+    info "SSH direct connect: key=${AGENTOS_SSH_KEY}, public_dir=${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"
+    local ssh_opts="-s 'values.frontend.ssh_enable=true' \
+        -s 'values.frontend.ssh_host_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_backend_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_authorized_keys=\"${AGENTOS_SSH_KEY}.pub\"' \
+        -s 'values.frontend.ssh_backend_public_key_dir=\"${AGENTOS_SSH_BACKEND_PUBLIC_DIR}\"'"
+
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
     exec_on_host "${master_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --master \
         -s 'values.host_ip=\"${master_host}\"' \
         -s 'mode.master.frontend=true' \
         -s 'mode.master.function_scheduler=true' \
         -s 'mode.master.meta_service=true' \
-        -s 'frontend.args.enableEvent=true'" 2>&1 | tee "${startup_log}"
+        -s 'frontend.args.enableEvent=true' \
+        ${ssh_opts}" 2>&1 | tee "${startup_log}"
 
     if grep -q "All components are healthy" "${startup_log}" 2>/dev/null || \
        grep -q "started" "${startup_log}" 2>/dev/null; then
@@ -488,6 +573,9 @@ deploy_yr_up() {
     for host in "${YR_HOST_LIST[@]}"; do
         yr_check_existing "${host}"
     done
+
+    # SSH 密钥校验（master 节点，frontend/backend key 所在节点）
+    yr_check_ssh_keys "${master_host}"
 
     # 进入启动阶段：此后任何失败都将触发清理
     yr_up_phase=1
@@ -640,6 +728,19 @@ Environment Variables:
                      本地目录：目录下需包含与命名格式匹配的whl文件，远程主机会自动拷贝whl到目标机再安装。
                      本地目录示例: YR_PKG_BASE=/data/yr_whls
                      远程URL示例: YR_PKG_BASE=https://my-mirror/yr/0.9.0/linux/x86_64
+
+  AGENTOS_SSH_KEY            SSH 私钥路径（默认 /root/.ssh/agent_key）。
+                             简便模式：host / backend / client 三处用途混用同一套。
+  AGENTOS_SSH_BACKEND_PUBLIC_DIR 挂进实例 /run/openyuanrong/ssh 的公钥目录
+                             （默认 /root/.ssh/agent_pub），该目录下须有 authorized_keys
+                             文件（即该私钥的公钥）。不能在 /etc 下（docker executor 会拒挂载）。
+
+  注：SSH 直连默认开启，不提供关闭开关（三方 agent 镜像自带 sshd，frontend→实例 sshd 段必需）。
+      密钥由用户自行生成，部署脚本不生成。简便模式示例：
+    ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+    mkdir -p /root/.ssh/agent_pub && cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+    chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
+  权限说明：authorized_keys 与公钥目录不能 group/other 可写（sshd StrictModes 默认开，会拒绝认证）。
 
 Examples:
   # 典型流程：先在各主机安装whl包，再启动集群

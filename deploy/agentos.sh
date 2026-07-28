@@ -34,6 +34,11 @@ MODULES=("jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 
+# ===== agent SSH 直连密钥路径（用户自行生成，脚本不生成；默认 /root/.ssh 下）=====
+# 简便模式：host/backend/client 三处共用同一套密钥。生产环境建议三套独立
+export AGENTOS_SSH_KEY="${AGENTOS_SSH_KEY:-/root/.ssh/agent_key}"
+export AGENTOS_SSH_BACKEND_PUBLIC_DIR="${AGENTOS_SSH_BACKEND_PUBLIC_DIR:-/root/.ssh/agent_pub}"
+
 # ===== 日志函数 =====
 info()    { echo -e "\033[36m=== $@ ===\033[0m"; }
 success() { echo -e "\033[32m✅ $@\033[0m"; }
@@ -235,6 +240,14 @@ Config:
   jiuwenbox   配置文件: deploy/jiuwenbox/default-policy.yaml (含 extensions 目录占位符)
               jiuwenbox-server 随 jiuwenswarm whl 包安装，无需单独 install
   yuanrong    环境变量直接通过命令行/环境变量传入（见 yuanrong_deploy.sh -h）
+              agent SSH 直连默认启用（简便模式：host/backend/client 混用一套密钥）：
+                AGENTOS_SSH_KEY              私钥 (/root/.ssh/agent_key)，三处用途共用
+                AGENTOS_SSH_BACKEND_PUBLIC_DIR 公钥目录 (/root/.ssh/agent_pub)，
+                                              须含 authorized_keys；不能在 /etc 下
+              密钥由用户自行生成（注意权限，sshd StrictModes 拒 group/other 可写）：
+                ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+                mkdir -p /root/.ssh/agent_pub && cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+                chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
   jiuwenswarm 配置文件: deploy/jiuwenswarm/.env.custom (基于 .env.example)
   whl 包来源  install 时从 agentos 根目录（deploy 的同级目录）读取
 
@@ -265,6 +278,11 @@ Examples:
 
   # 7. 指定其他 whl 目录安装 yuanrong
   YR_PKG_BASE=/data/yr_whls ./agentos.sh install
+
+  # 8. 自定义 agent SSH 直连密钥路径（默认 /root/.ssh/ 下，需用户自行生成）
+  AGENTOS_SSH_KEY=/path/my_key \
+  AGENTOS_SSH_BACKEND_PUBLIC_DIR=/path/my_pub \
+  ./agentos.sh up --hosts 192.168.1.1
 
 扩展模块:
   新增组件只需两步:
