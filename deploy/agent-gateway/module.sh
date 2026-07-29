@@ -22,7 +22,7 @@ _agentregistry_bind() {
 
 # ===== install: 装 rqlite rpm + 注册中心 whl，生成 systemd unit =====
 agent-gateway_install() {
-    local rpm whl py pm
+    local rpm whl py
     rpm=$(ls "${AGENTOS_ROOT}"/rqlite-*.rpm 2>/dev/null | sort -V | tail -n1)
     whl=$(ls "${AGENTOS_ROOT}"/a2x_registry-*-py3-none-any.whl 2>/dev/null | sort -V | tail -n1)
     [ -n "${rpm}" ] || error "rqlite rpm not found in ${AGENTOS_ROOT}"
@@ -41,8 +41,7 @@ agent-gateway_install() {
     info "Ensuring pip..."
     "python${YR_PYTHON_VERSION}" -m ensurepip 2>/dev/null || true
 
-    pm=$(command -v dnf || command -v yum) || error "neither dnf nor yum found"
-    "${pm}" install -y "${rpm}" || error "Failed to install rqlite rpm"
+    rpm -ivh --force --nodeps --replacepkgs "${rpm}" || error "Failed to install rqlite rpm"
 
     # 安装 a2x-registry whl。
     # pip install 仅作检查用。
