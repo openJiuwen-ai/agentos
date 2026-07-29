@@ -4,6 +4,8 @@
 # 钩子函数: agent-gateway_up / agent-gateway_down / agent-gateway_install / agent-gateway_uninstall
 # ============================================================
 
+YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
+
 AGENTREGISTRY_SVC="agent-registry"
 AGENTREGISTRY_UNIT="/etc/systemd/system/${AGENTREGISTRY_SVC}.service"
 AGENTREGISTRY_DROPIN_DIR="/etc/systemd/system/${AGENTREGISTRY_SVC}.service.d"
@@ -26,16 +28,41 @@ agent-gateway_install() {
     [ -n "${rpm}" ] || error "rqlite rpm not found in ${AGENTOS_ROOT}"
     [ -n "${whl}" ] || error "registry whl not found in ${AGENTOS_ROOT}"
 
-    pm=$(command -v dnf || command -v yum) || error "neither dnf nor yum found"
-    "${pm}" install -y "${rpm}" \
-        python3-requests python3-httpx python3-fastapi \
-        python3-pydantic python3-python-multipart python3-uvicorn python3-websockets \
-        || error "Failed to install rqlite rpm or system deps"
-    # --no-deps: 依赖已由系统包提供，不再从 PyPI 拉取
-    python3 -m pip install "${whl}" --quiet --no-deps \
-        || error "Failed to install a2x-registry whl"
+    # 校验 Python（与 yuanrong 共用同一 Python 环境）
+    info "Checking Python ${YR_PYTHON_VERSION}..."
+    local py_check
+    py_check=$("python${YR_PYTHON_VERSION}" --version 2>&1 || echo "not_installed")
+    if [[ "${py_check}" == *"not_installed"* ]] || [[ "${py_check}" == *"command not found"* ]] || [[ "${py_check}" == *"No module"* ]]; then
+        error "Python ${YR_PYTHON_VERSION} is not installed. Please install it manually before deploying."
+    fi
+    success "Python ${YR_PYTHON_VERSION} available: ${py_check}"
 
-    py=$(command -v "python3") || error "python3 not found"
+    # 确保 pip 可用（与 yuanrong 一致）
+    info "Ensuring pip..."
+    "python${YR_PYTHON_VERSION}" -m ensurepip 2>/dev/null || true
+
+    pm=$(command -v dnf || command -v yum) || error "neither dnf nor yum found"
+    "${pm}" install -y "${rpm}" || error "Failed to install rqlite rpm"
+
+    # 安装 a2x-registry whl。
+    # pip install 仅作检查用。
+    info "Installing a2x-registry whl: $(basename "${whl}")"
+    if "python${YR_PYTHON_VERSION}" -m pip install "${whl}" --quiet; then
+        # 加固：pip show 确认包确实已注册到当前 Python 环境
+        if "python${YR_PYTHON_VERSION}" -m pip show a2x-registry >/dev/null 2>&1; then
+            success "a2x-registry whl installed/verified"
+        else
+            error "pip install returned success but 'pip show a2x-registry' failed (wheel may be corrupted or installed to wrong env)"
+        fi
+    else
+        error "Failed to install a2x-registry whl"
+    fi
+
+    py=$(command -v "python${YR_PYTHON_VERSION}") || error "python${YR_PYTHON_VERSION} not found"
+
+    local py_bindir py_libdir
+    py_bindir=$(dirname "${py}")
+    py_libdir=$(dirname "${py}")/lib
     cat > "${AGENTREGISTRY_UNIT}" <<EOF
 [Unit]
 Requires=rqlited.service
@@ -44,6 +71,8 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 [Service]
 ExecStart=${py} -m a2x_registry.backend
+Environment=PATH=${py_bindir}:$PATH
+Environment=LD_LIBRARY_PATH=${py_libdir}:$LD_LIBRARY_PATH
 Restart=on-failure
 RestartSec=3
 [Install]
@@ -121,7 +150,7 @@ agent-gateway_uninstall() {
     rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}" \
         "/etc/systemd/system/rqlited.service.d"
     systemctl daemon-reload
-    python3 -m pip uninstall -y a2x-registry || true
+    "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
     rpm -e rqlite 2>/dev/null || true
     success "agent-gateway uninstalled"
 }
