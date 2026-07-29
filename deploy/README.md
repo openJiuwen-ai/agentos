@@ -53,6 +53,16 @@ deploy/
 - 目标主机需预装指定版本的 Python（默认 3.11）
 - 部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）
 - `up` / `restart` 不安装 whl 包，请先在各目标主机执行 `install`
+- 各目标主机需预生成 agent SSH 直连密钥（`up` 默认启用，脚本不生成）。默认路径 `/root/.ssh/`，已存在则无需重复创建：
+
+  ```bash
+  ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+  mkdir -p /root/.ssh/agent_pub
+  cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+  chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
+  ```
+
+  docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。详见下文「yuanrong」配置。
 
 ### 安装包获取
 
