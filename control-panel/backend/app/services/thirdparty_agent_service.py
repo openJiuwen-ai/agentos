@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.image_process.build import BuildParams, BuildResult, build
+from app.image_process.build import BuildParams, BuildResult, build, check_prerequisites
 from app.thirdparty_agent.exceptions import ThirdpartyAgentError
 from app.thirdparty_agent.package import PackageMeta, extract_package_meta
 from app.models.thirdparty_agent import (
@@ -60,6 +61,14 @@ class AgentAlreadyExistsError(AgentServiceError):
         super().__init__(f"agent {agent_name!r} version {version!r} already exists")
 
 
+class BuildPreconditionError(AgentServiceError):
+    """Pre-build checks failed (e.g. base image not found)."""
+
+
+class InsufficientDiskSpaceError(AgentServiceError):
+    """Not enough disk space on the target filesystem."""
+
+
 # ── Service ──────────────────────────────────────────────────────────────
 
 class ThirdpartyAgentService:
@@ -67,12 +76,30 @@ class ThirdpartyAgentService:
 
     # ── helpers ───────────────────────────────────────────────────────
 
+    _DISK_SPACE_MARGIN = 50 * 1024 * 1024  # 50 MB
+
     @staticmethod
-    def _save_installer_file(content: bytes, meta: PackageMeta, uploaded_by: str) -> str:
+    def check_disk_space(uploaded_by: str, needed: int) -> None:
+        """Raise :class:`InsufficientDiskSpaceError` if the installer
+        directory does not have at least *needed* bytes free.
+        """
+        installer_dir = Path(settings.AGENTOS_HOME_BASE) / uploaded_by / "installers"
+        installer_dir.mkdir(parents=True, exist_ok=True)
+        usage = shutil.disk_usage(installer_dir)
+        if usage.free < needed:
+            raise InsufficientDiskSpaceError(
+                f"not enough disk space: {usage.free} free, {needed} required")
+
+    @staticmethod
+    def save_installer_file(content: bytes, meta: PackageMeta, uploaded_by: str) -> str:
         dest = Path(settings.AGENTOS_HOME_BASE) / uploaded_by / "installers"
         dest.mkdir(parents=True, exist_ok=True)
         path = dest / f"{meta.agent_name}-{meta.version}.tgz"
-        path.write_bytes(content)
+        try:
+            path.write_bytes(content)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
         return str(path)
 
     # ── upload ────────────────────────────────────────────────────────
@@ -84,6 +111,9 @@ class ThirdpartyAgentService:
             raise PackageTooLargeError(
                 package.size, settings.THIRDPARTY_AGENT_INSTALLER_MAX_BYTES)
 
+        self.check_disk_space(
+            uploaded_by, (package.size or 0) + self._DISK_SPACE_MARGIN)
+
         content = await package.read()
         meta = extract_package_meta(content)  # exceptions propagate directly
 
@@ -92,7 +122,7 @@ class ThirdpartyAgentService:
         if await AgentInstaller.exists(session, meta.agent_name, meta.version):
             raise AgentAlreadyExistsError(meta.agent_name, meta.version)
 
-        installer_path = self._save_installer_file(content, meta, uploaded_by)
+        installer_path = self.save_installer_file(content, meta, uploaded_by)
         await AgentInstaller.create(session, InstallerCreate(
             agent_name=meta.agent_name, display_name=meta.display_name,
             version=meta.version, entrypoint=meta.entrypoint,
@@ -112,6 +142,10 @@ class ThirdpartyAgentService:
         agent_installer = await AgentInstaller.get(session, agent_name, version)
         if agent_installer is None:
             raise AgentNotFoundError(agent_name, version)
+
+        failures = await check_prerequisites()
+        if failures:
+            raise BuildPreconditionError("; ".join(failures))
 
         task = BuildTask(
             task_id=f"build-{uuid.uuid4().hex[:12]}",
@@ -170,12 +204,12 @@ class ThirdpartyAgentService:
     # ── internal ──────────────────────────────────────────────────────
 
     @staticmethod
-    async def _register_image(installer: AgentInstaller, result: BuildResult) -> None:
+    async def register_image(installer: AgentInstaller, result: BuildResult) -> None:
         import httpx
 
         url = f"{settings.AGENT_REGISTER_URL.rstrip('/')}/api/images"
         payload = {
-            "framework": installer.agent_name,
+            "framework": installer.entrypoint,
             "framework_version": installer.version,
             "env_vars": {},
             "runtime_spec": {
@@ -225,7 +259,7 @@ class ThirdpartyAgentService:
                     on_progress=progress_cb,
                 ))
 
-                await self._register_image(agent_installer, result)
+                await self.register_image(agent_installer, result)
 
                 await AgentInstaller.update(
                     session, agent_installer.agent_name, agent_installer.version,

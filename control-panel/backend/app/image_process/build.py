@@ -46,6 +46,10 @@ class BuildError(Exception):
     """Raised when image build fails."""
 
 
+class DockerNotAvailableError(BuildError):
+    """Docker daemon is not reachable, timed out, or returned an error."""
+
+
 class BuildResult(NamedTuple):
     image: str
     image_digest: str
@@ -75,6 +79,11 @@ class AbstractBuilder(ABC):
 
     @abstractmethod
     async def check_available(self) -> bool:
+        ...
+
+    @abstractmethod
+    async def check_image_exists(self, image_name: str) -> bool:
+        """Return True if *image_name* is available locally."""
         ...
 
 
@@ -120,6 +129,33 @@ class DockerBuilder(AbstractBuilder):
             return stdout.decode().strip()
         raise BuildError("docker inspect failed")
 
+    async def check_image_exists(self, image_name: str) -> bool:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "image", "inspect", image_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as e:
+            raise DockerNotAvailableError(
+                f"failed to run docker: {e}") from e
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise DockerNotAvailableError(
+                f"docker image inspect timed out after 30s for {image_name!r}") from None
+
+        if proc.returncode != 0:
+            stderr_bytes = await proc.stderr.read()
+            err_text = stderr_bytes.decode(errors="replace").strip().lower()
+            if "no such image" in err_text or "not found" in err_text:
+                return False
+            raise DockerNotAvailableError(
+                f"docker inspect failed (exit {proc.returncode}): {err_text[:200]}")
+        return True
+
     async def _run(self, cmd: list[str], fail_msg: str) -> None:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -153,6 +189,17 @@ class DockerBuilder(AbstractBuilder):
 # ── Builder ─────────────────────────────────────────────────────────────
 
 _builder: AbstractBuilder = DockerBuilder()
+
+
+async def check_prerequisites() -> list[str]:
+    """Run all pre-build readiness checks.
+
+    Returns a list of failure messages. Empty list means ready.
+    """
+    failures: list[str] = []
+    if not await _builder.check_image_exists(_BASE_IMAGE):
+        failures.append(f"base image {_BASE_IMAGE!r} not found")
+    return failures
 
 
 # ── Public API ──────────────────────────────────────────────────────────

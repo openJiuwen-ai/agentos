@@ -14,6 +14,25 @@ _SCOPE_RE = re.compile(r"^@[^/]+/")
 _PLATFORM_RE = re.compile(r"-(linux|darwin|win32)-(x64|arm64)(-musl)?$")
 
 
+def _find_elf_entrypoint(tf: tarfile.TarFile) -> str | None:
+    """Scan tar members for the first ELF executable and return its basename.
+
+    Returns ``None`` if no ELF file is found.
+    """
+    from pathlib import Path
+
+    for member in tf.getmembers():
+        if not member.isfile():
+            continue
+        f = tf.extractfile(member)
+        if f is None:
+            continue
+        header = f.read(4)
+        if header == b"\x7fELF":
+            return Path(member.name).name
+    return None
+
+
 class PackageExtractError(ThirdpartyAgentError):
     """Failed to extract package metadata."""
 
@@ -105,6 +124,8 @@ def extract_package_meta(content: bytes) -> PackageMeta:
                                 entrypoint = next(iter(bin_val))
                             elif isinstance(bin_val, str):
                                 entrypoint = bin_val
+                        if not entrypoint:
+                            entrypoint = _find_elf_entrypoint(tf) or ""
                         return PackageMeta(
                             agent_name=agent_name, version=version,
                             display_name=display_name, entrypoint=entrypoint,

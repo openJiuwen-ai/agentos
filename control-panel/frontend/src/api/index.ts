@@ -123,7 +123,13 @@ instance.interceptors.response.use(
       }
     }
 
-    const message = error.response?.data?.detail || error.response?.data?.message || error.message || '网络异常';
+    const detail = error.response?.data?.detail;
+    const message = (detail && typeof detail === 'object' && 'message' in detail)
+      ? (detail as { message: string }).message
+      : (typeof detail === 'string' ? detail : undefined)
+        || error.response?.data?.message
+        || error.message
+        || '网络异常';
     return Promise.reject(new ApiError(message, error.response?.status));
   },
 );

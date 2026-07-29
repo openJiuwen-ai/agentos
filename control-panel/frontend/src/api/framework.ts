@@ -40,16 +40,8 @@ export function listFrameworks() {
 }
 
 /** POST /build_tasks — 触发构建 */
-export function triggerBuild(body: {
-  agent_name: string;
-  version: string;
-  display_name: string;
-  entrypoint: string;
-}) {
-  return post<{ task_id: string; status: string; created_at?: string }>(
-    `${BASE}/build_tasks`,
-    body,
-  );
+export function triggerBuild(body: { agent_name: string; version: string; display_name: string; entrypoint: string }) {
+  return post<{ task_id: string; status: string; created_at?: string }>(`${BASE}/build_tasks`, body);
 }
 
 /** GET /build_tasks/{task_id} — 查询构建状态 */

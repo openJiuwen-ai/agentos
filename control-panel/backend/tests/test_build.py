@@ -234,6 +234,33 @@ class TestDockerBuilder:
         asyncio_run(run())
 
 
+class TestCheckPrerequisites:
+    @staticmethod
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_base_image_exists():
+        from app.image_process.build import check_prerequisites
+
+        with patch(
+            "app.image_process.build._builder.check_image_exists",
+            new=AsyncMock(return_value=True),
+        ):
+            failures = await check_prerequisites()
+        assert failures == []
+
+    @staticmethod
+    @pytest.mark.asyncio
+    async def test_returns_failure_when_base_image_missing():
+        from app.image_process.build import check_prerequisites
+
+        with patch(
+            "app.image_process.build._builder.check_image_exists",
+            new=AsyncMock(return_value=False),
+        ):
+            failures = await check_prerequisites()
+        assert len(failures) == 1
+        assert "agent-base:1.0" in failures[0]
+
+
 def asyncio_run(coro):
     import asyncio
     return asyncio.run(coro)

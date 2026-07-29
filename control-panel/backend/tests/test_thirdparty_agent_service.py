@@ -60,8 +60,9 @@ class TestUpload:
         pkg = UploadFile(filename="bad.tgz", file=io.BytesIO(content))
 
         svc = ThirdpartyAgentService()
-        with pytest.raises(MissingFieldError):
-            await svc.upload(AsyncMock(), "admin", pkg)
+        with patch.object(svc, "check_disk_space", return_value=None):
+            with pytest.raises(MissingFieldError):
+                await svc.upload(AsyncMock(), "admin", pkg)
 
 
 # ── Build ────────────────────────────────────────────────────────────────
@@ -81,10 +82,12 @@ class TestCreateBuildTask:
             status="pending", progress=0,
         )
         with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent, \
+             patch("app.services.thirdparty_agent_service.check_prerequisites",
+                   new=AsyncMock(return_value=[])), \
              patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
              patch("asyncio.create_task"):
             mock_agent.get = AsyncMock(return_value=MagicMock())
-            mock_bt.get_by_name = AsyncMock(return_value=[existing])
+            mock_bt.try_insert = AsyncMock(return_value=(existing, False))
 
             result = await ThirdpartyAgentService().create_build_task(
                 AsyncMock(),
@@ -106,6 +109,28 @@ class TestCreateBuildTask:
                     agent_name="nobody", version="1.0",
                     display_name="Nobody", entrypoint="nobody")
             assert exc.value.agent_name == "nobody"
+
+    @staticmethod
+    async def test_base_image_missing_raises_503():
+        """check_prerequisites fails → BuildPreconditionError."""
+        from app.services.thirdparty_agent_service import (
+            BuildPreconditionError, ThirdpartyAgentService)
+
+        with patch(
+            "app.services.thirdparty_agent_service.AgentInstaller"
+        ) as mock_agent, \
+             patch(
+            "app.services.thirdparty_agent_service.check_prerequisites",
+            new=AsyncMock(return_value=["base image 'agent-base:1.0' not found"]),
+        ):
+            mock_agent.get = AsyncMock(return_value=MagicMock())
+            svc = ThirdpartyAgentService()
+            with pytest.raises(BuildPreconditionError) as exc:
+                await svc.create_build_task(
+                    AsyncMock(),
+                    agent_name="test", version="1.0",
+                    display_name="Test", entrypoint="test")
+            assert "agent-base:1.0" in str(exc.value)
 
 
 # ── Status ───────────────────────────────────────────────────────────────
@@ -166,3 +191,133 @@ class TestGetBuildTask:
         assert result.status == "building"
         assert result.progress == 45
         assert result.registered is False
+
+
+# ── Register Image ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_skip_sql
+class TestRegisterImage:
+
+    @staticmethod
+    async def test_framework_field_is_entrypoint():
+        """register_image sends installer.entrypoint as the 'framework' field."""
+        import httpx
+        from app.image_process.build import BuildResult
+        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+
+        installer = MagicMock()
+        installer.agent_name = "opencode"
+        installer.entrypoint = "custom-entry"
+        installer.version = "1.0.0"
+        installer.uploaded_by = "admin"
+
+        result = BuildResult(
+            image="opencode:1.0",
+            image_digest="sha256:abc",
+            image_path="/tmp/opencode-1.0.tar.gz",
+            base_image="agent-base:1.0",
+        )
+
+        mock_client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "registered"}
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            await ThirdpartyAgentService.register_image(installer, result)
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs["json"]
+        assert payload["framework"] == "custom-entry"
+        assert payload["framework_version"] == "1.0.0"
+
+
+# ── Disk Space Check ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_skip_sql
+class TestCheckDiskSpace:
+
+    @staticmethod
+    async def test_raises_when_insufficient_space():
+        """When free space is less than needed, raises InsufficientDiskSpaceError."""
+        from app.services.thirdparty_agent_service import (
+            ThirdpartyAgentService, InsufficientDiskSpaceError)
+
+        mock_usage = MagicMock(free=1000)
+        with patch("app.services.thirdparty_agent_service.shutil.disk_usage",
+                   return_value=mock_usage):
+            with patch("app.services.thirdparty_agent_service.Path.mkdir"):
+                with pytest.raises(InsufficientDiskSpaceError) as exc:
+                    ThirdpartyAgentService.check_disk_space("user", 2000)
+                assert "not enough disk space" in str(exc.value)
+                assert "1000 free" in str(exc.value)
+                assert "2000 required" in str(exc.value)
+
+    @staticmethod
+    async def test_passes_when_sufficient_space():
+        """When free space >= needed, does not raise."""
+        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+
+        mock_usage = MagicMock(free=10000)
+        with patch("app.services.thirdparty_agent_service.shutil.disk_usage",
+                   return_value=mock_usage):
+            with patch("app.services.thirdparty_agent_service.Path.mkdir"):
+                # Should not raise
+                ThirdpartyAgentService.check_disk_space("user", 5000)
+
+
+# ── Save Installer File ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_skip_sql
+class TestSaveInstallerFile:
+
+    @staticmethod
+    async def test_saves_file_and_returns_path():
+        """Writes content to the expected path and returns it as a string."""
+        from app.thirdparty_agent.package import PackageMeta
+        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+
+        meta = PackageMeta(
+            agent_name="test-agent", version="2.0",
+            display_name="Test Agent", entrypoint="test-agent",
+            os="linux", arch="x64", libc="gnu",
+        )
+        content = b"fake-tgz-content"
+
+        with patch("app.services.thirdparty_agent_service.Path.mkdir"):
+            with patch("app.services.thirdparty_agent_service.Path.write_bytes") as mock_write:
+                result = ThirdpartyAgentService.save_installer_file(
+                    content, meta, "admin")
+
+        assert isinstance(result, str)
+        assert result.endswith("test-agent-2.0.tgz")
+        mock_write.assert_called_once_with(content)
+
+    @staticmethod
+    async def test_removes_file_on_write_error():
+        """If write_bytes fails, the partial file is removed via unlink."""
+        from app.thirdparty_agent.package import PackageMeta
+        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+
+        meta = PackageMeta(
+            agent_name="test", version="1.0",
+            display_name="Test", entrypoint="test",
+            os="linux", arch="x64", libc="gnu",
+        )
+
+        with patch("app.services.thirdparty_agent_service.Path.mkdir"):
+            with patch("app.services.thirdparty_agent_service.Path.write_bytes",
+                       side_effect=OSError("disk full")):
+                with patch("app.services.thirdparty_agent_service.Path.unlink") as mock_unlink:
+                    with pytest.raises(OSError, match="disk full"):
+                        ThirdpartyAgentService.save_installer_file(b"x", meta, "admin")
+                    mock_unlink.assert_called_once()

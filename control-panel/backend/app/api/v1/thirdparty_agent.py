@@ -26,6 +26,8 @@ from app.models.thirdparty_agent import ConcurrentBuildLimitError
 from app.services.thirdparty_agent_service import (
     AgentAlreadyExistsError,
     AgentNotFoundError,
+    BuildPreconditionError,
+    InsufficientDiskSpaceError,
     ThirdpartyAgentService,
     PackageTooLargeError,
 )
@@ -44,6 +46,8 @@ _EXCEPTION_STATUS: list[tuple[type[ThirdpartyAgentError], int]] = [
     (ConcurrentBuildLimitError, 409),
     (AgentAlreadyExistsError, 409),
     (AgentNotFoundError, 404),
+    (BuildPreconditionError, 503),
+    (InsufficientDiskSpaceError, 507),
 ]
 
 
