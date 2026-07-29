@@ -30,7 +30,7 @@ services:
       AGENTOS_PRODUCT_NAME: ${AGENTOS_PRODUCT_NAME:-}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
-      - ../image/nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
+      - ./nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
       - /usr/bin/docker:/usr/bin/docker

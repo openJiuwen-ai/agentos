@@ -40,9 +40,8 @@ RUN .venv/bin/pip install --no-cache-dir -e .
 # Copy frontend dist
 COPY --from=frontend-builder /build/frontend/dist /usr/share/nginx/html
 
-# Nginx config
+# Nginx config — mounted at runtime via docker-compose
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY image/nginx.conf /etc/nginx/conf.d/agentos.conf
 
 # Startup script
 COPY image/entrypoint.sh /opt/agentos/entrypoint.sh
