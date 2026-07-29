@@ -30,6 +30,7 @@ services:
       AGENTOS_PRODUCT_NAME: ${AGENTOS_PRODUCT_NAME:-}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
+      - ../image/nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
       - /usr/bin/docker:/usr/bin/docker
@@ -63,11 +64,7 @@ services:
       - ./postgres/ensure-agentos-db.sh:/usr/local/bin/ensure-agentos-db.sh:ro
     entrypoint: ["bash", "/usr/local/bin/ensure-agentos-db.sh"]
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_USER}",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -133,13 +130,18 @@ services:
   grafana:
     image: grafana/grafana:12.4.2
     depends_on: [victoriametrics]
-    ports: ["3000:3000"]
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
     environment:
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_SERVER_ROOT_URL: "http://localhost:3000/"
+      # 未设 GRAFANA_ROOT_URL 时默认 http://127.0.0.1:${FRONTEND_PORT}；/grafana/ 固定由 compose 拼接
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:${FRONTEND_PORT:-8080}}/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/victoriametrics.yml:/etc/grafana/provisioning/datasources/victoriametrics.yml:ro

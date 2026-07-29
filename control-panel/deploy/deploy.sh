@@ -490,9 +490,10 @@ do_restart() {
 
 do_status() {
     load_env
-    local ne_port npu_port
+    local ne_port npu_port grafana_port
     ne_port=$(env_default NODE_EXPORTER_PORT 8084)
     npu_port=$(env_default NPU_EXPORTER_PORT 8083)
+    grafana_port=$(env_default GRAFANA_PORT 3000)
 
     echo ""
     log "--- docker compose ps ---"
@@ -535,9 +536,9 @@ do_status() {
         && _check "victoriametrics  (:8428)" 1 \
         || _check "victoriametrics  (:8428)" 0
 
-    curl -sf "http://127.0.0.1:3000/api/health" 2>/dev/null | grep -qi ok \
-        && _check "grafana          (:3000)" 1 \
-        || _check "grafana          (:3000)" 0
+    curl -sf "http://127.0.0.1:${grafana_port}/api/health" 2>/dev/null | grep -qi ok \
+        && _check "grafana          (:${grafana_port})" 1 \
+        || _check "grafana          (:${grafana_port})" 0
 
     unset -f _check
     echo ""

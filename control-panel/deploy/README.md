@@ -124,7 +124,7 @@ npm run build
 
 ```bash
 cd control-panel
-docker build -f image/Dockerfile -t agentos .
+docker build -f image/Dockerfile -t agentos-control-panel .
 # CI 推送到镜像仓库（按实际 registry 修改）
 # docker tag agentos your-registry/agentos/agentos:1.0.0
 # docker push your-registry/agentos/agentos:1.0.0

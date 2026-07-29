@@ -19,7 +19,6 @@
 import { computed } from 'vue';
 import { ElEmpty } from 'element-plus';
 
-const GRAFANA_PORT = 3000;
 const GRAFANA_QUERY_BASE = 'orgId=1&from=now-30m&to=now&kiosk&theme=light';
 
 /** 引擎名（小写）→ Grafana dashboard path */
@@ -42,13 +41,12 @@ const grafanaIframeSrc = computed(() => {
   const path = grafanaDashboardPath.value;
   if (!path) return '';
 
-  const host = window.location.hostname;
   let query = GRAFANA_QUERY_BASE;
   const job = (props.grafanaJobName ?? '').trim();
   if (job) {
     query += `&var-job=${encodeURIComponent(job)}`;
   }
-  return `http://${host}:${GRAFANA_PORT}${path}?${query}`;
+  return `/grafana${path}?${query}`;
 });
 </script>
 
