@@ -88,13 +88,13 @@ export function createArchive(
 }
 
 export function createFileDownloadTask(
-  path: string,
-  name?: string,
+  componentId: string,
+  name: string,
 ): Promise<{ task_id: string; status: string }> {
   return post<{ task_id: string; status: string }>(
     `${BASE}/files/download-task`,
     undefined,
-    { params: name ? { path, name } : { path } },
+    { params: { component_id: componentId, name } },
   );
 }
 

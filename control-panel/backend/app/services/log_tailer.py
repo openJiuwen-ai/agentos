@@ -1,14 +1,11 @@
 import asyncio
 import os
-import uuid
 from dataclasses import dataclass, field
 
 from fastapi import WebSocket
-from sqlalchemy import select
 from watchfiles import awatch, Change
 
 from app.config import settings
-from app.models.log import LogComponent
 from app.services.log_reader import create_filter, read_last_lines, read_new_lines
 
 
@@ -36,12 +33,10 @@ class LogTailer:
         self,
         ws: WebSocket,
         level: str | None = None,
-        session_id: str | None = None,
         keyword: str | None = None,
     ):
         self.ws = ws
         self.level = level
-        self.session_id = session_id
         self.keyword = keyword
         self.states: list[TailerState] = []
         self._watch_task: asyncio.Task | None = None
@@ -87,7 +82,6 @@ class LogTailer:
         for state in self.states:
             state.filter_fn = create_filter(
                 level=self.level,
-                session_id=self.session_id,
                 keyword=self.keyword,
             )
 
@@ -185,42 +179,32 @@ class LogTailer:
             self._running = False
 
 
-async def load_components_for_tailer(
-    tailer: LogTailer, component_ids: list[str],
+async def add_file_for_component(
+    tailer: LogTailer,
+    component_id: str,
+    file_name: str,
+    username: str = "",
 ) -> None:
-    import app.database as _db
-    async with _db.async_session_maker() as session:
-        for cid in component_ids:
-            try:
-                component_uuid = uuid.UUID(cid)
-            except ValueError:
-                continue
-            result = await session.execute(
-                select(LogComponent).where(
-                    LogComponent.id == component_uuid
-                )
-            )
-            component = result.scalars().first()
-            if component:
-                await tailer.add_file(
-                    component_name=component.name,
-                    file_path=component.log_path,
-                )
+    from app.services.log_component_config import get_component_by_id
 
+    comp = get_component_by_id(component_id)
+    if not comp:
+        return
 
-async def add_files_for_tailer(
-    tailer: LogTailer, paths: list[str],
-) -> None:
-    log_dir = os.path.realpath(settings.LOG_DIR)
-    for path in paths:
-        if not os.path.isabs(path):
-            continue
-        safe_path = os.path.realpath(path)
-        if not safe_path.startswith(log_dir + os.sep) and safe_path != log_dir:
-            continue
-        if os.path.isfile(safe_path):
-            name = os.path.basename(safe_path)
-            await tailer.add_file(
-                component_name=name,
-                file_path=safe_path,
-            )
+    base_path = comp.path
+    if username and "{username}" in base_path:
+        base_path = base_path.replace("{username}", username)
+
+    safe_base = os.path.realpath(base_path)
+    full_path = os.path.realpath(os.path.join(safe_base, file_name))
+
+    if not full_path.startswith(safe_base + os.sep) and full_path != safe_base:
+        return
+
+    if not os.path.isfile(full_path):
+        return
+
+    await tailer.add_file(
+        component_name=comp.name,
+        file_path=full_path,
+    )

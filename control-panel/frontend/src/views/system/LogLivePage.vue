@@ -20,9 +20,9 @@ const router = useRouter();
 const { logLines, wsConnected, addLogLines, clearLogLines } =
   useLogs();
 
-const filePath = computed(() => (route.query.path as string) || "");
+const componentId = computed(() => (route.query.component_id as string) || "");
 const fileName = computed(() => (route.query.name as string) || "");
-const componentDisplayName = computed(() => fileName.value || filePath.value || "实时日志");
+const componentDisplayName = computed(() => fileName.value || "实时日志");
 const loading = ref(false);
 
 let ws: WebSocket | null = null;
@@ -49,7 +49,7 @@ function connectWebSocket() {
   const token = localStorage.getItem("access_token") || "";
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.host;
-  const url = `${protocol}//${host}/api/v1/logs/stream?token=${encodeURIComponent(token)}&paths=${encodeURIComponent(filePath.value)}`;
+  const url = `${protocol}//${host}/api/v1/logs/stream?token=${encodeURIComponent(token)}&component_id=${encodeURIComponent(componentId.value)}&name=${encodeURIComponent(fileName.value)}`;
 
   ws = new WebSocket(url);
   ws.onopen = () => {
@@ -91,7 +91,7 @@ function goBack() {
 }
 
 function copyFileName() {
-  navigator.clipboard.writeText(fileName.value || filePath.value).then(() => {
+  navigator.clipboard.writeText(fileName.value).then(() => {
     ElMessage.success("已复制");
   });
 }
@@ -120,11 +120,11 @@ watch(displayLines, () => {
 });
 
 async function handleDownload() {
-  if (!filePath.value) return;
+  if (!componentId.value || !fileName.value) return;
   try {
     const result = await createFileDownloadTask(
-      filePath.value,
-      fileName.value || undefined,
+      componentId.value,
+      fileName.value,
     );
     ElMessage({
       message: h("span", [
@@ -144,8 +144,8 @@ async function handleDownload() {
       ]),
       type: "success",
     });
-  } catch {
-    ElMessage.error("创建下载任务失败");
+  } catch (e: any) {
+    ElMessage.error(e?.message || "创建下载任务失败");
   }
 }
 

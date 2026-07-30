@@ -70,7 +70,10 @@ function onComponentDrawerClose() {
 function openLiveLog(fileEntry: FileEntry) {
   router.push({
     name: "log-live",
-    query: { path: fileEntry.path, name: fileEntry.name },
+    query: {
+      component_id: selectedComponent.value?.id,
+      name: fileEntry.name,
+    },
   });
 }
 

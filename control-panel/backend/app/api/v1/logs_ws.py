@@ -1,8 +1,7 @@
-import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.services.log_tailer import LogTailer, load_components_for_tailer, add_files_for_tailer
+from app.services.log_tailer import LogTailer
 from app.iam.tokens import TokenData
 
 logger = logging.getLogger(__name__)
@@ -40,26 +39,22 @@ async def ws_log_stream(websocket: WebSocket):
     if token_data is None:
         return
 
-    component_ids_str = websocket.query_params.get("component_ids", "")
-    paths_str = websocket.query_params.get("paths", "")
-    session_id = websocket.query_params.get("session_id")
     level = websocket.query_params.get("level")
     keyword = websocket.query_params.get("keyword")
-
-    component_ids = [c.strip() for c in component_ids_str.split(",") if c.strip()]
-    paths = [p.strip() for p in paths_str.split(",") if p.strip()]
+    component_id = websocket.query_params.get("component_id")
+    name = websocket.query_params.get("name")
 
     tailer = LogTailer(
         ws=websocket,
         level=level,
-        session_id=session_id,
         keyword=keyword,
     )
 
-    if component_ids:
-        await load_components_for_tailer(tailer, component_ids)
-    if paths:
-        await add_files_for_tailer(tailer, paths)
+    if component_id and name:
+        from app.services.log_tailer import add_file_for_component
+        await add_file_for_component(
+            tailer, component_id, name, token_data.username
+        )
     await tailer.start()
 
     try:
@@ -74,12 +69,9 @@ async def ws_log_stream(websocket: WebSocket):
                 await websocket.send_json({"type": "control", "action": "resumed"})
             elif action == "change_filter":
                 new_level = data.get("level")
-                new_session = data.get("session_id")
                 new_keyword = data.get("keyword")
                 if new_level is not None:
                     tailer.level = new_level
-                if new_session is not None:
-                    tailer.session_id = new_session
                 if new_keyword is not None:
                     tailer.keyword = new_keyword
                 tailer.rebuild_filters()

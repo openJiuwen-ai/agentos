@@ -7,7 +7,6 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.config import settings
 from app.iam.security import require_admin
 from app.iam.tokens import TokenData
 from app.schemas.litellm import ApiResponse
@@ -25,12 +24,14 @@ from app.services.log_component_config import (
     get_component_by_id,
     get_category_counts,
 )
+from app.config import settings
 from app.services.log_export import (
     create_export_task,
     create_archive_task,
     get_export_task,
     get_export_tasks_by_user,
     delete_export_task,
+    _format_size,
 )
 from app.services.log_component import get_component_by_id as _db_get_component_by_id
 
@@ -149,39 +150,6 @@ async def list_component_files(
     return ApiResponse(data=entries)
 
 
-@router.get(
-    "/components/{component_id}/files/download",
-    summary="下载单个日志文件",
-)
-async def download_component_file(
-    component_id: str,
-    path: str = Query(...),
-    admin: TokenData = Depends(require_admin),
-):
-    base_dir = _get_component_path(component_id, admin.username)
-    if not base_dir:
-        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
-
-    safe_path = _resolve_safe_path(base_dir, path)
-    if not os.path.isfile(safe_path):
-        raise HTTPException(status_code=404, detail="FILE_NOT_FOUND")
-
-    max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
-    if max_size > 0:
-        try:
-            fsize = os.path.getsize(safe_path)
-            if fsize > max_size:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"文件大小超过限制 {max_size // 1_073_741_824}G",
-                )
-        except OSError:
-            pass
-
-    filename = os.path.basename(safe_path)
-    return FileResponse(safe_path, media_type="application/octet-stream", filename=filename)
-
-
 @router.post(
     "/components/{component_id}/files/archive",
     summary="创建文件/目录打包下载任务",
@@ -211,21 +179,6 @@ async def create_archive(
     return ApiResponse(data={"task_id": task_id, "status": "pending"})
 
 
-@router.get(
-    "/files/download",
-    summary="通过路径直接下载日志文件",
-)
-async def download_log_file(
-    path: str = Query(...),
-    _admin: TokenData = Depends(require_admin),
-):
-    safe_path = _resolve_safe_path(settings.LOG_DIR, path)
-    if not os.path.isfile(safe_path):
-        raise HTTPException(status_code=404, detail="FILE_NOT_FOUND")
-    filename = os.path.basename(safe_path)
-    return FileResponse(safe_path, media_type="application/octet-stream", filename=filename)
-
-
 @router.post(
     "/files/download-task",
     summary="创建文件下载任务（进入任务中心）",
@@ -233,36 +186,31 @@ async def download_log_file(
     response_model=ApiResponse[dict],
 )
 async def create_file_download_task(
-    path: str = Query(...),
-    name: str = Query(""),
+    component_id: str = Query(...),
+    name: str = Query(...),
     session: AsyncSession = Depends(get_session),
     admin: TokenData = Depends(require_admin),
 ):
-    safe_path = _resolve_safe_path(settings.LOG_DIR, path)
-    if not os.path.isfile(safe_path):
+    base_dir = _get_component_path(component_id, admin.username)
+    if not base_dir:
+        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
+
+    target_path = _resolve_safe_path(base_dir, name)
+    if not os.path.isfile(target_path):
         raise HTTPException(status_code=404, detail="FILE_NOT_FOUND")
-    source_name = name or os.path.basename(safe_path)
+
+    max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
+    if max_size > 0 and os.path.getsize(target_path) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件大小超过限制 {_format_size(max_size)}",
+        )
+
     task_id = await create_archive_task(
-        session, safe_path, source_name, uuid.UUID(admin.user_id)
+        session, target_path, name, uuid.UUID(admin.user_id)
     )
     return ApiResponse(data={"task_id": task_id, "status": "pending"})
 
-
-@router.post(
-    "/export",
-    summary="创建日志导出任务",
-    status_code=201,
-    response_model=ApiResponse[dict],
-)
-async def create_export(
-    body: ExportCreate,
-    session: AsyncSession = Depends(get_session),
-    admin: TokenData = Depends(require_admin),
-):
-    task_id = await create_export_task(
-        session, body.component_id, body.line_count, uuid.UUID(admin.user_id)
-    )
-    return ApiResponse(data={"task_id": task_id, "status": "pending"})
 
 
 @router.get(

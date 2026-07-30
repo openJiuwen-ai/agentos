@@ -71,16 +71,12 @@ def _truncate_line(line: str) -> str:
 
 def create_filter(
     level: str | None = None,
-    session_id: str | None = None,
     keyword: str | None = None,
 ):
     def filter_line(line: str) -> dict | None:
         stripped = line.rstrip("\n\r")
 
         if level and level.upper() not in stripped.upper():
-            return None
-
-        if session_id and session_id not in stripped:
             return None
 
         if keyword and keyword not in stripped:
