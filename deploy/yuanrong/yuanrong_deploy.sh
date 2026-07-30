@@ -474,24 +474,36 @@ yr_start_agent() {
     local master_host="$2"
     local master_address
 
-    master_address=$(exec_on_host "${master_host}" "yr start --print_master_address 2>/dev/null || echo ''" | tr -d '\r')
+    # 从 master 节点 /tmp/yr_sessions/latest/session.json 读取 function_master 地址
+    # for-join 中的 key 是带点号的字面量字符串（如 "function_master.ip"），必须用 ["..."] 访问
+    local session_dir
+    session_dir=$(exec_on_host "${master_host}" "readlink /tmp/yr_sessions/latest 2>/dev/null || echo ''" | tr -d '\r')
+    if [ -n "${session_dir}" ]; then
+        master_address=$(exec_on_host "${master_host}" \
+            "jq -r '.cluster_info.\"for-join\" | .[\"function_master.ip\"] + \":\" + .[\"function_master.port\"]' '${session_dir}/session.json' 2>/dev/null || echo ''" | tr -d '\r')
+    fi
 
-    if [ -z "${master_address}" ]; then
-        local session_dir
-        session_dir=$(exec_on_host "${master_host}" "readlink /tmp/yr_sessions/latest 2>/dev/null || echo ''" | tr -d '\r')
-        if [ -n "${session_dir}" ]; then
-            master_address=$(exec_on_host "${master_host}" "grep -oP 'master_address=\K.*' ${session_dir}/config/yr_config.toml 2>/dev/null || echo ''" | tr -d '\r')
+    # 兜底：从 yr_current_master_info 读取，格式为 master_ip:10.x.x.x,global_scheduler_port:22770,...
+    if [ -z "${master_address}" ] || [ "${master_address}" = "null:null" ]; then
+        local master_ip gs_port
+        master_ip=$(exec_on_host "${master_host}" \
+            "grep -oP 'master_ip:\K[^,]+' /tmp/yr_sessions/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
+        gs_port=$(exec_on_host "${master_host}" \
+            "grep -oP 'global_scheduler_port:\K[^,]+' /tmp/yr_sessions/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
+        if [ -n "${master_ip}" ] && [ -n "${gs_port}" ]; then
+            master_address="${master_ip}:${gs_port}"
         fi
     fi
 
-    if [ -z "${master_address}" ]; then
+    # 默认端口兜底（global_scheduler_port 默认值 22770）
+    if [ -z "${master_address}" ] || [ "${master_address}" = "null:null" ]; then
         master_address="${master_host}:22770"
         warning "Could not detect master address, using ${master_address}"
     fi
 
     info "Starting openyuanrong agent on ${agent_host}, master_address=${master_address}..."
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
-    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --master_address=${master_address}" 2>&1; then
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --master_address=http://${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
