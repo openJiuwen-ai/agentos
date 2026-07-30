@@ -49,7 +49,7 @@ jiuwenswarm_install() {
     if [ -n "${found_whl}" ]; then
         local jw_whl="${found_whl%%$'\n'*}"
         info "Found jiuwenswarm whl: ${jw_whl}"
-        if bash -c "python${YR_PYTHON_VERSION} -m pip install '${jw_whl}' --quiet"; then
+        if bash -c "python${YR_PYTHON_VERSION} -m pip install '${jw_whl}[ssh]' --quiet"; then
             # 加固：pip show 确认包确实已注册到当前 Python 环境
             if bash -c "python${YR_PYTHON_VERSION} -m pip show jiuwenswarm >/dev/null 2>&1"; then
                 success "jiuwenswarm installed on ${local_host}"
