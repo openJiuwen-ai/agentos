@@ -11,12 +11,14 @@ fi
 # AgentOS 一体机 部署脚本
 #
 # 用法:
-#   sudo bash deploy.sh install     # 安装：.env + 镜像拉取 + node/npu_exporter 注册
-#   sudo bash deploy.sh uninstall   # 卸载：反向清理
-#   sudo bash deploy.sh up          # 启动：node/npu_exporter → docker compose
-#   sudo bash deploy.sh down        # 停止：docker compose → node/npu_exporter（反序）
-#   sudo bash deploy.sh restart     # 重启：down → up
-#   sudo bash deploy.sh status      # 查看服务状态
+#   sudo bash deploy.sh install              # 安装（非交互式，拷贝到 ~/.agentos/.agent-manager 后执行）
+#   sudo bash deploy.sh install -i           # 安装（交互式，拷贝到 ~/.agentos/.agent-manager 后执行）
+#   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
+#   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷和 .env）
+#   sudo bash deploy.sh up                   # 启动：更新 exporter 配置 → 启动服务
+#   sudo bash deploy.sh down                 # 停止：docker compose → node/npu_exporter（反序）
+#   sudo bash deploy.sh restart              # 重启：down → up
+#   sudo bash deploy.sh status               # 查看服务状态
 # ============================================================================
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +36,47 @@ NPU_RUN_GROUP="hwMindX"
 
 log()  { echo "[agentos] $*"; }
 fail() { echo "[agentos] ERROR: $*" >&2; exit 1; }
+
+# 生成安全随机十六进制字符串
+rand_hex() {
+    local len="${1:-32}"
+    openssl rand -hex "$len" 2>/dev/null || head -c "$((len * 2))" /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c "$((len * 2))"
+}
+
+# 校验 IPv4 地址格式
+valid_ipv4() {
+    local ip="$1"
+    # 允许 localhost 和空值
+    [ -z "$ip" ] || [ "$ip" = "localhost" ] && return 0
+    # IPv4 格式校验：四组 0-255，点分十进制
+    echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
+    local IFS='.'
+    read -ra octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        [ "$octet" -ge 0 ] && [ "$octet" -le 255 ] || return 1
+    done
+}
+
+# 带校验的 IP 输入
+read_ip() {
+    local prompt="$1" default="$2" val
+    while true; do
+        read -rp "$prompt" val
+        val="${val:-$default}"
+        if valid_ipv4 "$val"; then
+            echo "$val"
+            return
+        fi
+        log "  ERROR: '$val' 不是有效的 IPv4 地址，请重新输入"
+    done
+}
+
+# 获取本机 IP（默认路由的源地址）
+detect_host_ip() {
+    local ip_addr
+    ip_addr=$(ip -o -4 route get 1 2>/dev/null | awk '{print $7}')
+    [ -n "$ip_addr" ] && echo "$ip_addr" || echo "127.0.0.1"
+}
 
 # 转义 sed 替换字符串中的特殊字符：\ & / |
 sed_escape() {
@@ -75,65 +118,17 @@ init_env() {
 
     cp "$env_example" "$env_file"
 
-    read -rp "POSTGRES_USER [agentos]: " val
-    sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "${val:-agentos}")/" "$env_file"
+    # 失败时清理不完整的 .env（fail 调用 exit 会触发此 trap）
+    trap 'rm -f "'"$env_file"'"' EXIT
 
-    read -rsp "POSTGRES_PASSWORD: " val; echo
-    [ -n "$val" ] || fail "POSTGRES_PASSWORD 不能为空"
-    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$val")/" "$env_file"
-
-    read -rp "AGENTOS_ADMIN_USERNAME [admin]: " val
-    sed -i "s/^AGENTOS_ADMIN_USERNAME=.*/AGENTOS_ADMIN_USERNAME=$(sed_escape "${val:-admin}")/" "$env_file"
-
-    read -rsp "AGENTOS_ADMIN_PASSWORD: " val; echo
-    [ -n "$val" ] || fail "AGENTOS_ADMIN_PASSWORD 不能为空"
-    sed -i "s/^AGENTOS_ADMIN_PASSWORD=.*/AGENTOS_ADMIN_PASSWORD=$(sed_escape "$val")/" "$env_file"
-
-    local jwt_key llm_enc
-    jwt_key=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
-    sed -i "s/^AGENTOS_JWT_SECRET_KEY=.*/AGENTOS_JWT_SECRET_KEY=${jwt_key}/" "$env_file"
-
-    read -rp "LITELLM_MASTER_KEY (sk- 开头，留空自动生成): " val
-    if [ -z "$val" ]; then
-        val="sk-$(openssl rand -hex 24 2>/dev/null || head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 48)"
-        log "  自动生成: $val"
-    fi
-    sed -i "s/^LITELLM_MASTER_KEY=.*/LITELLM_MASTER_KEY=$(sed_escape "$val")/" "$env_file"
-
-    llm_enc=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
-    sed -i "s/^LITELLM_KEY_ENCRYPTION_KEY=.*/LITELLM_KEY_ENCRYPTION_KEY=${llm_enc}/" "$env_file"
-
-    # ── LiteLLM / Exporter 主机 IP ──
-    echo ""
-    log "  以下 HOST 需要填入本机可访问的 IP 地址"
-    log "  （后端通过此地址访问各服务，localhost 仅限本机访问）"
-    echo ""
-
-    read -rp "LITELLM_HOST [localhost]: " val
-    sed -i "s/^LITELLM_HOST=.*/LITELLM_HOST=$(sed_escape "${val:-localhost}")/" "$env_file"
-    log "  LITELLM_HOST = ${val:-localhost}"
-
-    read -rp "NODE_EXPORTER_HOST [127.0.0.1]: " val
-    sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "${val:-127.0.0.1}")/" "$env_file"
-    log "  NODE_EXPORTER_HOST = ${val:-127.0.0.1}"
-
-    read -rp "NPU_EXPORTER_HOST [127.0.0.1]: " val
-    sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "${val:-127.0.0.1}")/" "$env_file"
-    log "  NPU_EXPORTER_HOST = ${val:-127.0.0.1}"
-
-    # ── 注册中心（选填）──
-    echo ""
-    log "  注册中心 (AGENT_REGISTER_URL) 用于智能体监控功能"
-    log "  同机部署示例: http://host.docker.internal:8000"
-    log "  远程部署示例: http://192.168.0.20:8000"
-    log "  留空则管理面正常启动，仅\"智能体监控\"功能不可用"
-    read -rp "AGENT_REGISTER_URL [留空禁用]: " val
-    if [ -n "$val" ]; then
-        sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$val")|" "$env_file"
-        log "  AGENT_REGISTER_URL = ${val}"
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        _init_env_interactive "$env_file"
     else
-        log "  AGENT_REGISTER_URL = (已禁用)"
+        _init_env_noninteractive "$env_file"
     fi
+
+    # 初始化成功，取消 trap
+    trap - EXIT
 
     # ── 自动检测硬件信息 ──
     local host_name product_name
@@ -151,6 +146,126 @@ init_env() {
 
     echo ""
     log ".env 已生成。"
+}
+
+# 非交互式：优先读取环境变量，未设置则自动生成/使用默认值
+_init_env_noninteractive() {
+    local env_file="$1"
+
+    # 用户名/密码：优先读环境变量，未设置则用默认值/自动生成
+    local pg_user="${POSTGRES_USER:-agentos}"
+    local pg_pass="${POSTGRES_PASSWORD:-agentos123}"
+    local admin_user="${AGENTOS_ADMIN_USERNAME:-admin}"
+    local admin_pass="${AGENTOS_ADMIN_PASSWORD:-admin123}"
+
+    # 密钥：始终自动生成（不从外部传入）
+    local jwt_key llm_key llm_enc
+    jwt_key=$(rand_hex 32)
+    llm_key="sk-$(rand_hex 24)"
+    llm_enc=$(rand_hex 32)
+
+    # 主机地址：优先读环境变量，未设置则自动检测本机 IP
+    local detected_ip
+    detected_ip=$(detect_host_ip)
+    local llm_host="${LITELLM_HOST:-$detected_ip}"
+    local ne_host="${NODE_EXPORTER_HOST:-$detected_ip}"
+    local npu_host="${NPU_EXPORTER_HOST:-$detected_ip}"
+    local register_url="${AGENT_REGISTER_URL:-}"
+
+    sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "$pg_user")/" "$env_file"
+    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$pg_pass")/" "$env_file"
+    sed -i "s/^AGENTOS_ADMIN_USERNAME=.*/AGENTOS_ADMIN_USERNAME=$(sed_escape "$admin_user")/" "$env_file"
+    sed -i "s/^AGENTOS_ADMIN_PASSWORD=.*/AGENTOS_ADMIN_PASSWORD=$(sed_escape "$admin_pass")/" "$env_file"
+    sed -i "s/^AGENTOS_JWT_SECRET_KEY=.*/AGENTOS_JWT_SECRET_KEY=${jwt_key}/" "$env_file"
+    sed -i "s/^LITELLM_MASTER_KEY=.*/LITELLM_MASTER_KEY=$(sed_escape "$llm_key")/" "$env_file"
+    sed -i "s/^LITELLM_KEY_ENCRYPTION_KEY=.*/LITELLM_KEY_ENCRYPTION_KEY=${llm_enc}/" "$env_file"
+    sed -i "s/^LITELLM_HOST=.*/LITELLM_HOST=$(sed_escape "$llm_host")/" "$env_file"
+    sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$ne_host")/" "$env_file"
+    sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$npu_host")/" "$env_file"
+
+    if [ -n "$register_url" ]; then
+        sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$register_url")|" "$env_file"
+    fi
+
+    log "  非交互模式："
+    log "  POSTGRES_USER      = ${pg_user}"
+    log "  POSTGRES_PASSWORD  = ${pg_pass}"
+    log "  ADMIN_USERNAME     = ${admin_user}"
+    log "  ADMIN_PASSWORD     = ${admin_pass}"
+    log "  LITELLM_MASTER_KEY = ${llm_key}"
+    log "  （JWT_KEY / LLM_ENC 已自动生成，可在 .env 中查看）"
+    log "  LITELLM_HOST       = ${llm_host}"
+    log "  NODE_EXPORTER_HOST = ${ne_host}"
+    log "  NPU_EXPORTER_HOST  = ${npu_host}"
+    log "  AGENT_REGISTER_URL = ${register_url:-（已禁用）}"
+}
+
+# 交互式：逐项询问用户
+_init_env_interactive() {
+    local env_file="$1" val
+
+    read -rp "POSTGRES_USER [agentos]: " val
+    sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "${val:-agentos}")/" "$env_file"
+
+    read -rsp "POSTGRES_PASSWORD: " val; echo
+    [ -n "$val" ] || fail "POSTGRES_PASSWORD 不能为空"
+    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$val")/" "$env_file"
+
+    read -rp "AGENTOS_ADMIN_USERNAME [admin]: " val
+    sed -i "s/^AGENTOS_ADMIN_USERNAME=.*/AGENTOS_ADMIN_USERNAME=$(sed_escape "${val:-admin}")/" "$env_file"
+
+    read -rsp "AGENTOS_ADMIN_PASSWORD: " val; echo
+    [ -n "$val" ] || fail "AGENTOS_ADMIN_PASSWORD 不能为空"
+    sed -i "s/^AGENTOS_ADMIN_PASSWORD=.*/AGENTOS_ADMIN_PASSWORD=$(sed_escape "$val")/" "$env_file"
+
+    local jwt_key llm_enc
+    jwt_key=$(rand_hex 32)
+    sed -i "s/^AGENTOS_JWT_SECRET_KEY=.*/AGENTOS_JWT_SECRET_KEY=${jwt_key}/" "$env_file"
+
+    read -rp "LITELLM_MASTER_KEY (sk- 开头，留空自动生成): " val
+    if [ -z "$val" ]; then
+        val="sk-$(rand_hex 24)"
+        log "  自动生成: $val"
+    fi
+    sed -i "s/^LITELLM_MASTER_KEY=.*/LITELLM_MASTER_KEY=$(sed_escape "$val")/" "$env_file"
+
+    llm_enc=$(rand_hex 32)
+    sed -i "s/^LITELLM_KEY_ENCRYPTION_KEY=.*/LITELLM_KEY_ENCRYPTION_KEY=${llm_enc}/" "$env_file"
+
+    # ── LiteLLM / Exporter 主机 IP ──
+    echo ""
+    log "  以下 HOST 需要填入本机可访问的 IP 地址"
+    log "  （后端通过此地址访问各服务，留空则自动检测本机 IP）"
+    echo ""
+
+    local detected_ip
+    detected_ip=$(detect_host_ip)
+
+    val=$(read_ip "LITELLM_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^LITELLM_HOST=.*/LITELLM_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  LITELLM_HOST = ${val}"
+
+    val=$(read_ip "NODE_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NODE_EXPORTER_HOST = ${val}"
+
+    val=$(read_ip "NPU_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NPU_EXPORTER_HOST = ${val}"
+
+    # ── 注册中心（选填）──
+    echo ""
+    log "  注册中心 (AGENT_REGISTER_URL) 用于智能体监控功能"
+    log "  同机部署示例: http://host.docker.internal:8000"
+    log "  远程部署示例: http://192.168.0.20:8000"
+    log "  留空则管理面正常启动，仅\"智能体监控\"功能不可用"
+    read -rp "AGENT_REGISTER_URL [留空禁用]: " val
+    if [ -n "$val" ]; then
+        sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$val")|" "$env_file"
+        log "  AGENT_REGISTER_URL = ${val}"
+    else
+        log "  AGENT_REGISTER_URL = (已禁用)"
+    fi
 }
 
 # ── 镜像检测与拉取 ─────────────────────────────────────────────────────────
@@ -227,6 +342,13 @@ install_node_exporter() {
     ne_port=$(env_default NODE_EXPORTER_PORT 8084)
     ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
 
+    # 检查二进制是否存在
+    local ne_bin="${NE_DIR}/node_exporter"
+    if [ ! -f "$ne_bin" ] && [ ! -f "$NE_BINARY" ]; then
+        log "  WARNING: node_exporter 二进制不存在（${ne_bin} 和 ${NE_BINARY} 均不存在），跳过安装"
+        return 1
+    fi
+
     # 构建 listen address：host:port 或 :port（host 为空/0.0.0.0 时）
     if [ -z "$ne_host" ] || [ "$ne_host" = "0.0.0.0" ]; then
         listen_addr=":${ne_port}"
@@ -234,8 +356,6 @@ install_node_exporter() {
         listen_addr="${ne_host}:${ne_port}"
     fi
 
-    # 二进制由外部流程解压到 node-exporter/ 目录，install 负责拷贝到 /usr/bin
-    local ne_bin="${NE_DIR}/node_exporter"
     if [ -f "$ne_bin" ]; then
         # 已有服务或二进制时，强制要求先 uninstall
         if systemctl is-active "$SERVICE_NAME" &>/dev/null \
@@ -246,8 +366,6 @@ install_node_exporter() {
         cp "$ne_bin" "$NE_BINARY"
         chmod +x "$NE_BINARY"
         log "  已拷贝 $NE_BINARY"
-    elif [ ! -f "$NE_BINARY" ]; then
-        fail "node_exporter 二进制不存在：$ne_bin 且 $NE_BINARY 未安装"
     else
         log "  $NE_BINARY 已存在，跳过拷贝"
     fi
@@ -270,6 +388,10 @@ install_node_exporter() {
 }
 
 uninstall_node_exporter() {
+    if ! systemctl cat "$SERVICE_NAME" &>/dev/null && [ ! -f "$NE_BINARY" ]; then
+        log "  跳过：node_exporter 未安装"
+        return
+    fi
     if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
         systemctl stop "$SERVICE_NAME"
     fi
@@ -290,10 +412,19 @@ uninstall_node_exporter() {
 # ── npu_exporter 安装/卸载 ─────────────────────────────────────────────
 
 install_npu_exporter() {
-    [ -d "$NPU_DIR" ] || fail "npu-exporter 目录不存在: $NPU_DIR"
-    [ -f "${NPU_DIR}/npu-exporter" ] || fail "npu-exporter 二进制不存在: ${NPU_DIR}/npu-exporter"
-    [ -f "${NPU_DIR}/npu-exporter.service" ] || fail "npu-exporter.service 不存在"
-    [ -f "${NPU_DIR}/npu-exporter.timer" ] || fail "npu-exporter.timer 不存在"
+    local missing=()
+    [ -d "$NPU_DIR" ] || missing+=("目录 ${NPU_DIR}")
+    [ -f "${NPU_DIR}/npu-exporter" ] || missing+=("二进制 ${NPU_DIR}/npu-exporter")
+    [ -f "${NPU_DIR}/npu-exporter.service" ] || missing+=("service ${NPU_DIR}/npu-exporter.service")
+    [ -f "${NPU_DIR}/npu-exporter.timer" ] || missing+=("timer ${NPU_DIR}/npu-exporter.timer")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        log "  WARNING: npu-exporter 缺少文件，跳过安装："
+        for item in "${missing[@]}"; do
+            log "    - ${item}"
+        done
+        return 1
+    fi
 
     local npu_port npu_host listen_addr
     npu_port=$(env_default NPU_EXPORTER_PORT 8083)
@@ -335,6 +466,11 @@ install_npu_exporter() {
 }
 
 uninstall_npu_exporter() {
+    if ! systemctl cat "$NPU_SERVICE" &>/dev/null && [ ! -f "$NPU_BINARY" ]; then
+        log "  跳过：npu-exporter 未安装"
+        return
+    fi
+
     systemctl stop "$NPU_TIMER" 2>/dev/null || true
     systemctl stop "${NPU_SERVICE}.service" 2>/dev/null || true
 
@@ -370,17 +506,11 @@ do_install() {
     init_env
     load_env
 
-    local ne_port
-    ne_port=$(env_default NODE_EXPORTER_PORT 8084)
-    log "[2/4] 安装 node_exporter (port ${ne_port})"
-    install_node_exporter
+    log "[2/4] 安装 node_exporter"
+    install_node_exporter || true
 
     log "[3/4] 安装 npu_exporter"
-    if [ -d "$NPU_DIR" ]; then
-        install_npu_exporter
-    else
-        log "  跳过：npu-exporter 目录不存在"
-    fi
+    install_npu_exporter || true
 
     log "[4/4] 拉取 Docker 镜像"
     pull_images
@@ -397,27 +527,62 @@ do_uninstall() {
     need_root
     log "========== uninstall =========="
 
-    log "[1/4] 停止 Docker 服务"
+    log "[1/3] 停止 Docker 服务"
     cd "$DEPLOY_DIR"
-    docker compose down -v || true
+    if [ "$CLEAN" -eq 1 ]; then
+        docker compose down -v || true
+        log "  已停止并删除数据卷"
+    else
+        docker compose down || true
+        log "  已停止（数据卷保留）"
+    fi
 
-    log "[2/4] 注销 node_exporter"
+    log "[2/3] 注销 node_exporter"
     uninstall_node_exporter
 
-    log "[3/4] 注销 npu_exporter"
+    log "[3/3] 注销 npu_exporter"
     uninstall_npu_exporter
 
-    log "[4/4] 清理 .env"
-    if [ -f "${DEPLOY_DIR}/.env" ]; then
-        if [ "$KEEP_ENV" -eq 1 ]; then
-            log "  保留 .env"
-        else
-            rm "${DEPLOY_DIR}/.env"
-            log "  已删除 .env（保留请用: sudo bash $0 uninstall --keep-env）"
-        fi
+    if [ "$CLEAN" -eq 1 ] && [ -f "${DEPLOY_DIR}/.env" ]; then
+        rm "${DEPLOY_DIR}/.env"
+        log "  已删除 .env"
     fi
 
     log "uninstall 完成。"
+}
+
+# ── 更新 exporter 服务配置 ──────────────────────────────────────────────
+
+update_exporter_configs() {
+    load_env
+
+    local ne_port ne_host ne_listen
+    ne_port=$(env_default NODE_EXPORTER_PORT 8084)
+    ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
+    if [ -z "$ne_host" ] || [ "$ne_host" = "0.0.0.0" ]; then
+        ne_listen=":${ne_port}"
+    else
+        ne_listen="${ne_host}:${ne_port}"
+    fi
+
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        sed "s|__LISTEN_ADDR__|${ne_listen}|" \
+            "${NE_DIR}/node_exporter.service" > /etc/systemd/system/${SERVICE_NAME}.service
+        systemctl daemon-reload
+        log "  node_exporter 配置已更新 (${ne_listen})"
+    fi
+
+    local npu_port npu_host
+    npu_port=$(env_default NPU_EXPORTER_PORT 8083)
+    npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
+
+    if [ -f "/etc/systemd/system/${NPU_SERVICE}.service" ]; then
+        sed -e "s|__NPU_LISTEN_ADDR__|${npu_host}|g" \
+            -e "s|__NPU_PORT__|${npu_port}|g" \
+            "${NPU_DIR}/npu-exporter.service" > /etc/systemd/system/${NPU_SERVICE}.service
+        systemctl daemon-reload
+        log "  npu_exporter 配置已更新 (${npu_host}:${npu_port})"
+    fi
 }
 
 # ── up ──────────────────────────────────────────────────────────────────────
@@ -426,7 +591,10 @@ do_up() {
     need_root
     log "========== up =========="
 
-    log "[1/3] 启动 node_exporter"
+    log "[1/4] 更新 exporter 配置"
+    update_exporter_configs
+
+    log "[2/4] 启动 node_exporter"
     if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
         log "  node_exporter 已在运行"
     elif systemctl cat "$SERVICE_NAME" &>/dev/null; then
@@ -439,7 +607,7 @@ do_up() {
         && log "  node_exporter: running" \
         || log "  WARNING: node_exporter 未运行"
 
-    log "[2/3] 启动 npu_exporter"
+    log "[3/4] 启动 npu_exporter"
     if systemctl cat "$NPU_SERVICE" &>/dev/null; then
         systemctl start "$NPU_SERVICE" 2>/dev/null || true
         systemctl start "$NPU_TIMER" 2>/dev/null || true
@@ -450,7 +618,7 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[3/3] 启动 Docker 服务"
+    log "[4/4] 启动 Docker 服务"
     cd "$DEPLOY_DIR"
     docker compose up -d
 
@@ -465,7 +633,7 @@ do_down() {
 
     log "[1/3] 停止 Docker 服务"
     cd "$DEPLOY_DIR"
-    docker compose stop
+    docker compose down
 
     log "[2/3] 停止 node_exporter"
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -547,8 +715,36 @@ do_status() {
 # ── 入口 ────────────────────────────────────────────────────────────────────
 
 ACTION="${1:-help}"
-KEEP_ENV=0
-[ "${2:-}" = "--keep-env" ] && KEEP_ENV=1
+INTERACTIVE=0
+CLEAN=0
+
+# 获取真实用户 home 目录（sudo 下 $HOME 可能是 /root）
+if [ -n "$SUDO_USER" ]; then
+    INSTALL_DIR="$(eval echo "~$SUDO_USER")/.agentos/.agent-manager"
+else
+    INSTALL_DIR="$HOME/.agentos/.agent-manager"
+fi
+
+# 扫描所有参数
+for arg in "$@"; do
+    case "$arg" in
+        --interactive|-i) INTERACTIVE=1 ;;
+        --clean)          CLEAN=1 ;;
+    esac
+done
+
+# install 时先拷贝到 ~/.agentos/.agent-manager，然后指向新目录
+if [ "$ACTION" = "install" ]; then
+    mkdir -p "$INSTALL_DIR" || fail "无法创建目标目录: $INSTALL_DIR"
+    log "拷贝 deploy 目录到 $INSTALL_DIR ..."
+    cp -a "$DEPLOY_DIR"/. "$INSTALL_DIR"/
+
+    DEPLOY_DIR="$INSTALL_DIR"
+    NE_DIR="${DEPLOY_DIR}/node-exporter"
+    NPU_DIR="${DEPLOY_DIR}/npu-exporter"
+
+    log "后续操作将使用 ${DEPLOY_DIR} 中的内容执行"
+fi
 
 case "$ACTION" in
     install)   do_install ;;
@@ -558,16 +754,19 @@ case "$ACTION" in
     restart)   do_restart ;;
     status)    do_status ;;
     *)
-        echo "用法: sudo bash $0 {install|uninstall|up|down|restart|status} [--keep-env]"
+        echo "用法: sudo bash $0 <command> [options]"
         echo ""
-        echo "  install   安装：.env + 镜像拉取 + node/npu_exporter 注册"
-        echo "  uninstall 卸载：停止服务 + 注销 systemd + 删除 .env"
-        echo "  up        启动：node/npu_exporter → docker compose"
+        echo "命令:"
+        echo "  install   安装：拷贝到 ~/.agentos/.agent-manager 后执行（默认非交互）"
+        echo "  uninstall 卸载：停止服务 + 注销 systemd（默认保留数据和 .env）"
+        echo "  up        启动：更新 exporter 配置 → 启动服务"
         echo "  down      停止：docker compose → node/npu_exporter（反序）"
         echo "  restart   重启：down → up"
         echo "  status    查看服务状态"
         echo ""
-        echo "  --keep-env  uninstall 时保留 .env"
+        echo "选项:"
+        echo "  --interactive, -i  交互式模式（install 时逐项询问，默认非交互）"
+        echo "  --clean            uninstall 时删除数据卷和 .env"
         exit 1
         ;;
 esac

@@ -9,23 +9,24 @@ services:
   # =========================================================================
   agentos:
     image: agentos-control-panel:latest
-    ports: ["${FRONTEND_PORT:-8080}:80"]
+    ports: ["${FRONTEND_PORT:-8090}:80"]
     environment:
       # ── Database (auto-constructed from POSTGRES_*) ──
       AGENTOS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/agentos
       AGENTOS_JWT_SECRET_KEY: ${AGENTOS_JWT_SECRET_KEY}
       AGENTOS_ADMIN_USERNAME: ${AGENTOS_ADMIN_USERNAME}
       AGENTOS_ADMIN_PASSWORD: ${AGENTOS_ADMIN_PASSWORD}
-      LITELLM_ADMIN_URL: http://${LITELLM_HOST:-localhost}:${LITELLM_PORT:-4000}
+      LITELLM_ADMIN_URL: http://${LITELLM_HOST:-localhost}:${LITELLM_PORT:-8100}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_KEY_ENCRYPTION_KEY: ${LITELLM_KEY_ENCRYPTION_KEY}
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       AGENTOS_HOME_BASE: ${AGENTOS_BASE:-/home/agentos}/users
+      LOG_DIR: ${AGENTOS_BASE:-/home/agentos}/logs
       # ── Hardware monitoring ──
       NODE_EXPORTER_HOST: ${NODE_EXPORTER_HOST:-host.docker.internal}
-      NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-8084}
+      NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-8091}
       NPU_EXPORTER_HOST: ${NPU_EXPORTER_HOST:-host.docker.internal}
-      NPU_EXPORTER_PORT: ${NPU_EXPORTER_PORT:-8083}
+      NPU_EXPORTER_PORT: ${NPU_EXPORTER_PORT:-8092}
       AGENTOS_HOSTNAME: ${AGENTOS_HOSTNAME:-}
       AGENTOS_PRODUCT_NAME: ${AGENTOS_PRODUCT_NAME:-}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
@@ -77,7 +78,7 @@ services:
   # =========================================================================
   litellm:
     image: ghcr.io/berriai/litellm-database:v1.91.1
-    ports: ["${LITELLM_PORT:-4000}:4000"]
+    ports: ["${LITELLM_PORT:-8100}:4000"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
@@ -130,13 +131,13 @@ services:
   grafana:
     image: grafana/grafana:12.4.2
     depends_on: [victoriametrics]
-    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    ports: ["${GRAFANA_PORT:-8093}:3000"]
     environment:
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       # 未设 GRAFANA_ROOT_URL 时默认 http://127.0.0.1:${FRONTEND_PORT}；/grafana/ 固定由 compose 拼接
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:${FRONTEND_PORT:-8080}}/grafana/
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:${FRONTEND_PORT:-8090}}/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_CHECK_FOR_UPDATES: "false"
