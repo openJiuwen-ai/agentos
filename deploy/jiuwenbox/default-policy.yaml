@@ -93,10 +93,10 @@ filesystem_policy:
 # Process identity inside the sandbox.
 process:
   # User name to run as. If the user cannot be resolved, runtime falls back to nobody-style IDs.
-  run_as_user: yuanrong
+  run_as_user: agentos
 
   # Group name to run as. If the group cannot be resolved, runtime falls back to nobody-style IDs.
-  run_as_group: yuanrong
+  run_as_group: agentos
 
 # Linux namespace isolation controlled by bubblewrap.
 namespace:
