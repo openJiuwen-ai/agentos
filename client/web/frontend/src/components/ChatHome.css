@@ -1,0 +1,106 @@
+/* 对话首页 */
+.home {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  background: #fff;
+}
+
+.home-content {
+  width: 100%;
+  max-width: 800px;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+  gap: 28px;
+}
+
+.home-top { display: flex; flex-direction: column; gap: 24px; }
+
+/* 模式切换 */
+.home-mode-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  background: var(--bg-input-outer);
+  border-radius: 999px;
+  padding: 4px;
+  gap: 2px;
+}
+
+.home-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--t2);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.home-mode-btn.is-active {
+  background: #fff;
+  color: var(--t1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* slogan + 形象 */
+.home-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-slogan {
+  font-size: 36px;
+  font-weight: 600;
+  color: var(--t1);
+  line-height: 1.35;
+  margin: 0;
+  letter-spacing: 1px;
+}
+
+.home-mascot {
+  width: 300px;
+  flex-shrink: 0;
+  margin-bottom: -10px;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 推荐技能 */
+.home-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.home-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 20px;
+  border-radius: 999px;
+  border: 1px solid var(--bd-2);
+  background: #fff;
+  font-size: 14px;
+  color: var(--t1);
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.1s ease;
+}
+
+.home-skill-chip:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--accent-subtle);
+}
+
+.home-skill-chip:active { transform: scale(0.97); }
+
+@media (max-width: 900px) {
+  .home-mascot { width: 220px; }
+  .home-slogan { font-size: 30px; }
+}
