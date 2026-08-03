@@ -1,6 +1,7 @@
 """Agent Registry API routes — upload, build, build status.
 
 All routes require admin role (``require_admin`` dependency).
+Build progress is polled from image_process on status query (no callback).
 """
 
 import logging
@@ -26,7 +27,6 @@ from app.models.thirdparty_agent import ConcurrentBuildLimitError
 from app.services.thirdparty_agent_service import (
     AgentAlreadyExistsError,
     AgentNotFoundError,
-    BuildPreconditionError,
     InsufficientDiskSpaceError,
     ThirdpartyAgentService,
     PackageTooLargeError,
@@ -46,7 +46,6 @@ _EXCEPTION_STATUS: list[tuple[type[ThirdpartyAgentError], int]] = [
     (ConcurrentBuildLimitError, 409),
     (AgentAlreadyExistsError, 409),
     (AgentNotFoundError, 404),
-    (BuildPreconditionError, 503),
     (InsufficientDiskSpaceError, 507),
 ]
 
@@ -97,7 +96,7 @@ async def build_task_create(
     """Trigger an image build for an uploaded agent.
 
     Locates the installer by ``agent_name`` + ``version``, refreshes
-    ``display_name`` and ``entrypoint``, then creates the build task.
+    ``display_name`` and ``entrypoint``, then submits the build to image_process.
     """
     try:
         task = await _svc.create_build_task(
@@ -119,7 +118,7 @@ async def build_task_status(
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
 ) -> ApiResponse[BuildStatusResponse]:
-    """Query the build status and progress for a build task."""
+    """Query build status; syncs from image_process while task is active."""
     result = await _svc.get_build_task(session, task_id)
     if result is None:
         logger.warning("build task not found: %s", task_id)

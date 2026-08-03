@@ -300,6 +300,7 @@ for svc in data.get('services', {}).values():
     if [ -z "$extracted" ]; then
         local fallback_images=(
             "agentos-control-panel:latest"
+            "agentos-image-process:latest"
             "postgres:18.0"
             "ghcr.io/berriai/litellm-database:v1.91.1"
             "victoriametrics/victoria-metrics:v1.135.0"
@@ -313,6 +314,13 @@ for svc in data.get('services', {}).values():
         done
     fi
 
+    # Agent 基础镜像（image-process 构建依赖，不由 compose 管理）
+    if docker image inspect "agent-base:1.0" &>/dev/null; then
+        log "  agent-base:1.0 — 本地已存在"
+    else
+        log "  WARNING: 缺少 agent-base:1.0，请先 docker load 到本机"
+    fi
+
     if [ ${#missing[@]} -eq 0 ]; then
         log "所有镜像已就绪。"
         return
@@ -320,11 +328,14 @@ for svc in data.get('services', {}).values():
 
     # 只拉取本地缺失的镜像（按 service 逐个拉）
     for img in "${missing[@]}"; do
-        # agentos-control-panel 是本地构建的，尝试从 compose 拉取失败时给提示
         if [[ "$img" == agentos-control-panel:* ]]; then
             docker compose pull agentos 2>/dev/null || {
                 log "  WARNING: $img 拉取失败，请先本地构建:"
                 log "    cd control-panel && docker build -f image/Dockerfile -t agentos ."
+            }
+        elif [[ "$img" == agentos-image-process:* ]]; then
+            docker compose pull image-process 2>/dev/null || {
+                log "  WARNING: $img 拉取失败，请先推送至仓库或 docker load 导入本机"
             }
         else
             log "  拉取 $img ..."
@@ -691,6 +702,12 @@ do_status() {
     curl -sfI "http://127.0.0.1:8080/" &>/dev/null \
         && _check "frontend         (:8080)" 1 \
         || _check "frontend         (:8080)" 0
+
+    docker compose exec -T image-process \
+        .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')" \
+        &>/dev/null \
+        && _check "image-process    (internal)" 1 \
+        || _check "image-process    (internal)" 0
 
     docker ps --filter "name=deploy-postgres-1" --format "{{.Status}}" 2>/dev/null | grep -qi healthy \
         && _check "postgres         (:5432)" 1 \

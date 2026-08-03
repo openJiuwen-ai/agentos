@@ -1,6 +1,6 @@
 # 一体机 Compose 部署与验证指南
 
-五个容器：**Frontend** + **PostgreSQL 18** + **LiteLLM** + **VictoriaMetrics** + **Grafana**。
+六个容器：**Frontend** + **image-process** + **PostgreSQL 18** + **LiteLLM** + **VictoriaMetrics** + **Grafana**。
 
 ## 目录结构
 
@@ -9,6 +9,7 @@ control-panel/
 ├── .dockerignore               # 镜像构建上下文忽略规则
 ├── frontend/                   # Vue 源码
 ├── backend/                    # API 源码（后续纳入同一镜像）
+├── image_process/              # 独立 OCI 镜像构建服务
 ├── image/                      # 镜像构建（与 frontend 同级；当前仅前端+Nginx）
 │   ├── Dockerfile
 │   └── nginx.conf
@@ -38,6 +39,7 @@ control-panel/
 | 服务 | 镜像 | 环境变量 | 示例端口 | 说明 |
 |------|------|----------|----------|------|
 | `frontend` | `agentos` | `FRONTEND_PORT` | 8080 | CI 构建；Nginx 托管 Vue 静态页 |
+| `image-process` | `agentos-image-process` | -- | （不对宿主暴露） | Agent 镜像构建；仅 `image-build` 内网 |
 | `postgres` | `postgres:18.0` | `POSTGRES_PORT` | 5432 | LiteLLM 数据库 |
 | `litellm` | `ghcr.io/berriai/litellm-database:v1.91.1` | `LITELLM_PORT` | 4000 | 推理代理 |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.135.0` | `VICTORIAMETRICS_PORT` | 8428 | 指标存储 |
@@ -73,6 +75,8 @@ control-panel/
 | 配置文件 | 上表所列文件齐全 |
 | 环境变量 | 复制 `.env.example` → `.env`，修改密码与 master key |
 | 前端镜像 | CI 已构建并推送到仓库，或通过 `docker load` 导入本机 |
+| image-process 镜像 | `docker compose build image-process`（或预先 `docker build -t agentos-image-process ../image_process`） |
+| agent-base | 宿主机需已有 `agent-base:1.0`（制品自动 load 暂缓，需手动准备） |
 | systemd | 宿主机使用 systemd init（Ubuntu / Debian / CentOS 等） |
 | 网络 | 目标机可访问 GitHub Releases（否则手动下载二进制） |
 
@@ -154,6 +158,20 @@ docker load -i grafana_12.4.2.tar
 docker images | grep -E 'agentos|postgres|litellm|victoria-metrics|grafana'
 ```
 
+**image-process / agent-base（构建机准备，部署机拉取或 load）**
+
+```bash
+cd control-panel
+docker build -t agentos-image-process:latest image_process
+docker build -f image_process/base.Dockerfile -t agent-base:1.0 image_process
+
+docker save -o agentos-image-process_latest.tar agentos-image-process:latest
+docker save -o agent-base_1.0.tar agent-base:1.0
+
+# 目标机：
+docker load -i agentos-image-process_latest.tar
+docker load -i agent-base_1.0.tar
+```
 
 ### 2. 部署 node_exporter（宿主机）
 
@@ -182,7 +200,7 @@ docker compose up -d
 
 **检查状态**
 ```bash
-# 预期 5 个服务均为 Running（litellm 需等 postgres healthy 后启动，首次约 40s）。
+# 预期 6 个服务均为 Running（含 image-process；litellm 需等 postgres healthy 后启动，首次约 40s）。
 docker compose ps
 
 # 检查 frontend 状态（端口：8080）

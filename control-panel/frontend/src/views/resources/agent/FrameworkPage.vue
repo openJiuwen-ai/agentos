@@ -72,6 +72,8 @@ async function handleUpload(file: UploadFile) {
   } catch (e: any) {
     ElMessage.error(e.message || '上传失败');
     uploadRef.value?.clearFiles();
+    // 重复上传等场景：刷新列表，便于直接从表格启动构建
+    await loadFrameworks();
   } finally {
     uploading.value = false;
   }
@@ -100,6 +102,7 @@ async function confirmBuild() {
     ElMessage.error(e.message || '构建失败');
     showBuild.value = false;
     building.value = false;
+    await loadFrameworks();
   }
 }
 

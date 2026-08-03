@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB
     AGENT_IMAGE_MODULE_VERSION: str = "1.0"         # 镜像模块版本
 
+    # ── image_process (standalone builder; required, no in-process fallback) ──
+    IMAGE_PROCESS_URL: str = ""  # e.g. http://image-process:8091
+    IMAGE_PROCESS_TIMEOUT_SECONDS: float = 30.0
+
     # ── VictoriaMetrics agent metrics config ──
     AGENT_METRICS_CONFIG_PATH: str = "/etc/vm/agent-metrics.json"
 

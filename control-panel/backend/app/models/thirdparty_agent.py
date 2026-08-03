@@ -162,9 +162,12 @@ class BuildTask(Base):
         Raises ``ConcurrentBuildLimitError`` when *max_concurrent* has
         been reached.
         """
-        # Use a savepoint (nested transaction) so this is safe to call
-        # inside an existing transaction without side effects.
-        async with session.begin_nested():
+        # All checks and insert happen inside a single savepoint/transaction
+        # to prevent TOCTOU races: two concurrent callers cannot both pass.
+        # FastAPI's request session often already auto-began after a prior
+        # query (e.g. AgentInstaller.get), so nest when needed.
+        tx = session.begin_nested() if session.in_transaction() else session.begin()
+        async with tx:
             # 1. Active task for same agent+version?
             result = await session.execute(
                 select(BuildTask)
@@ -185,7 +188,7 @@ class BuildTask(Base):
                 raise ConcurrentBuildLimitError(
                     f"max concurrent builds ({max_concurrent}) reached")
 
-            # 3. All clear — insert and commit on scope exit.
+            # 3. All clear — insert; commit/savepoint release on scope exit.
             session.add(task)
             return (task, True)
 

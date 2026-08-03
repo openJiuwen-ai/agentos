@@ -2,6 +2,11 @@ networks:
   agentos:
     name: agentos
     driver: bridge
+  # image-process ↔ agentos only; no host publish, no route to other services / internet
+  image-build:
+    name: agentos-image-build
+    driver: bridge
+    internal: true
 
 services:
   # =========================================================================
@@ -22,6 +27,7 @@ services:
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       AGENTOS_HOME_BASE: ${AGENTOS_BASE:-/home/agentos}/users
       LOG_DIR: ${AGENTOS_BASE:-/home/agentos}/logs
+      IMAGE_PROCESS_URL: http://image-process:8091
       # ── Hardware monitoring ──
       NODE_EXPORTER_HOST: ${NODE_EXPORTER_HOST:-host.docker.internal}
       NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-8091}
@@ -32,23 +38,38 @@ services:
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
+      # agentos 不再挂 docker.sock；构建由 image-process 服务负责
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
-      - /usr/bin/docker:/usr/bin/docker
-      - /run/docker.sock:/run/docker.sock
       - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users
       - ${AGENTOS_BASE:-/home/agentos}/supervisor:${AGENTOS_BASE:-/home/agentos}/supervisor:ro
       - ${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:ro
       - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:ro
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - agentos
+      - image-build
     depends_on:
       postgres:
         condition: service_healthy
       litellm:
         condition: service_healthy
+      image-process:
+        condition: service_started
+    restart: unless-stopped
+
+  # =========================================================================
+  # image_process — 三方 Agent OCI 构建服务；仅 image-build 内网可达，不对宿主暴露端口
+  # =========================================================================
+  image-process:
+    image: agentos-image-process:latest
+    volumes:
+      - /run/docker.sock:/run/docker.sock
+      - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users
+    networks:
+      - image-build
     restart: unless-stopped
 
   # =========================================================================

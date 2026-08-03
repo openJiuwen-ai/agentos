@@ -1,6 +1,5 @@
-"""AgentInstaller service — upload, build, query."""
+"""AgentInstaller service — upload, build orchestration, query."""
 
-import asyncio
 import logging
 import shutil
 import uuid
@@ -11,18 +10,22 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.image_process.build import BuildParams, BuildResult, build, check_prerequisites
-from app.thirdparty_agent.exceptions import ThirdpartyAgentError
-from app.thirdparty_agent.package import PackageMeta, extract_package_meta
 from app.models.thirdparty_agent import (
-    AgentInstaller, BuildTask, ConcurrentBuildLimitError,
-    InstallerCreate, InstallerUpdate)
+    AgentInstaller,
+    BuildTask,
+    InstallerCreate,
+    InstallerUpdate,
+)
 from app.schemas.thirdparty_agent import (
     AgentInstallerUploadResult,
     BuildStatusResponse,
     BuildTaskResponse,
     InstallerListItem,
 )
+from app.services import image_process_client
+from app.services.image_process_client import ImageProcessError, RemoteBuildStatus
+from app.thirdparty_agent.exceptions import ThirdpartyAgentError
+from app.thirdparty_agent.package import PackageMeta, extract_package_meta
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +64,6 @@ class AgentAlreadyExistsError(AgentServiceError):
         super().__init__(f"agent {agent_name!r} version {version!r} already exists")
 
 
-class BuildPreconditionError(AgentServiceError):
-    """Pre-build checks failed (e.g. base image not found)."""
-
-
 class InsufficientDiskSpaceError(AgentServiceError):
     """Not enough disk space on the target filesystem."""
 
@@ -72,7 +71,7 @@ class InsufficientDiskSpaceError(AgentServiceError):
 # ── Service ──────────────────────────────────────────────────────────────
 
 class ThirdpartyAgentService:
-    """Third-party agent lifecycle: upload, build, query."""
+    """Third-party agent lifecycle: upload, build orchestration, query."""
 
     # ── helpers ───────────────────────────────────────────────────────
 
@@ -91,7 +90,7 @@ class ThirdpartyAgentService:
                 f"not enough disk space: {usage.free} free, {needed} required")
 
     @staticmethod
-    def save_installer_file(content: bytes, meta: PackageMeta, uploaded_by: str) -> str:
+    def _save_installer_file(content: bytes, meta: PackageMeta, uploaded_by: str) -> str:
         dest = Path(settings.AGENTOS_HOME_BASE) / uploaded_by / "installers"
         dest.mkdir(parents=True, exist_ok=True)
         path = dest / f"{meta.agent_name}-{meta.version}.tgz"
@@ -122,7 +121,7 @@ class ThirdpartyAgentService:
         if await AgentInstaller.exists(session, meta.agent_name, meta.version):
             raise AgentAlreadyExistsError(meta.agent_name, meta.version)
 
-        installer_path = self.save_installer_file(content, meta, uploaded_by)
+        installer_path = self._save_installer_file(content, meta, uploaded_by)
         await AgentInstaller.create(session, InstallerCreate(
             agent_name=meta.agent_name, display_name=meta.display_name,
             version=meta.version, entrypoint=meta.entrypoint,
@@ -143,10 +142,6 @@ class ThirdpartyAgentService:
         if agent_installer is None:
             raise AgentNotFoundError(agent_name, version)
 
-        failures = await check_prerequisites()
-        if failures:
-            raise BuildPreconditionError("; ".join(failures))
-
         task = BuildTask(
             task_id=f"build-{uuid.uuid4().hex[:12]}",
             agent_name=agent_name, version=version,
@@ -165,13 +160,27 @@ class ThirdpartyAgentService:
             session, agent_name, version,
             params=InstallerUpdate(display_name=display_name, entrypoint=entrypoint))
 
-        logger.info("build task created: %s v%s task=%s", agent_name, version, task.task_id)
-        asyncio.create_task(self._run_build(task.task_id, agent_installer))
+        user_home = Path(settings.AGENTOS_HOME_BASE) / agent_installer.uploaded_by
+        try:
+            await image_process_client.submit_build(
+                task_id=task.task_id,
+                agent_name=agent_installer.agent_name,
+                version=agent_installer.version,
+                installer_path=agent_installer.installer_path,
+                output_dir=str(user_home / "images"),
+                work_dir=str(user_home / "run" / task.task_id),
+            )
+        except ImageProcessError as e:
+            logger.error("image_process submit failed task=%s: %s", task.task_id, e)
+            await BuildTask.mark_failed(session, task.task_id, error_message=str(e))
+            return BuildTaskResponse(
+                task_id=task.task_id, status="failed", created_at=task.created_at)
 
+        logger.info("build task created: %s v%s task=%s", agent_name, version, task.task_id)
         return BuildTaskResponse(
             task_id=task.task_id, status=task.status, created_at=task.created_at)
 
-    # ── list / status ─────────────────────────────────────────────────
+    # ── list / status (pull-sync from image_process) ───────────────────
 
     @staticmethod
     async def list_installers(session: AsyncSession) -> list[InstallerListItem]:
@@ -187,24 +196,85 @@ class ThirdpartyAgentService:
             ))
         return result
 
-    @staticmethod
     async def get_build_task(
-        session: AsyncSession, task_id: str,
+        self, session: AsyncSession, task_id: str,
     ) -> BuildStatusResponse | None:
         task = await BuildTask.get_by_id(session, task_id)
         if task is None:
             return None
+
+        if task.status not in ("done", "failed"):
+            remote = await image_process_client.fetch_build(task_id)
+            if remote is not None:
+                await self._apply_remote(session, task, remote)
+                task = await BuildTask.get_by_id(session, task_id)
+                if task is None:
+                    return None
+
         return BuildStatusResponse(
             task_id=task.task_id, status=task.status, progress=task.progress,
             image=task.image, image_digest=task.image_digest,
             started_at=task.started_at, finished_at=task.finished_at,
             registered=(task.status == "done"),
-            error_message=task.error_message)
+            error_message=task.error_message,
+        )
+
+    async def _apply_remote(
+        self, session: AsyncSession, task: BuildTask, remote: RemoteBuildStatus,
+    ) -> None:
+        """Idempotently mirror image_process status into the local DB."""
+        if task.status in ("done", "failed"):
+            return
+
+        if remote.status == "pending":
+            return
+
+        if remote.status == "building":
+            if task.status == "pending":
+                await BuildTask.mark_building(session, task.task_id)
+            await BuildTask.update_progress(session, task.task_id, remote.progress)
+            return
+
+        if remote.status == "failed":
+            await BuildTask.mark_failed(
+                session, task.task_id,
+                error_message=remote.error_message or "build failed",
+            )
+            return
+
+        if remote.status != "done":
+            logger.warning(
+                "ignore unknown remote status task=%s status=%s",
+                task.task_id, remote.status,
+            )
+            return
+
+        installer = await AgentInstaller.get(session, task.agent_name, task.version)
+        if installer is not None:
+            await AgentInstaller.update(
+                session, installer.agent_name, installer.version,
+                params=InstallerUpdate(
+                    image_digest=remote.image_digest or "",
+                    image_path=remote.image_path or "",
+                    base_image=remote.base_image or "",
+                ))
+
+        image = remote.image or ""
+        digest = remote.image_digest or ""
+        await BuildTask.mark_done(session, task.task_id, image, digest)
+        logger.info("build done via poll: task=%s image=%s", task.task_id, image)
+
+        if installer is not None and image:
+            try:
+                await self._register_image(installer, image)
+            except Exception:
+                logger.exception(
+                    "registry registration failed (non-blocking) task=%s", task.task_id)
 
     # ── internal ──────────────────────────────────────────────────────
 
     @staticmethod
-    async def register_image(installer: AgentInstaller, result: BuildResult) -> None:
+    async def _register_image(installer: AgentInstaller, image: str) -> None:
         import httpx
 
         url = f"{settings.AGENT_REGISTER_URL.rstrip('/')}/api/images"
@@ -216,7 +286,7 @@ class ThirdpartyAgentService:
                 "runtime": "python3.11",
                 "sandbox_type": "docker",
                 "rootfs": {
-                    "imageurl": result.image,
+                    "imageurl": image,
                     "user": "agentos",
                     "ports": ["tcp:2222"],
                 },
@@ -234,46 +304,7 @@ class ThirdpartyAgentService:
         status = body.get("status", "")
         if status not in ("registered", "updated"):
             raise RuntimeError(f"registry returned unexpected status {status!r}: {resp.text}")
-        logger.info("image registered: %s v%s → %s", installer.agent_name, installer.version, result.image)
-
-    async def _run_build(self, task_id: str, agent_installer: AgentInstaller) -> None:
-        """Build lifecycle: building → (register → update → mark_done) | mark_failed."""
-        from app.database import async_session_maker
-
-        async with async_session_maker() as session:
-            if (await BuildTask.mark_building(session, task_id)) is None:
-                return
-
-            try:
-                async def progress_cb(pct: int):
-                    await BuildTask.update_progress(session, task_id, pct)
-
-                user_home = Path(settings.AGENTOS_HOME_BASE) / agent_installer.uploaded_by
-                result = await build(BuildParams(
-                    task_id=task_id,
-                    agent_name=agent_installer.agent_name,
-                    version=agent_installer.version,
-                    installer_path=Path(agent_installer.installer_path),
-                    output_dir=user_home / "images",
-                    work_dir=user_home / "run" / task_id,
-                    on_progress=progress_cb,
-                ))
-
-                await self.register_image(agent_installer, result)
-
-                await AgentInstaller.update(
-                    session, agent_installer.agent_name, agent_installer.version,
-                    params=InstallerUpdate(
-                        image_digest=result.image_digest,
-                        image_path=result.image_path,
-                        base_image=result.base_image,
-                    ))
-
-                await BuildTask.mark_done(session, task_id, result.image, result.image_digest)
-                logger.info("build done: %s v%s task=%s image=%s",
-                            agent_installer.agent_name, agent_installer.version,
-                            task_id, result.image)
-
-            except Exception as e:
-                logger.exception("unexpected error during build %s", task_id)
-                await BuildTask.mark_failed(session, task_id, error_message=str(e))
+        logger.info(
+            "image registered: %s v%s → %s",
+            installer.agent_name, installer.version, image,
+        )
