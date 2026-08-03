@@ -143,6 +143,18 @@ build_sub_args() {
     echo "${sub_args[@]}"
 }
 
+# ===== 将 deploy 目录持久化到 ~/.agentos =====
+# install 后用户会删除安装包与解压目录，但后续 up/down/uninstall 仍需 deploy 脚本，
+# 故在 install 流程中先把整个 deploy 目录拷贝到 ~/.agentos/ 下保留。
+_persist_deploy_dir() {
+    local persist_root="${HOME:-/root}/.agentos"
+    local persist_dir="${persist_root}/deploy"
+    mkdir -p "${persist_root}"
+    rm -rf "${persist_dir}"
+    cp -a "${SCRIPT_DIR}" "${persist_dir}"
+    info "Persisted deploy directory to ${persist_dir}"
+}
+
 # ===== 命令入口 =====
 deploy_up() {
     echo ""
@@ -177,6 +189,8 @@ deploy_install() {
     info "Starting full install (local only)"
     info "Modules: ${MODULES[*]}"
     info "Python version: ${YR_PYTHON_VERSION}"
+    # 先把 deploy 目录持久化到 ~/.agentos/deploy，避免安装包/解压目录被删除后无法 up/down
+    _persist_deploy_dir
     run_hooks install
     _print_summary install
 }

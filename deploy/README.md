@@ -114,7 +114,7 @@ bash agentos.sh restart --hosts 192.168.1.1
 | `up` | 按声明顺序部署全部组件 |
 | `down` | 逆序停止并卸载全部组件 |
 | `restart` | 重启全部组件（先 down 再 up） |
-| `install` | 在本机安装全部组件的 whl 包（不启动服务） |
+| `install` | 在本机安装全部组件的 whl 包（不启动服务，会把 deploy 目录持久化到~/.agentos目录中） |
 | `uninstall` | 在本机卸载全部组件的 whl 包 |
 | `--hosts HOSTS` | 目标主机 IP 列表，逗号分隔。yuanrong：第一个为 master、其余为 agent；jiuwenbox：每台各启一份。不指定时默认本机 IP |
 | `-h, --help` | 显示帮助信息 |
