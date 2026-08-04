@@ -65,10 +65,36 @@ jiuwenswarm_install() {
     fi
 }
 
+# 停用并禁用 jiuwenswarm-gateway 的 systemd 服务（本机），清理 unit 文件与 drop-in
+# uninstall 是本机操作（与 install 对称），故仅处理本机 systemd 服务；
+jiuwenswarm_disable_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || return 0
+    local unit_file found=0
+    for unit_file in /etc/systemd/system/jiuwenswarm-gateway*.service; do
+        [ -f "${unit_file}" ] || continue
+        found=1
+        local svc_name
+        svc_name=$(basename "${unit_file}" .service)
+        info "Disabling systemd service ${svc_name}..."
+        systemctl disable --now "${svc_name}" 2>/dev/null || true
+        rm -rf "${unit_file}" "/etc/systemd/system/${svc_name}.service.d"
+    done
+
+    systemctl daemon-reload 2>/dev/null || true
+    if [ "${found}" -eq 1 ]; then
+        success "jiuwenswarm-gateway systemd services disabled and cleaned up"
+    else
+        info "No jiuwenswarm-gateway systemd unit found, skipping"
+    fi
+}
+
 jiuwenswarm_uninstall() {
     local local_host
     local_host=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "${local_host}" ] && local_host="127.0.0.1"
+
+    # 先停用 systemd 服务，再卸载 pip 包，避免卸载后残留 unit 文件
+    jiuwenswarm_disable_systemd
 
     if bash -c "python${YR_PYTHON_VERSION} -m pip uninstall -y jiuwenswarm 2>/dev/null"; then
         success "jiuwenswarm uninstalled on ${local_host}"

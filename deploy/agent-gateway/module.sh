@@ -159,10 +159,11 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-        # rqlited 单节点 drop-in: -node-id + -bootstrap-expect 1 使其自动选主
+        # rqlited 单节点 drop-in: 覆盖 ExecStart + User，以当前用户运行而非 RPM 默认的 rqlite 用户
         mkdir -p "${RQLITE_DROPIN_DIR}"
         cat > "${RQLITE_DROPIN}" <<EOF
 [Service]
+User=
 ExecStart=
 ExecStart=${rqlite_bin} -node-id ${RQLITE_NODE_ID} -bootstrap-expect ${RQLITE_BOOTSTRAP_EXPECT} -http-addr 127.0.0.1:${RQLITE_HTTP_PORT} -raft-addr 127.0.0.1:${RQLITE_RAFT_PORT} ${RQLITE_DATA_DIR}
 EOF
@@ -177,7 +178,7 @@ EOF
         mkdir -p "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
     fi
 
-    success "agent-gateway installed"
+    success "agent-registry installed"
 }
 
 # ===== up: 现算 BIND 设环境变量，起 rqlited + 注册中心，健康检查 =====
@@ -186,13 +187,13 @@ agent-gateway_up() {
     bind=$(_agentregistry_bind)
     port="${A2X_REGISTRY_PORT}"
     endpoint="${A2X_REGISTRY_DB_ENDPOINT:-http://127.0.0.1:${RQLITE_HTTP_PORT}}"
-    info "Starting agent-gateway on ${bind}:${port} (db: ${endpoint})"
+    info "Starting agent-registry on ${bind}:${port} (db: ${endpoint})"
 
     command -v curl >/dev/null 2>&1 || error "curl not found (required for health check)"
 
     if _agentgw_has_systemd; then
         if systemctl is-active --quiet "${AGENTREGISTRY_SVC}"; then
-            warning "agent-gateway already running; run 'down' first to restart"
+            warning "agent-registry already running; run 'down' first to restart"
             return 0
         fi
         systemctl cat rqlited >/dev/null 2>&1 || error "rqlited.service not found; run 'install' first"
@@ -218,14 +219,14 @@ EOF
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
             curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/images" \
-                && { success "agent-gateway up on http://${bind}:${port}"; return 0; }
+                && { success "agent-registry up on http://${bind}:${port}"; return 0; }
             sleep 1
         done
-        error "agent-gateway not healthy in 15s, see: journalctl -u ${AGENTREGISTRY_SVC}"
+        error "agent-registry not healthy in 15s, see: journalctl -u ${AGENTREGISTRY_SVC}"
     else
         local py rqlite_bin py_bindir py_libdir
         if [ -f "${REGISTRY_PID_FILE}" ] && kill -0 "$(cat "${REGISTRY_PID_FILE}" 2>/dev/null)" 2>/dev/null; then
-            warning "agent-gateway already running; run 'down' first to restart"
+            warning "agent-registry already running; run 'down' first to restart"
             return 0
         fi
         command -v rqlited >/dev/null 2>&1 || error "rqlited not found; run 'install' first"
@@ -261,22 +262,22 @@ EOF
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
             curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/images" \
-                && { success "agent-gateway up on http://${bind}:${port}"; return 0; }
+                && { success "agent-registry up on http://${bind}:${port}"; return 0; }
             sleep 1
         done
-        error "agent-gateway not healthy in 15s, see: ${REGISTRY_LOG}"
+        error "agent-registry not healthy in 15s, see: ${REGISTRY_LOG}"
     fi
 }
 
-# ===== down: 停服务（rqlited 仅注册中心使用，随之停用） =====
+# ===== down: 停服务（rqlited 仅注册中心使用，随之停用），不禁用开机自启动 =====
 agent-gateway_down() {
     if _agentgw_has_systemd; then
-        systemctl disable --now "${AGENTREGISTRY_SVC}" rqlited 2>/dev/null \
-            && success "agent-gateway stopped" || warning "agent-gateway not running"
+        systemctl stop "${AGENTREGISTRY_SVC}" rqlited 2>/dev/null \
+            && success "agent-registry stopped" || warning "agent-registry not running"
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
         _stop_bg rqlited "${RQLITED_PID_FILE}" rqlited || true
-        success "agent-gateway stopped"
+        success "agent-registry stopped"
     fi
 }
 
@@ -293,5 +294,5 @@ agent-gateway_uninstall() {
     fi
     "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
     rpm -e rqlite 2>/dev/null || true
-    success "agent-gateway uninstalled"
+    success "agent-registry uninstalled"
 }
