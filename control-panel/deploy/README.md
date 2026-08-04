@@ -2,69 +2,25 @@
 
 六个容器：**Frontend** + **image-process** + **PostgreSQL 18** + **LiteLLM** + **VictoriaMetrics** + **Grafana**。
 
-## 目录结构
-
-```
-control-panel/
-├── .dockerignore               # 镜像构建上下文忽略规则
-├── frontend/                   # Vue 源码
-├── backend/                    # API 源码（后续纳入同一镜像）
-├── image_process/              # 独立 OCI 镜像构建服务
-├── image/                      # 镜像构建（与 frontend 同级；当前仅前端+Nginx）
-│   ├── Dockerfile
-│   └── nginx.conf
-└── deploy/                     # 运行时 compose 与监控配置
-    ├── deploy.sh               # 一键部署脚本（完整流程）
-    ├── docker-compose.yml
-    ├── .env.example
-    ├── README.md
-    ├── litellm/
-    │   └── config.yaml             # LiteLLM Proxy 配置
-    ├── node-exporter/
-    │   └── node_exporter.service   # systemd unit 文件（deploy.sh 引用）
-    ├── victoriametrics/
-    │   ├── scrape.yml              # VM promscrape 配置
-    │   └── agent-metrics.json      # 采集目标（file_sd）
-    └── grafana/
-        ├── victoriametrics.yml     # 数据源自动配置（VictoriaMetrics）
-        ├── default.yml             # Dashboard 自动加载规则
-        ├── vllm-perf.json          # vLLM 性能监控面板
-        └── sglang-perf.json        # SGLang 性能监控面板
-```
-
 ## 服务与端口
 
-宿主机端口必须在 `.env` 中配置（示例见 `.env.example`），compose 不设默认值。
+宿主机端口在 `.env` 中配置（示例见 `.env.example`），compose 不设默认值。
 
-| 服务 | 镜像 | 环境变量 | 示例端口 | 说明 |
+| 服务 | 镜像 | 环境变量 | 默认端口 | 说明 |
 |------|------|----------|----------|------|
-| `frontend` | `agentos` | `FRONTEND_PORT` | 8080 | CI 构建；Nginx 托管 Vue 静态页 |
+| `frontend` | `agentos-control-panel` | `FRONTEND_PORT` | 8090 | CI 构建；Nginx 托管 Vue 静态页 |
 | `image-process` | `agentos-image-process` | -- | （不对宿主暴露） | Agent 镜像构建；仅 `image-build` 内网 |
 | `postgres` | `postgres:18.0` | `POSTGRES_PORT` | 5432 | LiteLLM 数据库 |
-| `litellm` | `ghcr.io/berriai/litellm-database:v1.91.1` | `LITELLM_PORT` | 4000 | 推理代理 |
+| `litellm` | `ghcr.io/berriai/litellm-database:v1.91.1` | `LITELLM_PORT` | 8100 | 推理代理 |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.135.0` | `VICTORIAMETRICS_PORT` | 8428 | 指标存储 |
-| `grafana` | `grafana/grafana:12.4.2` | -- | 3000 | 监控面板 |
+| `grafana` | `grafana/grafana:12.4.2` | `GRAFANA_PORT` | 8093 | 监控面板 |
 
 **宿主机原生服务（非容器）：**
 
-| 服务 | 二进制 | 端口 | 说明 |
-|------|--------|------|------|
-| `node_exporter` | `/usr/bin/node_exporter` | 8084 | 主机指标采集（systemd） |
-
-## 配置说明
-
-| 宿主机文件 | 容器内路径 | 作用 |
-| ---------- | ---------- | ---- |
-| `.env` | compose 环境变量 | PG 密码、LiteLLM master key |
-| `litellm/config.yaml` | litellm `/app/config.yaml` | Proxy 配置 |
-| `victoriametrics/scrape.yml` | `/etc/vm/scrape.yml` | `-promscrape.config`；勿写 `refresh_interval` |
-| `victoriametrics/agent-metrics.json` | `/etc/vm/agent-metrics.json` | 采哪些 Agent（后端常写） |
-| `grafana/victoriametrics.yml` | provisioning datasources | 自动连 VM |
-| `grafana/default.yml` | provisioning dashboards | Dashboard 加载规则 |
-| `grafana/*-perf.json` | `/var/lib/grafana/dashboards/` | 面板 JSON |
-| `node-exporter/node_exporter.service` | `/etc/systemd/system/node_exporter.service` | systemd unit（deploy.sh 内联安装） |
-
-生产环境：`agent-metrics.json` 建议放在 `/var/lib/agentos/monitoring/`，compose 改挂载路径即可。
+| 服务 | 二进制安装路径 | 默认端口 | 说明 |
+|------|---------------|----------|------|
+| `node_exporter` | `/usr/bin/node_exporter` | 8091 | 主机指标采集（systemd） |
+| `npu-exporter` | `/usr/local/bin/npu-exporter` | 8092 | NPU 指标采集（systemd timer） |
 
 ## 前置条件
 
@@ -72,66 +28,50 @@ control-panel/
 | ---- | ---- |
 | Docker | 已安装 Docker Engine + Compose 插件 |
 | 端口 | `.env` 中宿主机端口已配置且未被占用 |
-| 配置文件 | 上表所列文件齐全 |
-| 环境变量 | 复制 `.env.example` → `.env`，修改密码与 master key |
+| 环境变量 | `deploy.sh install` 自动从 `.env.example` 生成 `.env`，支持交互/非交互模式 |
 | 前端镜像 | CI 已构建并推送到仓库，或通过 `docker load` 导入本机 |
 | image-process 镜像 | `docker compose build image-process`（或预先 `docker build -t agentos-image-process ../image_process`） |
-| agent-base | 宿主机需已有 `agent-base:1.0`（制品自动 load 暂缓，需手动准备） |
+| agent-base | 宿主机需已有 `agent-base:1.0`（制品需手动准备） |
 | systemd | 宿主机使用 systemd init（Ubuntu / Debian / CentOS 等） |
-| 网络 | 目标机可访问 GitHub Releases（否则手动下载二进制） |
 
----
+### 所需版本清单
 
-## 部署流程
+| 类型 | 名称 | 版本 |
+|------|------|------|
+| 容器镜像 | `postgres` | `18.0` |
+| 容器镜像 | `ghcr.io/berriai/litellm-database` | `v1.91.1` |
+| 容器镜像 | `victoriametrics/victoria-metrics` | `v1.135.0` |
+| 容器镜像 | `grafana/grafana` | `12.4.2` |
+| 二进制文件 | `node_exporter` | `v1.12.1` |
+| 二进制文件 | `npu-exporter` | `>26.0.0` |
 
-### 快速部署（一键脚本）
+### 环境变量配置要求
 
-```bash
-cd control-panel/deploy
+`deploy.sh install` 非交互模式下，以下环境变量可提前设置以覆盖默认值：
 
-# 三步完成：
-sudo bash deploy.sh install     # 安装：.env + 镜像拉取 + node_exporter 注册
-sudo bash deploy.sh up          # 启动：node_exporter → docker compose
-sudo bash deploy.sh status      # 验证服务状态
-```
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `POSTGRES_USER` | `agentos` | PostgreSQL 用户名 |
+| `POSTGRES_PASSWORD` | `agentos123` | PostgreSQL 密码 |
+| `AGENTOS_ADMIN_USERNAME` | `admin` | 管理后台用户名 |
+| `AGENTOS_ADMIN_PASSWORD` | `admin123` | 管理后台密码 |
+| `LITELLM_HOST` | 自动检测本机 IP | LiteLLM 监听地址 |
+| `NODE_EXPORTER_HOST` | 自动检测本机 IP | node_exporter 监听地址 |
+| `NPU_EXPORTER_HOST` | 自动检测本机 IP | npu_exporter 监听地址 |
+| `AGENT_REGISTER_URL` | `http://<本机IP>:4003` | 注册中心地址 |
 
-其他命令：
-- `deploy.sh down`      停止：docker compose → node_exporter（反序）
-- `deploy.sh uninstall` 卸载：停止服务 + 清理 .env + 注销 systemd
+> 以下密钥由安装脚本自动生成，**无需手动设置**：
+> - `AGENTOS_JWT_SECRET_KEY` — JWT 签名密钥
+> - `LITELLM_MASTER_KEY` — LiteLLM 管理密钥（sk- 前缀）
+> - `LITELLM_KEY_ENCRYPTION_KEY` — LiteLLM 密钥加密密钥
 
----
-
-### 分步部署
-
-以下为手动分步流程，与一键脚本等价。
-
-### 1. 准备镜像
-
-以手动自验证为例：
-
-**构建前端产物**
-
-```bash
-cd control-panel/frontend
-./build.sh
-```
-
-或手动：
-
-```bash
-cd control-panel/frontend
-npm ci
-npm run build
-```
+### 镜像准备
 
 **打包运行镜像**
 
 ```bash
 cd control-panel
 docker build -f image/Dockerfile -t agentos-control-panel .
-# CI 推送到镜像仓库（按实际 registry 修改）
-# docker tag agentos your-registry/agentos/agentos:1.0.0
-# docker push your-registry/agentos/agentos:1.0.0
 ```
 
 **拉取公共镜像**
@@ -143,13 +83,13 @@ docker pull postgres:18.0
 docker pull ghcr.io/berriai/litellm-database:v1.91.1
 docker pull victoriametrics/victoria-metrics:v1.135.0
 docker pull grafana/grafana:12.4.2
-docker pull nginx:1.29.7-alpine
 
 docker save -o postgres_18.0.tar postgres:18.0
 docker save -o litellm-database_v1.91.1.tar ghcr.io/berriai/litellm-database:v1.91.1
 docker save -o victoria-metrics_v1.135.0.tar victoriametrics/victoria-metrics:v1.135.0
 docker save -o grafana_12.4.2.tar grafana/grafana:12.4.2
 
+# 目标机：
 docker load -i postgres_18.0.tar
 docker load -i litellm-database_v1.91.1.tar
 docker load -i victoria-metrics_v1.135.0.tar
@@ -173,20 +113,148 @@ docker load -i agentos-image-process_latest.tar
 docker load -i agent-base_1.0.tar
 ```
 
-### 2. 部署 node_exporter（宿主机）
+### Exporter 准备
+
+Exporter 运行在宿主机（非容器），提供指标采集。`deploy.sh install` 会自动拷贝二进制并注册 systemd 服务。
+
+需要准备的 exporter 及指定版本：
+
+| Exporter | 版本 | 来源 |
+|----------|------|------|
+| `node_exporter` | v1.12.1 | [GitHub Releases](https://github.com/prometheus/node_exporter/releases/tag/v1.12.1) |
+| `npu-exporter` | >26.0.0 | [MindCluster Releases](https://gitcode.com/Ascend/mind-cluster/releases/v26.0.0) |
+
+**node_exporter**
+
+从 [GitHub Releases](https://github.com/prometheus/node_exporter/releases/tag/v1.12.1) 下载对应机器架构的压缩包（如 `linux-amd64`、`linux-arm64` 等），解压后将 `node_exporter` 二进制放入 `deploy/node-exporter/` 目录。
+
+```bash
+# 示例（以 linux-amd64 为例，实际根据架构选择）：
+# amd64 架构：
+wget https://github.com/prometheus/node_exporter/releases/download/v1.12.1/node_exporter-1.12.1.linux-amd64.tar.gz
+tar xzf node_exporter-1.12.1.linux-amd64.tar.gz
+cp node_exporter-1.12.1.linux-amd64/node_exporter deploy/node-exporter/
+
+# arm64 架构：
+wget https://github.com/prometheus/node_exporter/releases/download/v1.12.1/node_exporter-1.12.1.linux-arm64.tar.gz
+tar xzf node_exporter-1.12.1.linux-arm64.tar.gz
+cp node_exporter-1.12.1.linux-arm64/node_exporter deploy/node-exporter/
+```
+
+要求：`deploy/node-exporter/node_exporter` 文件存在，且 `deploy/node-exporter/node_exporter.service` 文件存在（已随仓库提供）。
+
+> **注意**：下载时请根据目标机器的 CPU 架构选择对应的软件包，可通过 `uname -m` 查看本机架构。
+
+**npu-exporter**
+
+从 [MindCluster Releases](https://gitcode.com/Ascend/mind-cluster/releases/v26.1.0) 下载对应机器架构的压缩包，解压后将以下文件放入 `deploy/npu-exporter/` 目录：
+
+| 文件 | 必需 | 说明 |
+|------|------|------|
+| `npu-exporter` | 是 | 二进制文件 |
+| `npu-exporter.service` | 是 | systemd service unit |
+| `npu-exporter.timer` | 是 | systemd timer unit |
+| `metricConfiguration.json` | 否 | 指标配置（安装时拷贝到 `/usr/local/`） |
+| `pluginConfiguration.json` | 否 | 插件配置（安装时拷贝到 `/usr/local/`） |
+
+```bash
+# 示例（根据实际包名调整）：
+# x86_64 架构：
+unzip Ascend-mindxd1-npu-exporter_<version>_linux-x86_64.zip -d deploy/npu-exporter/
+# aarch64 架构：
+unzip Ascend-mindxd1-npu-exporter_<version>_linux-aarch64.zip -d deploy/npu-exporter/
+```
+
+> **注意**：下载时请根据目标机器的 CPU 架构选择对应的软件包（如 `linux-x86_64`、`linux-aarch64`），可通过 `uname -m` 查看本机架构。
+
+---
+
+## 部署流程
+
+### 快速部署（一键脚本）
+
+```bash
+# 1. 安装（非交互式，自动拷贝到 ~/.agentos/.agent-manager）：
+sudo bash deploy.sh install
+
+# 2. 进入安装目录（后续所有操作在此目录执行）：
+cd ~/.agentos/.agent-manager
+
+# 3. 启动服务：
+sudo bash deploy.sh up
+
+# 4. 查看状态：
+sudo bash deploy.sh status
+```
+
+交互式安装（逐项询问密码、IP 等配置）：
+
+```bash
+sudo bash deploy.sh install -i
+cd ~/.agentos/.agent-manager
+sudo bash deploy.sh up
+```
+
+**所有命令：**
+
+| 命令 | 说明 |
+|------|------|
+| `deploy.sh install` | 安装：.env 初始化 + exporter 注册 + 镜像拉取 |
+| `deploy.sh install -i` | 交互式安装（逐项询问配置） |
+| `deploy.sh uninstall` | 卸载：停止服务 + 注销 systemd（保留数据和 .env） |
+| `deploy.sh uninstall --clean` | 卸载：删除数据卷和 .env |
+| `deploy.sh up` | 启动：更新 exporter 配置 → 启动服务 |
+| `deploy.sh down` | 停止：docker compose → node/npu_exporter（反序） |
+| `deploy.sh restart` | 重启：down → up |
+| `deploy.sh status` | 查看服务状态（含端口健康检查） |
+
+---
+
+> **强烈不建议**：以下分步部署流程仅用于特殊场景（如调试、定制化部署）。正常部署请使用上方的一键脚本。
+
+### 分步部署（特殊场景，不优先使用）
+
+#### 1. 准备镜像
+
+**打包运行镜像**
+
+```bash
+cd control-panel
+docker build -f image/Dockerfile -t agentos-control-panel .
+```
+
+**拉取公共镜像**
+
+```bash
+docker pull postgres:18.0
+docker pull ghcr.io/berriai/litellm-database:v1.91.1
+docker pull victoriametrics/victoria-metrics:v1.135.0
+docker pull grafana/grafana:12.4.2
+
+docker save -o postgres_18.0.tar postgres:18.0
+docker save -o litellm-database_v1.91.1.tar ghcr.io/berriai/litellm-database:v1.91.1
+docker save -o victoria-metrics_v1.135.0.tar victoriametrics/victoria-metrics:v1.135.0
+docker save -o grafana_12.4.2.tar grafana/grafana:12.4.2
+
+# 目标机：
+docker load -i postgres_18.0.tar
+docker load -i litellm-database_v1.91.1.tar
+docker load -i victoria-metrics_v1.135.0.tar
+docker load -i grafana_12.4.2.tar
+```
+
+#### 2. 部署 node_exporter（宿主机）
 
 node_exporter 运行在宿主机（非容器），提供 CPU / 内存 / 磁盘 / 网络等指标。
 
 前置条件：将解压后的 `node_exporter` 二进制放入 `deploy/node-exporter/` 目录，`deploy.sh install` 会自动拷贝到 `/usr/bin` 并注册 systemd 服务。
 
-**检查状态**：
-
 ```bash
 systemctl status node_exporter
-curl -s http://127.0.0.1:8084/metrics | head -5
+curl -s http://127.0.0.1:8091/metrics | head -5
 ```
 
-### 3. 一键拉起（docker compose）
+#### 3. 拉起docker compose
 
 ```bash
 cd control-panel/deploy
@@ -199,42 +267,20 @@ docker compose up -d
 ```
 
 **检查状态**
+
 ```bash
-# 预期 6 个服务均为 Running（含 image-process；litellm 需等 postgres healthy 后启动，首次约 40s）。
 docker compose ps
 
-# 检查 frontend 状态（端口：8080）
-curl -I http://127.0.0.1:8080/
-
-# 检查 postgres 状态（端口：5432）：返回的 STATUS 为 healthy
+curl -I http://127.0.0.1:8090/
 docker ps --filter name=deploy-postgres-1
-
-# 检查 litellm-database 状态（端口：4000）：返回 "I'm alive!"
-curl http://127.0.0.1:4000/health/liveliness
-
-# 检查 victoria-metrics 状态（端口：8428）：返回 OK
+curl http://127.0.0.1:8100/health/liveliness
 curl http://127.0.0.1:8428/health
-
-# 检查 grafana 状态（端口：3000）：返回 { database: "ok", version: "12.4.2", ... }
-curl http://127.0.0.1:3000/api/health
+curl http://127.0.0.1:8093/api/health
 ```
 
 **停止与清理**
 
 ```bash
 docker compose down
-# 清空指标数据
-docker compose down -v
+docker compose down -v  # 清空指标数据
 ```
-
----
-
-## 性能监控验证
-
-| #   | 检查      | 操作                       | 预期                       |
-| --- | --------- | -------------------------- | -------------------------- |
-| 1 | 登录      | 打开 http://127.0.0.1:3000 | 匿名 Viewer                |
-| 2 | 数据源    | VictoriaMetrics → Test     | 成功                       |
-| 3 | Dashboard | **AgentOS** 文件夹         | `vllm-perf`、`sglang-perf` |
-| 4 | 面板      | 打开 `vllm-perf`           | 4 个 Panel                 |
-| 5 |  `agent-metrics.json`     | 编辑 `agent-metrics.json`         |  （1）grafana 能展示 target 性能数据；<br>（2） `curl "http://127.0.0.1:8428/api/v1/query?query=up{job=\"vllm-9000\"}"` 预期看到 `value` 有值，如 `"value":[..., "1"]`               |

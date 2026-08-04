@@ -3,9 +3,11 @@ Description=Ascend npu exporter
 Documentation=hiascend.com
 
 [Service]
-ExecStart=/usr/local/bin/npu-exporter -ip=__NPU_LISTEN_ADDR__ -port=__NPU_PORT__ -logFile=/var/log/mindx-dl/npu-exporter/npu-exporter.log
+ExecStart=/bin/bash -c "/usr/local/bin/npu-exporter -ip=__NPU_LISTEN_ADDR__ -port=__NPU_PORT__ -logFile=/home/agentos/logs/npu_exporter/npu-exporter.log>/dev/null 2>&1 &"
 Restart=always
 RestartSec=2
+KillMode=process
+Type=forking
 Environment="GOGC=50"
 Environment="GOMAXPROCS=2"
 Environment="GODEBUG=madvdontneed=1"

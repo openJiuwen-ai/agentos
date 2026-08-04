@@ -1,3 +1,5 @@
+name: agentos-manager
+
 networks:
   agentos:
     name: agentos

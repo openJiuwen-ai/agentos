@@ -11,10 +11,10 @@ fi
 # AgentOS 一体机 部署脚本
 #
 # 用法:
-#   sudo bash deploy.sh install              # 安装（非交互式，拷贝到 ~/.agentos/.agent-manager 后执行）
-#   sudo bash deploy.sh install -i           # 安装（交互式，拷贝到 ~/.agentos/.agent-manager 后执行）
+#   sudo bash deploy.sh install              # 安装（非交互式，不在目标目录时自动拷贝）
+#   sudo bash deploy.sh install -i           # 安装（交互式，不在目标目录时自动拷贝）
 #   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
-#   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷和 .env）
+#   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷、.env 和安装目录）
 #   sudo bash deploy.sh up                   # 启动：更新 exporter 配置 → 启动服务
 #   sudo bash deploy.sh down                 # 停止：docker compose → node/npu_exporter（反序）
 #   sudo bash deploy.sh restart              # 重启：down → up
@@ -104,6 +104,22 @@ need_root() {
     [ "$(id -u)" -eq 0 ] || fail "需要 root 权限。请用: sudo bash $0 $ACTION"
 }
 
+# 获取真实用户 home 目录（sudo 下 $HOME 可能是 /root）
+if [ -n "$SUDO_USER" ]; then
+    INSTALL_DIR="$(eval echo "~$SUDO_USER")/.agentos/.agent-manager"
+else
+    INSTALL_DIR="$HOME/.agentos/.agent-manager"
+fi
+
+# 检查是否在安装目录下操作（up/down/restart/status/uninstall 需要）
+need_install_dir() {
+    if [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
+        fail "请先切换到安装目录后再执行此操作:
+  cd ${INSTALL_DIR}
+  sudo bash deploy.sh $ACTION"
+    fi
+}
+
 # ── .env 初始化 ─────────────────────────────────────────────────────────────
 
 init_env() {
@@ -170,7 +186,7 @@ _init_env_noninteractive() {
     local llm_host="${LITELLM_HOST:-$detected_ip}"
     local ne_host="${NODE_EXPORTER_HOST:-$detected_ip}"
     local npu_host="${NPU_EXPORTER_HOST:-$detected_ip}"
-    local register_url="${AGENT_REGISTER_URL:-}"
+    local register_url="${AGENT_REGISTER_URL:-http://${detected_ip}:4003}"
 
     sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "$pg_user")/" "$env_file"
     sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$pg_pass")/" "$env_file"
@@ -327,30 +343,37 @@ for svc in data.get('services', {}).values():
     fi
 
     # 只拉取本地缺失的镜像（按 service 逐个拉）
+    local failed=0
     for img in "${missing[@]}"; do
         if [[ "$img" == agentos-control-panel:* ]]; then
             docker compose pull agentos 2>/dev/null || {
                 log "  WARNING: $img 拉取失败，请先本地构建:"
                 log "    cd control-panel && docker build -f image/Dockerfile -t agentos ."
+                failed=1
             }
         elif [[ "$img" == agentos-image-process:* ]]; then
             docker compose pull image-process 2>/dev/null || {
                 log "  WARNING: $img 拉取失败，请先推送至仓库或 docker load 导入本机"
+                failed=1
             }
         else
             log "  拉取 $img ..."
-            docker pull "$img" 2>/dev/null || log "  WARNING: $img 拉取失败"
+            docker pull "$img" 2>/dev/null || { log "  WARNING: $img 拉取失败"; failed=1; }
         fi
     done
 
-    log "镜像就绪。"
+    if [ "$failed" -eq 1 ]; then
+        log "WARNING: 部分镜像拉取失败，请检查上方日志。"
+    else
+        log "镜像就绪。"
+    fi
 }
 
 # ── node_exporter 安装/卸载 ────────────────────────────────────────────────
 
 install_node_exporter() {
     local ne_port ne_host listen_addr
-    ne_port=$(env_default NODE_EXPORTER_PORT 8084)
+    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
     ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
 
     # 检查二进制是否存在
@@ -438,19 +461,33 @@ install_npu_exporter() {
     fi
 
     local npu_port npu_host listen_addr
-    npu_port=$(env_default NPU_EXPORTER_PORT 8083)
+    npu_port=$(env_default NPU_EXPORTER_PORT 8092)
     npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
 
     # 创建运行用户
     if ! getent group "$NPU_RUN_GROUP" &>/dev/null; then
-        groupadd -r "$NPU_RUN_GROUP" 2>/dev/null || groupadd "$NPU_RUN_GROUP"
+        if ! groupadd -r "$NPU_RUN_GROUP" 2>/dev/null; then
+            if ! groupadd "$NPU_RUN_GROUP" 2>/dev/null; then
+                fail "创建用户组 '$NPU_RUN_GROUP' 失败，请检查系统权限或是否存在同名冲突"
+            fi
+        fi
         log "  已创建用户组 '$NPU_RUN_GROUP'"
     fi
     if ! id "$NPU_RUN_USER" &>/dev/null; then
-        useradd -r -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER" 2>/dev/null \
-            || useradd -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER"
+        if ! useradd -r -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER" 2>/dev/null; then
+            if ! useradd -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER" 2>/dev/null; then
+                fail "创建用户 '$NPU_RUN_USER' 失败，请检查系统权限或是否存在同名冲突"
+            fi
+        fi
         log "  已创建用户 '$NPU_RUN_USER'"
     fi
+
+    # 创建日志目录结构
+    mkdir -p /home/agentos/logs
+    chmod 755 /home/agentos/logs
+    mkdir -p /home/agentos/logs/npu_exporter
+    chown "$NPU_RUN_USER:$NPU_RUN_GROUP" /home/agentos/logs/npu_exporter
+    log "  已创建日志目录 /home/agentos/logs/npu_exporter"
 
     # 安装二进制
     install -m 500 -o "$NPU_RUN_USER" -g "$NPU_RUN_GROUP" \
@@ -474,6 +511,11 @@ install_npu_exporter() {
     systemctl daemon-reload
     systemctl enable "$NPU_TIMER" "${NPU_SERVICE}.service"
     log "  systemd unit 已注册 (${npu_host}:${npu_port})"
+
+    # 创建日志文件
+    touch /home/agentos/logs/npu_exporter/npu-exporter.log
+    chown "$NPU_RUN_USER:$NPU_RUN_GROUP" /home/agentos/logs/npu_exporter/npu-exporter.log
+    log "  已创建日志文件 /home/agentos/logs/npu_exporter/npu-exporter.log"
 }
 
 uninstall_npu_exporter() {
@@ -529,13 +571,16 @@ do_install() {
     log "install 完成。"
     echo ""
     log "提示: 如需修改端口等配置，可直接编辑 ${DEPLOY_DIR}/.env"
-    log "执行 'sudo bash deploy.sh up' 启动服务。"
+    log "后续操作请先切换到安装目录:"
+    log "  cd ${DEPLOY_DIR}"
+    log "  sudo bash deploy.sh up"
 }
 
 # ── uninstall ───────────────────────────────────────────────────────────────
 
 do_uninstall() {
     need_root
+    need_install_dir
     log "========== uninstall =========="
 
     log "[1/3] 停止 Docker 服务"
@@ -554,9 +599,10 @@ do_uninstall() {
     log "[3/3] 注销 npu_exporter"
     uninstall_npu_exporter
 
-    if [ "$CLEAN" -eq 1 ] && [ -f "${DEPLOY_DIR}/.env" ]; then
-        rm "${DEPLOY_DIR}/.env"
-        log "  已删除 .env"
+    if [ "$CLEAN" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
+        cd /
+        rm -rf "$INSTALL_DIR"
+        log "  已删除安装目录 $INSTALL_DIR"
     fi
 
     log "uninstall 完成。"
@@ -568,7 +614,7 @@ update_exporter_configs() {
     load_env
 
     local ne_port ne_host ne_listen
-    ne_port=$(env_default NODE_EXPORTER_PORT 8084)
+    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
     ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
     if [ -z "$ne_host" ] || [ "$ne_host" = "0.0.0.0" ]; then
         ne_listen=":${ne_port}"
@@ -577,6 +623,10 @@ update_exporter_configs() {
     fi
 
     if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
+            systemctl stop "$SERVICE_NAME"
+            log "  node_exporter 已停止"
+        fi
         sed "s|__LISTEN_ADDR__|${ne_listen}|" \
             "${NE_DIR}/node_exporter.service" > /etc/systemd/system/${SERVICE_NAME}.service
         systemctl daemon-reload
@@ -584,10 +634,15 @@ update_exporter_configs() {
     fi
 
     local npu_port npu_host
-    npu_port=$(env_default NPU_EXPORTER_PORT 8083)
+    npu_port=$(env_default NPU_EXPORTER_PORT 8092)
     npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
 
     if [ -f "/etc/systemd/system/${NPU_SERVICE}.service" ]; then
+        if systemctl is-active "$NPU_SERVICE" &>/dev/null; then
+            systemctl stop "$NPU_TIMER" 2>/dev/null || true
+            systemctl stop "$NPU_SERVICE" 2>/dev/null || true
+            log "  npu_exporter 已停止"
+        fi
         sed -e "s|__NPU_LISTEN_ADDR__|${npu_host}|g" \
             -e "s|__NPU_PORT__|${npu_port}|g" \
             "${NPU_DIR}/npu-exporter.service" > /etc/systemd/system/${NPU_SERVICE}.service
@@ -600,6 +655,7 @@ update_exporter_configs() {
 
 do_up() {
     need_root
+    need_install_dir
     log "========== up =========="
 
     log "[1/4] 更新 exporter 配置"
@@ -633,6 +689,9 @@ do_up() {
     cd "$DEPLOY_DIR"
     docker compose up -d
 
+    log "等待服务就绪 ..."
+    sleep 3
+
     do_status
 }
 
@@ -640,6 +699,7 @@ do_up() {
 
 do_down() {
     need_root
+    need_install_dir
     log "========== down =========="
 
     log "[1/3] 停止 Docker 服务"
@@ -661,6 +721,7 @@ do_down() {
 # ── restart ───────────────────────────────────────────────────────────
 
 do_restart() {
+    need_install_dir
     do_down
     do_up
 }
@@ -668,11 +729,19 @@ do_restart() {
 # ── status ──────────────────────────────────────────────────────────────────
 
 do_status() {
+    need_install_dir
     load_env
-    local ne_port npu_port grafana_port
-    ne_port=$(env_default NODE_EXPORTER_PORT 8084)
-    npu_port=$(env_default NPU_EXPORTER_PORT 8083)
-    grafana_port=$(env_default GRAFANA_PORT 3000)
+    local ne_port ne_host npu_port npu_host frontend_port litellm_port litellm_host postgres_port victoriametrics_port grafana_port
+    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
+    ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
+    npu_port=$(env_default NPU_EXPORTER_PORT 8092)
+    npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
+    frontend_port=$(env_default FRONTEND_PORT 8090)
+    litellm_port=$(env_default LITELLM_PORT 8100)
+    litellm_host=$(env_default LITELLM_HOST 127.0.0.1)
+    postgres_port=$(env_default POSTGRES_PORT 5432)
+    victoriametrics_port=$(env_default VICTORIAMETRICS_PORT 8428)
+    grafana_port=$(env_default GRAFANA_PORT 8093)
 
     echo ""
     log "--- docker compose ps ---"
@@ -691,17 +760,17 @@ do_status() {
         fi
     }
 
-    curl -sf "http://127.0.0.1:${ne_port}/metrics" &>/dev/null \
-        && _check "node_exporter    (:${ne_port})" 1 \
-        || _check "node_exporter    (:${ne_port})" 0
+    curl --connect-timeout 3 --max-time 5 -sf "http://${ne_host}:${ne_port}/metrics" &>/dev/null \
+        && _check "node_exporter    (${ne_host}:${ne_port})" 1 \
+        || _check "node_exporter    (${ne_host}:${ne_port})" 0
 
-    curl -sf "http://127.0.0.1:${npu_port}/metrics" &>/dev/null \
-        && _check "npu_exporter     (:${npu_port})" 1 \
-        || _check "npu_exporter     (:${npu_port})" 0
+    curl --connect-timeout 3 --max-time 5 -sf "http://${npu_host}:${npu_port}/metrics" &>/dev/null \
+        && _check "npu_exporter     (${npu_host}:${npu_port})" 1 \
+        || _check "npu_exporter     (${npu_host}:${npu_port})" 0
 
-    curl -sfI "http://127.0.0.1:8080/" &>/dev/null \
-        && _check "frontend         (:8080)" 1 \
-        || _check "frontend         (:8080)" 0
+    curl --connect-timeout 3 --max-time 5 -sfI "http://127.0.0.1:${frontend_port}/" &>/dev/null \
+        && _check "frontend         (:${frontend_port})" 1 \
+        || _check "frontend         (:${frontend_port})" 0
 
     docker compose exec -T image-process \
         .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')" \
@@ -709,19 +778,19 @@ do_status() {
         && _check "image-process    (internal)" 1 \
         || _check "image-process    (internal)" 0
 
-    docker ps --filter "name=deploy-postgres-1" --format "{{.Status}}" 2>/dev/null | grep -qi healthy \
-        && _check "postgres         (:5432)" 1 \
-        || _check "postgres         (:5432)" 0
+    docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-agentos}" 2>/dev/null | grep -qi accepting \
+        && _check "postgres         (127.0.0.1:${postgres_port})" 1 \
+        || _check "postgres         (127.0.0.1:${postgres_port})" 0
 
-    curl -sf "http://127.0.0.1:4000/health/liveliness" 2>/dev/null | grep -qi alive \
-        && _check "litellm          (:4000)" 1 \
-        || _check "litellm          (:4000)" 0
+    curl --connect-timeout 3 --max-time 5 -sf "http://${litellm_host}:${litellm_port}/health/liveliness" 2>/dev/null | grep -qi alive \
+        && _check "litellm          (${litellm_host}:${litellm_port})" 1 \
+        || _check "litellm          (${litellm_host}:${litellm_port})" 0
 
-    curl -sf "http://127.0.0.1:8428/health" 2>/dev/null | grep -qi ok \
-        && _check "victoriametrics  (:8428)" 1 \
-        || _check "victoriametrics  (:8428)" 0
+    curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${victoriametrics_port}/health" 2>/dev/null | grep -qi ok \
+        && _check "victoriametrics  (:${victoriametrics_port})" 1 \
+        || _check "victoriametrics  (:${victoriametrics_port})" 0
 
-    curl -sf "http://127.0.0.1:${grafana_port}/api/health" 2>/dev/null | grep -qi ok \
+    curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${grafana_port}/api/health" 2>/dev/null | grep -qi ok \
         && _check "grafana          (:${grafana_port})" 1 \
         || _check "grafana          (:${grafana_port})" 0
 
@@ -735,13 +804,6 @@ ACTION="${1:-help}"
 INTERACTIVE=0
 CLEAN=0
 
-# 获取真实用户 home 目录（sudo 下 $HOME 可能是 /root）
-if [ -n "$SUDO_USER" ]; then
-    INSTALL_DIR="$(eval echo "~$SUDO_USER")/.agentos/.agent-manager"
-else
-    INSTALL_DIR="$HOME/.agentos/.agent-manager"
-fi
-
 # 扫描所有参数
 for arg in "$@"; do
     case "$arg" in
@@ -750,8 +812,8 @@ for arg in "$@"; do
     esac
 done
 
-# install 时先拷贝到 ~/.agentos/.agent-manager，然后指向新目录
-if [ "$ACTION" = "install" ]; then
+# install 时：若不在目标目录则拷贝过去再执行
+if [ "$ACTION" = "install" ] && [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
     mkdir -p "$INSTALL_DIR" || fail "无法创建目标目录: $INSTALL_DIR"
     log "拷贝 deploy 目录到 $INSTALL_DIR ..."
     cp -a "$DEPLOY_DIR"/. "$INSTALL_DIR"/
@@ -774,16 +836,18 @@ case "$ACTION" in
         echo "用法: sudo bash $0 <command> [options]"
         echo ""
         echo "命令:"
-        echo "  install   安装：拷贝到 ~/.agentos/.agent-manager 后执行（默认非交互）"
+        echo "  install   安装（默认非交互，不在目标目录时自动拷贝到 ~/.agentos/.agent-manager）"
         echo "  uninstall 卸载：停止服务 + 注销 systemd（默认保留数据和 .env）"
         echo "  up        启动：更新 exporter 配置 → 启动服务"
         echo "  down      停止：docker compose → node/npu_exporter（反序）"
         echo "  restart   重启：down → up"
         echo "  status    查看服务状态"
         echo ""
+        echo "注意: up/down/restart/status/uninstall 需在安装目录 ~/.agentos/.agent-manager 下执行"
+        echo ""
         echo "选项:"
         echo "  --interactive, -i  交互式模式（install 时逐项询问，默认非交互）"
-        echo "  --clean            uninstall 时删除数据卷和 .env"
+        echo "  --clean            uninstall 时删除数据卷、.env 和安装目录"
         exit 1
         ;;
 esac
