@@ -1,0 +1,108 @@
+/* 工具面板抽屉 */
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.18);
+  z-index: 1800;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: 400px;
+  max-width: 90vw;
+  height: 100%;
+  background: #fff;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  animation: drawer-in 0.18s ease-out;
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(30px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 10px;
+}
+
+.drawer-title { font-size: 15px; font-weight: 600; }
+
+.drawer-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 18px 12px;
+  border-bottom: 1px solid #f2f2f2;
+}
+
+.drawer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--t2);
+}
+
+.drawer-tab:hover { background: var(--bg-hover); }
+.drawer-tab.is-active { background: var(--t1); color: #fff; }
+
+.drawer-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+
+.drawer-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.drawer-section-title { font-size: 13px; font-weight: 600; color: var(--t2); }
+
+.drawer-file-list { display: flex; flex-direction: column; gap: 4px; }
+
+.drawer-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--t1);
+  text-align: left;
+}
+
+.drawer-file-item:hover { background: var(--bg-hover); }
+.drawer-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.memory-cards { display: flex; gap: 12px; }
+
+.memory-card {
+  flex: 1;
+  border: 1px solid var(--bd-1);
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+}
+
+.memory-value { font-size: 26px; font-weight: 600; color: var(--t1); }
+.memory-label { font-size: 12px; color: var(--t3); margin-top: 6px; }
+
+.drawer-preview { max-width: min(720px, calc(100vw - 48px)); width: 720px; }
+
+.drawer-preview-content {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f7f7f7;
+  border-radius: 10px;
+  padding: 14px;
+}
