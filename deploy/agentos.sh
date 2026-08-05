@@ -155,10 +155,34 @@ _persist_deploy_dir() {
     info "Persisted deploy directory to ${persist_dir}"
 }
 
+# ===== agentos 用户保障（宿主大前提）=====
+# up 时对每台目标主机确保 agentos 用户存在（已存在则跳过，否则 useradd agentos）。
+# 任一台失败即打断 up（agentos 用户是沙箱默认 policy 的运行用户，缺失会导致沙箱起不来）。
+ensure_agentos_user() {
+    info "Ensuring agentos user"
+    local targets="${CLUSTER_HOSTS}"
+    [ -z "${targets}" ] && targets="127.0.0.1"
+    local host
+    local IFS=','
+    for host in ${targets}; do
+        host="$(echo "${host}" | tr -d '[:space:]')"
+        [ -z "${host}" ] && continue
+        if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
+            bash -c 'id -u agentos >/dev/null 2>&1 || useradd agentos' \
+                || error "Failed to create agentos user on ${host}"
+        else
+            ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@${host}" \
+                'id -u agentos >/dev/null 2>&1 || useradd agentos' \
+                || error "Failed to create agentos user on ${host}"
+        fi
+    done
+}
+
 # ===== 命令入口 =====
 deploy_up() {
     echo ""
     info "Starting full deployment (up)"
+    ensure_agentos_user
     info "Modules: ${MODULES[*]}"
     if [ -n "${CLUSTER_HOSTS}" ]; then
         info "Cluster hosts: ${CLUSTER_HOSTS}"

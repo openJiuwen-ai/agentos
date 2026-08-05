@@ -53,6 +53,7 @@ deploy/
 - 目标主机需预装指定版本的 Python（默认 3.11）
 - 部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）
 - `up` / `restart` 不安装 whl 包，请先在各目标主机执行 `install`
+- `up` 时会对每台目标主机（`--hosts` 未指定则默认本机）自动确保 `agentos` 用户存在：已存在则跳过，否则执行 `useradd agentos`；任一台创建失败即中断 `up`。该用户是沙箱默认 policy 的运行用户，缺失会导致沙箱起不来，故需提前具备创建用户的权限
 - 各目标主机需预生成 agent SSH 直连密钥（`up` 默认启用，脚本不生成）。默认路径 `/root/.ssh/`，已存在则无需重复创建：
 
   ```bash
