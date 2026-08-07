@@ -52,7 +52,7 @@ discord.py==2.7.1
 diskcache==5.6.3
 distro==1.9.0
 dnspython==2.8.0
-docstring_parser==0.18
+docstring_parser==0.18.0
 docx2txt==0.9
 durationpy==0.10
 email-validator==2.3.0
@@ -223,4 +223,5 @@ wrapt==2.2.2
 xlsxwriter==3.2.9
 yarl==1.24.5
 zipp==4.1.0
-openjiuwen==0.1.16
+slack-bolt==1.30.0
+slack-sdk==3.43.0
