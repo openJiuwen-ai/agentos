@@ -164,6 +164,25 @@ class TestBuildFiltering:
         assert "ws://localhost" in result
 
     @staticmethod
+    def test_gateway_url_arg_filtered(adapter, context):
+        argv = ("--gateway-url", "https://gw.example.com", "--url", "ws://localhost")
+        result = adapter.build_primary_argv(argv, LaunchMode.MANAGED, context)
+        # --gateway-url 是 launcher 自有参数，不传递给 JiuwenSwarm。
+        assert "--gateway-url" not in result
+        assert "https://gw.example.com" not in result
+        # 但 TUI --url 保留。
+        assert "--url" in result
+        assert "ws://localhost" in result
+
+    @staticmethod
+    def test_gateway_url_equal_form_filtered(adapter, context):
+        argv = ("--gateway-url=https://gw.example.com", "--url", "ws://localhost")
+        result = adapter.build_primary_argv(argv, LaunchMode.MANAGED, context)
+        assert "--gateway-url=https://gw.example.com" not in result
+        assert "--url" in result
+        assert "ws://localhost" in result
+
+    @staticmethod
     def test_separator_removed(adapter, context):
         argv = ("--", "--url", "ws://localhost")
         result = adapter.build_primary_argv(argv, LaunchMode.MANAGED, context)
@@ -176,3 +195,52 @@ class TestBuildFiltering:
         result = adapter.build_primary_argv(argv, LaunchMode.MANAGED, context)
         assert "--api-url=https://api.example.com" not in result
         assert "--url" in result
+
+
+class TestBuildGatewayUrl:
+    """测试 build_primary_argv 的 --url 注入逻辑。"""
+
+    @staticmethod
+    def test_managed_injects_gateway_url(adapter, context):
+        """托管模式：提供 gateway_url 时注入 --url。"""
+        gateway_url = "https://gw.example.com"
+        result = adapter.build_primary_argv(
+            (), LaunchMode.MANAGED, context, gateway_url
+        )
+        assert "--url" in result
+        assert "https://gw.example.com" in result
+        assert "--user-id" in result
+        assert "--token" in result
+
+    @staticmethod
+    def test_managed_no_override_existing_url(adapter, context):
+        """托管模式：若原 argv 已有 --url，不覆盖。"""
+        gateway_url = "https://gw-from-config.example.com"
+        result = adapter.build_primary_argv(
+            ("--url", "https://user-provided.example.com"),
+            LaunchMode.MANAGED,
+            context,
+            gateway_url,
+        )
+        # 用户提供的 --url 优先。
+        assert "--url" in result
+        assert "https://user-provided.example.com" in result
+        assert "https://gw-from-config.example.com" not in result
+
+    @staticmethod
+    def test_managed_no_gateway_url(adapter, context):
+        """托管模式：不提供 gateway_url 时不注入 --url。"""
+        result = adapter.build_primary_argv(
+            (), LaunchMode.MANAGED, context, None
+        )
+        assert "--url" not in result
+        assert "--user-id" in result
+        assert "--token" in result
+
+    @staticmethod
+    def test_explicit_ignores_gateway_url(adapter):
+        """显式模式：网关 URL 不注入（用户自行管理）。"""
+        result = adapter.build_primary_argv(
+            (), LaunchMode.EXPLICIT, None, "https://gw.example.com"
+        )
+        assert "--url" not in result

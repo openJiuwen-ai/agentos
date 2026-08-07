@@ -107,12 +107,12 @@ class TestParseHandoffStdout:
         """PTY 输出中 JSON 行前有 ANSI 光标隐藏序列。"""
         stdout = (
             "\x1b[?25l"  # 隐藏光标
-            '{"action":"switch","content":"switch claude","parsed":"claude"}\n'
+            '{"action":"switch","content":"switch xxx","parsed":"xxx"}\n'
             "\x1b[?25h"  # 显示光标
         )
         msg = parse_handoff_stdout(stdout)
-        assert msg.content == "switch claude"
-        assert msg.parsed == "claude"
+        assert msg.content == "switch xxx"
+        assert msg.parsed == "xxx"
 
     @staticmethod
     def test_ansi_escape_in_pty_output():
@@ -121,20 +121,20 @@ class TestParseHandoffStdout:
             "\x1b[2J\x1b[H"  # 清屏 + 光标归位
             "TUI rendering line 1\r\n"
             "\x1b[32mTUI rendering line 2\x1b[0m\r\n"
-            '{"action":"switch","content":"switch claude","parsed":"claude"}\r\n'
+            '{"action":"switch","content":"switch xxx","parsed":"xxx"}\r\n'
         )
         msg = parse_handoff_stdout(stdout)
-        assert msg.content == "switch claude"
-        assert msg.parsed == "claude"
+        assert msg.content == "switch xxx"
+        assert msg.parsed == "xxx"
 
     @staticmethod
     def test_json_embedded_in_ansi():
         """JSON 被 ANSI 序列包裹（光标移动 + 颜色码）。"""
         stdout = (
             "\x1b[1;1H"  # 光标定位
-            '{"action":"switch","content":"switch claude","parsed":"claude"}'
+            '{"action":"switch","content":"switch xxx","parsed":"xxx"}'
             "\x1b[0m"
         )
         msg = parse_handoff_stdout(stdout)
-        assert msg.content == "switch claude"
-        assert msg.parsed == "claude"
+        assert msg.content == "switch xxx"
+        assert msg.parsed == "xxx"

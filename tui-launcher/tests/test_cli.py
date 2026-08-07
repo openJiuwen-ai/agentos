@@ -51,6 +51,42 @@ class TestUnknownCommand:
 
 class TestParseLauncherArgs:
     @staticmethod
+    def test_gateway_url_space_separated():
+        opts, tui_argv = LauncherCli.parse_launcher_args(
+            ("--gateway-url", "https://gw.example.com", "--url", "ws://localhost")
+        )
+        assert opts.gateway_url == "https://gw.example.com"
+        assert tui_argv == ("--url", "ws://localhost")
+
+    @staticmethod
+    def test_gateway_url_equal_separated():
+        opts, _ = LauncherCli.parse_launcher_args(("--gateway-url=https://gw.example.com",))
+        assert opts.gateway_url == "https://gw.example.com"
+
+    @staticmethod
+    def test_gateway_url_and_api_url_together():
+        opts, tui_argv = LauncherCli.parse_launcher_args(
+            (
+                "--api-url", "https://api.example.com",
+                "--gateway-url", "https://gw.example.com",
+                "--url", "ws://localhost",
+            )
+        )
+        assert opts.api_url == "https://api.example.com"
+        assert opts.gateway_url == "https://gw.example.com"
+        assert tui_argv == ("--url", "ws://localhost")
+
+    @staticmethod
+    def test_gateway_url_missing_value_raises():
+        with pytest.raises(errors.UsageError):
+            LauncherCli.parse_launcher_args(("--gateway-url",))
+
+    @staticmethod
+    def test_gateway_url_empty_value_raises():
+        with pytest.raises(errors.UsageError):
+            LauncherCli.parse_launcher_args(("--gateway-url=",))
+
+    @staticmethod
     def test_api_url_space_separated():
         opts, tui_argv = LauncherCli.parse_launcher_args(
             ("--api-url", "https://api.example.com", "--url", "ws://localhost")

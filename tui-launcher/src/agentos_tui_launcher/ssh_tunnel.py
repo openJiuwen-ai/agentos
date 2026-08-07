@@ -84,10 +84,27 @@ class ParamikoSshTunnelClient:
                 timeout=15,
                 allow_agent=True,
                 look_for_keys=True,
+                disabled_algorithms={"pubkeys": ["ssh-dss"]},
             )
+        except TypeError:
+            try:
+                client.connect(
+                    hostname=ssh_ip,
+                    port=ssh_port,
+                    username=username,
+                    timeout=15,
+                    allow_agent=True,
+                    look_for_keys=True,
+                )
+            except Exception as exc:
+                raise errors.SshTunnelError(
+                    f"SSH 连接失败 ({ssh_ip}:{ssh_port}, user={username}): "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
         except Exception as exc:
             raise errors.SshTunnelError(
-                f"SSH 连接失败: {type(exc).__name__}"
+                f"SSH 连接失败 ({ssh_ip}:{ssh_port}, user={username}): "
+                f"{type(exc).__name__}: {exc}"
             ) from exc
 
         try:

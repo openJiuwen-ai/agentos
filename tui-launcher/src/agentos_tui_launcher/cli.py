@@ -239,7 +239,7 @@ class LauncherCli:
         # 1. 解析 launcher 自有参数和 TUI 参数。
         launcher_opts, tui_argv = self.parse_launcher_args(argv)
 
-        # 2. 构造 SessionService。
+        # 2. 构造 SessionService（会保存 --gateway-url / --api-url 到 config）。
         session = self._build_session_service(launcher_opts)
 
         # 3. 分析 tui_argv 决定模式。
@@ -263,10 +263,7 @@ class LauncherCli:
             self._err("Primary executable (jiuwenswarm-tui) not found.")
             return EXIT_EXECUTABLE
 
-        # 6. 构造主 TUI argv。
-        primary_argv = adapter.build_primary_argv(tui_argv, mode, context)
-
-        # 7. 提取 gateway URL（用于 SWITCH_CC 时的 WS 调用）。
+        # 6. 提取 gateway URL（用于 SWITCH_CC 时的 WS 调用，也传给 jiuwenswarm-tui）。
         #    优先级：显式 gateway_url > websocket_url > --url from argv。
         config_store = FileConfigStore()
         cfg = config_store.load()
@@ -275,6 +272,9 @@ class LauncherCli:
             or cfg.websocket_url
             or self._extract_url_from_argv(tui_argv)
         )
+
+        # 7. 构造主 TUI argv（托管模式注入 --user-id, --token, --url）。
+        primary_argv = adapter.build_primary_argv(tui_argv, mode, context, gateway_url)
 
         # 8. 提取显式模式的 token（用于 gateway WS 认证）。
         explicit_token = None
@@ -372,9 +372,12 @@ class LauncherCli:
             "  whoami      Show current identity.\n"
             "\n"
             "Launcher options:\n"
-            "  --api-url <url>      IAM / User API base URL.\n"
-            "  --no-save-login       Do not persist refresh token to secure storage.\n"
-            "  --                    Separator; following args are passed to JiuwenSwarm TUI.\n"
+            "  -h, --help              Show this help and exit.\n"
+            "  -V, --version           Show version and exit.\n"
+            "  --api-url <url>        IAM / User API base URL.\n"
+            "  --gateway-url <url>    Gateway URL passed to JiuwenSwarm TUI as --url.\n"
+            "  --no-save-login         Do not persist refresh token to secure storage.\n"
+            "  --                      Separator; following args are passed to JiuwenSwarm TUI.\n"
             "\n"
             "Exit codes:\n"
             "  0  success\n"
@@ -399,6 +402,7 @@ class LauncherCli:
         `--` 之后的元素全部归 tui_argv。
         """
         api_url: Optional[str] = None
+        gateway_url: Optional[str] = None
         no_save_login = False
         tui_args: list[str] = []
         seen_separator = False
@@ -432,6 +436,20 @@ class LauncherCli:
                 i += 1
                 continue
 
+            if arg == "--gateway-url":
+                if i + 1 >= n:
+                    raise errors.UsageError("--gateway-url requires a value.")
+                gateway_url = argv[i + 1]
+                i += 2
+                continue
+
+            if arg.startswith("--gateway-url="):
+                gateway_url = arg[len("--gateway-url="):]
+                if not gateway_url:
+                    raise errors.UsageError("--gateway-url value is empty.")
+                i += 1
+                continue
+
             if arg == "--no-save-login":
                 no_save_login = True
                 i += 1
@@ -442,40 +460,55 @@ class LauncherCli:
             i += 1
 
         return (
-            _LauncherOpts(api_url=api_url, no_save_login=no_save_login),
+            _LauncherOpts(
+                api_url=api_url,
+                no_save_login=no_save_login,
+                gateway_url=gateway_url,
+            ),
             tuple(tui_args),
         )
 
     def _build_session_service(self, opts: "_LauncherOpts") -> SessionServiceImpl:
         """构造 SessionService 及其依赖。"""
         config_store = FileConfigStore()
+        cfg = config_store.load()
+        need_save = False
 
         # 如果命令行提供了 --api-url，覆盖配置中的值。
         if opts.api_url is not None:
-            cfg = config_store.load()
-            config_store.save(
-                ClientConfig(
-                    api_url=opts.api_url,
-                    websocket_url=cfg.websocket_url,
-                    last_user_id=cfg.last_user_id,
-                    last_username=cfg.last_username,
-                    allow_insecure_http=cfg.allow_insecure_http,
-                    gateway_url=cfg.gateway_url,
-                )
+            cfg = ClientConfig(
+                api_url=opts.api_url,
+                websocket_url=cfg.websocket_url,
+                last_user_id=cfg.last_user_id,
+                last_username=cfg.last_username,
+                allow_insecure_http=cfg.allow_insecure_http,
+                gateway_url=cfg.gateway_url,
             )
+            need_save = True
+
+        # 如果命令行提供了 --gateway-url，覆盖配置中的值。
+        if opts.gateway_url is not None:
+            cfg = ClientConfig(
+                api_url=cfg.api_url,
+                websocket_url=cfg.websocket_url,
+                last_user_id=cfg.last_user_id,
+                last_username=cfg.last_username,
+                allow_insecure_http=cfg.allow_insecure_http,
+                gateway_url=opts.gateway_url,
+            )
+            need_save = True
+
+        if need_save:
+            config_store.save(cfg)
 
         # 安全存储：优先 keyring，不可用时回退到文件存储（跨进程持久化）。
         try:
             cred_store = KeyringCredentialStore()
         except errors.CredentialStoreUnavailable:
-            self._err(
-                "Warning: OS secure storage unavailable; "
-                "falling back to file-based credential store "
-                "(~/.config/agentos/tui-launcher/credentials.json, mode 0600)."
-            )
             cred_store = FileCredentialStore()
 
         cfg = config_store.load()
+        self._out(f"Config: {config_store.config_path()}")
         auth_client = RequestsAuthClient(
             allow_insecure_http=cfg.allow_insecure_http
         )
@@ -650,20 +683,9 @@ class LauncherCli:
                     )
                     return EXIT_AUTH
                 switch_timestamps.append(now)
-
                 # 1. 从 stdout 解析 handoff JSON。
                 if not result.stdout:
-                    # Windows 继承模式下无法捕获 stdout；POSIX 下不应发生。
-                    if os.name == "nt":
-                        self._err(
-                            "Handoff capture unavailable on Windows: "
-                            "PTY not supported, cannot read TUI stdout. "
-                            "Run launcher on Linux/macOS for SWITCH_CC support."
-                        )
-                    else:
-                        self._err(
-                            "Handoff capture failed: TUI stdout is empty."
-                        )
+                    self._err("Handoff capture failed: TUI stdout is empty.")
                     return EXIT_INTERNAL
                 try:
                     handoff = parse_handoff_stdout(result.stdout)
@@ -783,6 +805,7 @@ class LauncherCli:
                         supervisor=supervisor,
                         base_env=base_env,
                         cwd=cwd,
+                        gateway_url=gateway_url,
                     )
                 except (errors.NetworkUnavailable, errors.RemoteServiceError) as exc:
                     self._err(f"Network/remote error during refresh: {exc}")
@@ -791,7 +814,7 @@ class LauncherCli:
                 # 重新构造 argv。
                 current_context = new_context
                 current_argv = adapter.build_primary_argv(
-                    tui_argv, mode, new_context
+                    tui_argv, mode, new_context, gateway_url
                 )
                 continue
 
@@ -809,6 +832,7 @@ class LauncherCli:
         supervisor: TuiSupervisor,
         base_env: dict[str, str],
         cwd: str,
+        gateway_url: Optional[str] = None,
     ) -> int:
         """refresh 被拒绝后进入交互登录流程。
 
@@ -827,7 +851,7 @@ class LauncherCli:
 
         # 重新构造 argv 并启动主 TUI。
         new_argv = adapter.build_primary_argv(
-            tui_argv, LaunchMode.MANAGED, new_context
+            tui_argv, LaunchMode.MANAGED, new_context, gateway_url
         )
         result = supervisor.run_primary(
             primary=primary,
@@ -888,11 +912,18 @@ class LauncherCli:
 class _LauncherOpts:
     """launcher 自有参数解析结果。"""
 
-    __slots__ = ("api_url", "no_save_login")
+    __slots__ = ("api_url", "no_save_login", "gateway_url")
 
-    def __init__(self, *, api_url: Optional[str], no_save_login: bool) -> None:
+    def __init__(
+        self,
+        *,
+        api_url: Optional[str],
+        no_save_login: bool,
+        gateway_url: Optional[str] = None,
+    ) -> None:
         self.api_url = api_url
         self.no_save_login = no_save_login
+        self.gateway_url = gateway_url
 
 
 def _mask_user_id(user_id: str) -> str:

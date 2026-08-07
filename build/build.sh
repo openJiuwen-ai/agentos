@@ -40,6 +40,8 @@ CLIENT_TUI_PACKAGES=()
 SERVER_PACKAGES=()
 
 TUI_LAUNCHER_DIR="${PROJECT_ROOT}/tui-launcher"
+TUI_LAUNCHER_VERSION="0.1.0"
+TUI_LAUNCHER_PACKAGES=()
 
 usage() {
   cat <<EOF
@@ -251,6 +253,13 @@ configure_daily() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_x86_64.whl"
   )
 
+  TUI_LAUNCHER_PACKAGES=(
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
+  )
+
   SERVER_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
     "${OPENYUANRONG_PACKAGES[@]}"
@@ -291,6 +300,13 @@ configure_release() {
   CLIENT_TUI_PACKAGES=(
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-macosx_11_0_arm64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-win_amd64.whl"
+  )
+
+  TUI_LAUNCHER_PACKAGES=(
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
+    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
   )
 
   SERVER_PACKAGES=(
@@ -435,7 +451,7 @@ build_conch() {
 }
 
 build_tui_launcher() {
-  echo "==> build_tui_launcher"
+  echo "==> build_tui_launcher (version=${TUI_LAUNCHER_VERSION})"
   local dist_dir="${DOWNLOAD_DIR}/tui-launcher"
   mkdir -p "${dist_dir}"
 
@@ -450,10 +466,25 @@ build_tui_launcher() {
     return 1
   fi
 
+  # pip wheel 构建出 py3-none-any 的纯 Python wheel，此处复制为各平台命名的 wheel，
+  # 与 jiuwenswarm_tui 保持一致的多平台打包方式
+  local base_whl=""
   for whl in "${dist_dir}"/*.whl; do
     if [[ -f "${whl}" ]]; then
+      base_whl="${whl}"
       echo "  built: $(basename "${whl}")"
+      break
     fi
+  done
+
+  if [[ -z "${base_whl}" ]]; then
+    echo "error: tui-launcher wheel not found after build" >&2
+    return 1
+  fi
+
+  for pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
+    cp "${base_whl}" "${dist_dir}/${pkg}"
+    echo "  created: ${pkg}"
   done
 }
 
@@ -489,7 +520,9 @@ pack() {
   done
 
   # tui-launcher whl 与 jiuwenswarm_tui 放在同一目录（client 包），因为 tui-launcher 依赖 jiuwenswarm 运行时
-  cp "${DOWNLOAD_DIR}/tui-launcher/"*.whl "${client_staging}/" 2>/dev/null || true
+  for pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
+    cp "${DOWNLOAD_DIR}/tui-launcher/${pkg}" "${client_staging}/"
+  done
 
   for pkg in "${SERVER_PACKAGES[@]}"; do
     if [[ "${pkg}" == jiuwenswarm-* ]]; then

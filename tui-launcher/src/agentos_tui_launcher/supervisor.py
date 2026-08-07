@@ -21,6 +21,7 @@ launcher 从主 TUI 的 stdout 读取 handoff JSON，通过 gateway WS + SSH 隧
 
 from __future__ import annotations
 
+import ctypes
 import os
 import signal
 import subprocess
@@ -42,6 +43,25 @@ from .protocol import (
     SWITCH_CC_EXIT_CODE,
 )
 from .resolver import ExecutableResolver, ResolvedExecutable
+
+
+def _win_wintypes_fallback(name: str, base_type) -> None:
+    """为缺失的 ctypes.wintypes 属性提供兜底定义（仅 Windows）。"""
+    if not hasattr(wintypes, name):
+        setattr(wintypes, name, base_type)
+
+
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    # 兼容旧版 Python 缺失的类型
+    _win_wintypes_fallback("HRESULT", wintypes.LONG)
+    _win_wintypes_fallback("DWORD_PTR", ctypes.c_ulonglong)
+    _win_wintypes_fallback("SIZE_T", ctypes.c_size_t)
+    _win_wintypes_fallback(
+        "LPSECURITY_ATTRIBUTES",
+        ctypes.c_void_p,
+    )
 
 
 # ============================================================================
@@ -186,6 +206,77 @@ class SupervisionProtocol:
 # ============================================================================
 
 
+class _ConptyPopenProxy:
+    """ConPTY 进程的轻量代理，提供与 subprocess.Popen 兼容的接口。
+
+    SubprocessRunner.forward_termination() 依赖 _current_proc 的
+    send_signal() 和 wait() 方法。本代理将 ConPTY 的原始 HANDLE
+    包装为兼容接口，避免对 SubprocessRunner 做侵入式改动。
+    """
+
+    def __init__(self, handle: int, pid: int) -> None:
+        self._handle = handle
+        self.pid = pid
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        self._terminate_process = kernel32.TerminateProcess
+        self._terminate_process.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self._terminate_process.restype = wintypes.BOOL
+
+        self._wait_for_single_object = kernel32.WaitForSingleObject
+        self._wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self._wait_for_single_object.restype = wintypes.DWORD
+
+    def send_signal(self, sig: int) -> None:
+        """发送信号；ConPTY 不支持 CTRL_BREAK_EVENT 转发，统一终止进程。"""
+        self._terminate_process(wintypes.HANDLE(self._handle), 1)
+
+    def wait(self, timeout: Optional[float] = None) -> int:
+        """等待进程退出，返回退出码。"""
+        infinite = 0xFFFFFFFF
+        wait_object_0 = 0
+
+        if timeout is None:
+            ms = infinite
+        else:
+            ms = int(timeout * 1000)
+
+        rc = self._wait_for_single_object(
+            wintypes.HANDLE(self._handle), wintypes.DWORD(ms)
+        )
+        if rc == wait_object_0:
+            # 获取退出码
+            exit_code = wintypes.DWORD()
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            get_exit_code_process = kernel32.GetExitCodeProcess
+            get_exit_code_process.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(wintypes.DWORD),
+            ]
+            get_exit_code_process.restype = wintypes.BOOL
+            get_exit_code_process(
+                wintypes.HANDLE(self._handle), ctypes.byref(exit_code)
+            )
+            return exit_code.value
+        raise subprocess.TimeoutExpired(
+            cmd="<ConPTY process>", timeout=timeout or 0
+        )
+
+    def poll(self) -> Optional[int]:
+        """非阻塞检查进程是否退出。"""
+        rc = self._wait_for_single_object(
+            wintypes.HANDLE(self._handle), wintypes.DWORD(0)
+        )
+        if rc == 0:  # WAIT_OBJECT_0
+            return self.wait()
+        return None
+
+    def kill(self) -> None:
+        """强制终止进程。"""
+        self._terminate_process(wintypes.HANDLE(self._handle), 9)
+
+
 class SubprocessRunner:
     """基于 subprocess 的 ProcessRunner 实现。
 
@@ -193,13 +284,10 @@ class SubprocessRunner:
     - **POSIX**：使用 PTY（pty.openpty）启动子进程，stdin/stdout/stderr 均指向
       PTY slave 端。TUI 检测 isTTY 通过，launcher 从 master 端读取输出。
       这是 tui-switch-cc-launcher-interface.md 第 4 节的硬性要求。
-    - **Windows**：Windows 没有 PTY，但 Windows 控制台本身对子进程表现为 TTY，
-      因此子进程直接继承 launcher 的 stdin/stdout/stderr 句柄即可让 isTTY 通过。
-      无法捕获 stdout（继承模式下没有管道），handoff JSON 通过 TUI 退出前的
-      alternate screen 释放后输出到同一个控制台；launcher 在该模式下无法捕获。
-      生产环境应在 POSIX 环境（Linux/macOS）运行 launcher 以获得完整 handoff 支持。
+    - **Windows**：使用 ConPTY（Windows 10 1809+）启动子进程，同时满足
+      isTTY 检测和 stdout 捕获。若 ConPTY 不可用则回退到控制台继承模式。
     - launcher 收到 SIGINT/SIGTERM 时转发给当前子进程并等待回收。
-    - 返回实际退出码与捕获的 stdout（Windows 下 stdout 为空字符串）。
+    - 返回实际退出码与捕获的 stdout。
     """
 
     def __init__(self) -> None:
@@ -413,18 +501,34 @@ class SubprocessRunner:
                 break
 
     def _run_foreground_windows(self, spec: ProcessSpec) -> ProcessResult:
-        """Windows：子进程继承控制台句柄。
+        """Windows：使用 ConPTY 启动子进程，提供 TTY 同时捕获 stdout。
 
-        Windows 控制台本身对子进程表现为 TTY，Node.js 检测 isTTY 会通过。
-        但继承模式下无法捕获 stdout，handoff JSON 会直接输出到控制台。
-        返回 stdout=""，调用方需感知 Windows 下无法捕获 handoff。
+        ConPTY（Windows 10 1809+）是 Windows 版的 PTY，同时满足：
+        1. 子进程检测 isTTY 通过
+        2. launcher 可捕获 stdout（含 handoff JSON）
         """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+        try:
+            _logger.info("Attempting ConPTY mode for Windows child process.")
+            return self._run_foreground_windows_conpty(spec)
+        except Exception as exc:
+            # ConPTY 不可用（< Windows 10 1809 或初始化失败），回退到继承模式。
+            _logger.warning(
+                f"ConPTY failed: {exc} - falling back to legacy console-inherit mode."
+            )
+            # 输出完整 traceback，便于诊断 ConPTY 路径的具体失败点。
+            _logger.debug("ConPTY failure traceback:", exc_info=True)
+            return self._run_foreground_windows_legacy(spec)
+
+    def _run_foreground_windows_legacy(self, spec: ProcessSpec) -> ProcessResult:
+        """Windows 继承模式：子进程继承控制台句柄，无法捕获 stdout。"""
         try:
             proc = subprocess.Popen(
                 [spec.executable.absolute_path, *spec.argv],
                 env=spec.env,
                 cwd=spec.cwd,
-                # 继承父进程的控制台句柄；不使用 PIPE，否则 isTTY 检测失败。
                 stdin=sys.stdin,
                 stdout=sys.stdout,
                 stderr=sys.stderr,
@@ -440,14 +544,457 @@ class SubprocessRunner:
             ) from exc
 
         self._current_proc = proc
-
         try:
             exit_code = proc.wait()
         finally:
             self._current_proc = None
-
-        # Windows 继承模式下无法捕获 stdout
         return ProcessResult(exit_code=exit_code, stdout="")
+
+    # ------------------------------------------------------------------
+    # Windows ConPTY helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _conpty_create_pipes() -> tuple[int, int, int, int]:
+        """创建 ConPTY 所需的输入/输出管道。
+
+        Returns (input_read, input_write, output_read, output_write) 均为 Win32 HANDLE。
+        """
+        import _winapi
+
+        input_read, input_write = _winapi.CreatePipe(None, 0)
+        output_read, output_write = _winapi.CreatePipe(None, 0)
+        return input_read, input_write, output_read, output_write
+
+    @staticmethod
+    def _conpty_get_console_size() -> tuple[int, int]:
+        """获取当前控制台窗口尺寸（列, 行）。"""
+        import _winapi
+
+        class COORD(ctypes.Structure):
+            _fields_ = [("X", ctypes.c_short), ("Y", ctypes.c_short)]
+
+        class ConsoleScreenBufferInfo(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", COORD),
+                ("dwCursorPosition", COORD),
+                ("wAttributes", wintypes.WORD),
+                ("srWindow", wintypes.SMALL_RECT),
+                ("dwMaximumWindowSize", COORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_console_screen_buffer_info = kernel32.GetConsoleScreenBufferInfo
+        get_console_screen_buffer_info.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(ConsoleScreenBufferInfo),
+        ]
+        get_console_screen_buffer_info.restype = wintypes.BOOL
+
+        conout = wintypes.HANDLE(_winapi.GetStdHandle(_winapi.STD_OUTPUT_HANDLE))
+        csbi = ConsoleScreenBufferInfo()
+        if not get_console_screen_buffer_info(conout, ctypes.byref(csbi)):
+            # 获取失败时使用默认 80×24
+            return 80, 24
+
+        sr = csbi.srWindow
+        cols = max(1, sr.Right - sr.Left + 1)
+        rows = max(1, sr.Bottom - sr.Top + 1)
+        return cols, rows
+
+    def _run_foreground_windows_conpty(self, spec: ProcessSpec) -> ProcessResult:
+        """Windows ConPTY 模式：创建伪控制台并双向转发 I/O。"""
+        import _winapi
+        import msvcrt
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        # --- 数据类型定义 ---
+
+        class COORD(ctypes.Structure):
+            _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+
+        class STARTUPINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("lpReserved", wintypes.LPWSTR),
+                ("lpDesktop", wintypes.LPWSTR),
+                ("lpTitle", wintypes.LPWSTR),
+                ("dwX", wintypes.DWORD),
+                ("dwY", wintypes.DWORD),
+                ("dwXSize", wintypes.DWORD),
+                ("dwYSize", wintypes.DWORD),
+                ("dwXCountChars", wintypes.DWORD),
+                ("dwYCountChars", wintypes.DWORD),
+                ("dwFillAttribute", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("wShowWindow", wintypes.WORD),
+                ("cbReserved2", wintypes.WORD),
+                ("lpReserved2", wintypes.LPBYTE),
+                ("hStdInput", wintypes.HANDLE),
+                ("hStdOutput", wintypes.HANDLE),
+                ("hStdError", wintypes.HANDLE),
+            ]
+
+        class ProcessInformation(ctypes.Structure):
+            _fields_ = [
+                ("hProcess", wintypes.HANDLE),
+                ("hThread", wintypes.HANDLE),
+                ("dwProcessId", wintypes.DWORD),
+                ("dwThreadId", wintypes.DWORD),
+            ]
+
+        # STARTUPINFOEXW：扩展的 STARTUPINFO，携带 ConPTY 属性。
+        extended_startupinfo_present = 0x00080000
+
+        class STARTUPINFOEXW(ctypes.Structure):
+            _fields_ = [
+                ("StartupInfo", STARTUPINFOW),
+                ("lp_attribute_list", ctypes.c_void_p),
+            ]
+
+        # --- 1. 管道 ---
+        input_read, input_write, output_read, output_write = self._conpty_create_pipes()
+        _logger.debug(
+            f"ConPTY pipes created: in_r={input_read} in_w={input_write} "
+            f"out_r={output_read} out_w={output_write}"
+        )
+        h_input_read = wintypes.HANDLE(input_read)
+        h_output_write = wintypes.HANDLE(output_write)
+
+        # --- 2. 控制台尺寸 ---
+        cols, rows = self._conpty_get_console_size()
+
+        # --- 3. CreatePseudoConsole ---
+        create_pseudo_console = kernel32.CreatePseudoConsole
+        create_pseudo_console.argtypes = [
+            COORD,
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        create_pseudo_console.restype = wintypes.LONG
+
+        close_pseudo_console = kernel32.ClosePseudoConsole
+        close_pseudo_console.argtypes = [wintypes.HANDLE]
+        close_pseudo_console.restype = None
+
+        hpc = wintypes.HANDLE()
+        hr = create_pseudo_console(
+            COORD(cols, rows), h_input_read, h_output_write, 0, ctypes.byref(hpc)
+        )
+        _logger.info(f"CreatePseudoConsole HR=0x{hr & 0xFFFFFFFF:08x} cols={cols} rows={rows}")
+        if hr != 0:
+            self._conpty_close_pipes_silent(
+                input_read, input_write, output_read, output_write
+            )
+            raise OSError(f"CreatePseudoConsole failed: 0x{hr & 0xFFFFFFFF:08x}")
+
+        # --- 4. 属性列表（把 ConPTY 句柄注入子进程） ---
+        proc_thread_attribute_pseudoconsole = 0x00020016
+
+        initialize_proc_thread_attribute_list = kernel32.InitializeProcThreadAttributeList
+        # 注意：最后一个参数是 PSIZE_T（SIZE_T*），不是 POINTER(LPSIZE)。
+        # ctypes.wintypes.LPSIZE 本身就是指针类型（LP_SIZE），
+        # 若写成 POINTER(LPSIZE) 会得到 LP_LP_SIZE，与 byref() 传入的
+        # SIZE_T* 不匹配，导致 "expected LP_LP_SIZE instance instead of
+        # pointer to c_ulonglong" 的 TypeError。
+        initialize_proc_thread_attribute_list.argtypes = [
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        initialize_proc_thread_attribute_list.restype = wintypes.BOOL
+
+        update_proc_thread_attribute = kernel32.UpdateProcThreadAttribute
+        update_proc_thread_attribute.argtypes = [
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD_PTR,
+            ctypes.c_void_p,
+            wintypes.SIZE_T,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        update_proc_thread_attribute.restype = wintypes.BOOL
+
+        delete_proc_thread_attribute_list = kernel32.DeleteProcThreadAttributeList
+        delete_proc_thread_attribute_list.argtypes = [ctypes.c_void_p]
+        delete_proc_thread_attribute_list.restype = None
+
+        # 第一步：获取所需大小
+        size_needed = wintypes.SIZE_T()
+        initialize_proc_thread_attribute_list(None, 1, 0, ctypes.byref(size_needed))
+
+        attr_buf = ctypes.create_string_buffer(size_needed.value)
+        if not initialize_proc_thread_attribute_list(
+            attr_buf, 1, 0, ctypes.byref(size_needed)
+        ):
+            close_pseudo_console(hpc)
+            self._conpty_close_pipes_silent(
+                input_read, input_write, output_read, output_write
+            )
+            raise OSError("InitializeProcThreadAttributeList failed")
+
+        if not update_proc_thread_attribute(
+            attr_buf,
+            0,
+            proc_thread_attribute_pseudoconsole,
+            hpc,
+            ctypes.sizeof(wintypes.HANDLE),
+            None,
+            None,
+        ):
+            delete_proc_thread_attribute_list(attr_buf)
+            close_pseudo_console(hpc)
+            self._conpty_close_pipes_silent(
+                input_read, input_write, output_read, output_write
+            )
+            raise OSError("UpdateProcThreadAttribute failed")
+
+        # --- 5. STARTUPINFOEX ---
+        si = STARTUPINFOEXW()
+        si.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEXW)
+        si.StartupInfo.dwFlags = extended_startupinfo_present
+        si.lp_attribute_list = ctypes.cast(attr_buf, ctypes.c_void_p)
+
+        # --- 6. CreateProcess ---
+        create_process_w = kernel32.CreateProcessW
+        create_process_w.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            wintypes.LPVOID,
+            wintypes.LPVOID,
+            wintypes.BOOL,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.LPCWSTR,
+            ctypes.POINTER(STARTUPINFOEXW),
+            ctypes.POINTER(ProcessInformation),
+        ]
+        create_process_w.restype = wintypes.BOOL
+
+        cmdline = subprocess.list2cmdline(
+            [spec.executable.absolute_path, *spec.argv]
+        )
+
+        # 子进程环境：必须显式传入 spec.env（含 AGENTOS_TUI_SUPERVISED、
+        # AGENTOS_TUI_SWITCH_CC_EXIT_CODE 等协议变量）。lpEnvironment=None 只会
+        # 继承 launcher 的 os.environ，协议变量会全部丢失，导致 TUI 不识别托管状态。
+        create_unicode_environment = 0x00000400
+        env_block = self._conpty_build_env_block(spec.env)
+        env_buf = ctypes.create_string_buffer(env_block)
+        lp_environment = ctypes.cast(env_buf, ctypes.c_void_p)
+
+        creation_flags = self._win_creation_flags() | create_unicode_environment
+
+        pi = ProcessInformation()
+        if not create_process_w(
+            None,               # lpApplicationName
+            cmdline,            # lpCommandLine
+            None,               # lpProcessAttributes
+            None,               # lpThreadAttributes
+            False,              # bInheritHandles
+            creation_flags | 0x00080000,  # EXTENDED_STARTUPINFO_PRESENT
+            lp_environment,     # lpEnvironment（Unicode 环境块）
+            spec.cwd,           # lpCurrentDirectory
+            ctypes.byref(si),   # lpStartupInfo
+            ctypes.byref(pi),   # lpProcessInformation
+        ):
+            err = ctypes.get_last_error()
+            delete_proc_thread_attribute_list(attr_buf)
+            close_pseudo_console(hpc)
+            self._conpty_close_pipes_silent(
+                input_read, input_write, output_read, output_write
+            )
+            raise OSError(f"CreateProcessW failed: error {err}")
+
+        # 不需要的属性列表和 ConPTY 输出写端可以关闭
+        delete_proc_thread_attribute_list(attr_buf)
+        _winapi.CloseHandle(output_write)
+        _winapi.CloseHandle(pi.hThread)
+
+        _logger.info(f"ConPTY process created: pid={pi.dwProcessId} handle={pi.hProcess} cmd={cmdline}")
+
+        # 创建 subprocess.Popen 封装以便统一 forward_termination
+        proc_handle_value = pi.hProcess
+        proc_handle = wintypes.HANDLE(proc_handle_value)
+        self._current_proc = _ConptyPopenProxy(proc_handle_value, pi.dwProcessId)
+
+        # --- 7. I/O 转发 ---
+        self._stdout_chunks = []
+
+        input_write_fd = msvcrt.open_osfhandle(input_write, os.O_WRONLY)
+
+        def _output_reader() -> None:
+            """后台线程：从 ConPTY 输出管道读取，转发到控制台并捕获。
+
+            不依赖外部 stop 事件；持续读到管道关闭（EOF）为止，
+            确保进程退出前的最后输出（handoff JSON）也不会丢失。
+            """
+            try:
+                read_fd = msvcrt.open_osfhandle(output_read, os.O_RDONLY)
+                # 通过 Python 的 stdout 写入：控制台场景走 WriteConsoleW（UTF-8
+                # 字节转 UTF-16 渲染，不受控制台活动代码页影响），重定向到文件时
+                # 按 UTF-8 原始字节写入。不能直接 WriteFile 到控制台句柄——
+                # 那会按活动代码页（中文系统常为 936/GBK）解释字节，
+                # UTF-8 多字节字符（█、╗、中文等）会乱码。
+                stdout_buffer = sys.stdout.buffer
+                while True:
+                    try:
+                        data = os.read(read_fd, 4096)
+                        if not data:
+                            break
+                        self._stdout_chunks.append(data)
+                        stdout_buffer.write(data)
+                        stdout_buffer.flush()
+                    except OSError:
+                        break
+            except Exception as exc:
+                _logger.debug("ConPTY output reader stopped: %s", exc)
+
+        def _input_forwarder() -> None:
+            """后台线程：从 stdin 读取并转发到 ConPTY 输入管道。"""
+            try:
+                stdin_fd = msvcrt.open_osfhandle(
+                    _winapi.GetStdHandle(_winapi.STD_INPUT_HANDLE), os.O_RDONLY
+                )
+                while True:
+                    try:
+                        data = os.read(stdin_fd, 1024)
+                        if not data:
+                            break
+                        os.write(input_write_fd, data)
+                    except OSError:
+                        break
+            except Exception as exc:
+                _logger.debug("ConPTY input forwarder stopped: %s", exc)
+
+        output_thread = threading.Thread(target=_output_reader, daemon=True)
+        input_thread = threading.Thread(target=_input_forwarder, daemon=True)
+
+        # 启动转发前把 launcher 控制台切到 raw 模式（逐键读取 VT 序列），
+        # 结束后恢复。若 stdin 非控制台则静默跳过。
+        raw_console = False
+        try:
+            self._set_win_console_raw(True)
+            raw_console = True
+        except Exception as exc:
+            # raw 模式切换失败（非控制台等）时静默降级，仅记录不阻断。
+            _logger.debug("Failed to enable raw console mode: %s", exc)
+
+        output_thread.start()
+        input_thread.start()
+
+        try:
+            # 主线程：等待子进程退出
+            wait_for_single_object = kernel32.WaitForSingleObject
+            wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            wait_for_single_object.restype = wintypes.DWORD
+            wait_for_single_object(proc_handle, 0xFFFFFFFF)
+        finally:
+            if raw_console:
+                self._set_win_console_raw(False)
+            # 关闭输入写端 → ConPTY 感知 EOF → 刷新输出 → reader 收到 EOF
+            os.close(input_write_fd)
+            output_thread.join(timeout=3)
+            input_thread.join(timeout=2)
+
+        # --- 8. 获取退出码 ---
+        exit_code_proc = wintypes.DWORD()
+        get_exit_code_process = kernel32.GetExitCodeProcess
+        get_exit_code_process.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        get_exit_code_process.restype = wintypes.BOOL
+        get_exit_code_process(proc_handle, ctypes.byref(exit_code_proc))
+
+        # --- 9. 清理 ---
+        close_pseudo_console(hpc)
+        _winapi.CloseHandle(input_read)
+        # input_write 已通过 os.close(input_write_fd) 关闭
+        # output_read 可能已被输出线程的 fd 关闭（线程读到 EOF 退出时，
+        # fd 会被 GC close 底层句柄），这里要容忍无效句柄，避免再次触发
+        # 回退到 legacy 模式。
+        try:
+            _winapi.CloseHandle(output_read)
+        except OSError:
+            pass
+        _winapi.CloseHandle(proc_handle_value)
+        self._current_proc = None
+
+        raw_stdout = b"".join(self._stdout_chunks)
+        captured_stdout = raw_stdout.decode("utf-8", errors="replace")
+        _logger.info(
+            f"ConPTY stdout captured: chunks={len(self._stdout_chunks)} bytes={len(raw_stdout)} "
+            f"exit_code={exit_code_proc.value} first_200={captured_stdout[:200]!r}"
+        )
+        return ProcessResult(
+            exit_code=exit_code_proc.value,
+            stdout=captured_stdout,
+        )
+
+    @staticmethod
+    def _conpty_build_env_block(env: dict[str, str]) -> bytes:
+        """构建 CreateProcessW 的 Unicode 环境块（CREATE_UNICODE_ENVIRONMENT）。
+
+        环境块格式：一串 "KEY=VALUE\\0" 条目后跟一个额外 "\\0" 结束符，
+        整体以 UTF-16LE 编码。
+        """
+        entries = "".join(f"{k}={v}\0" for k, v in env.items())
+        return (entries + "\0").encode("utf-16-le")
+
+    @staticmethod
+    def _set_win_console_raw(raw: bool) -> None:
+        """切换 launcher 真实控制台的输入模式（ConPTY 转发期间使用）。
+
+        raw=True：禁用 ENABLE_LINE_INPUT / ENABLE_ECHO_INPUT，启用
+        ENABLE_VIRTUAL_TERMINAL_INPUT，使 os.read 能逐键读取 VT 序列
+        （全屏 TUI 需要原始按键流；默认行缓冲模式下按键会被缓存到回车）。
+        raw=False：恢复默认模式。
+
+        若 stdin 不是真实控制台（如被重定向为管道），GetConsoleMode 失败，
+        静默跳过。
+        """
+        try:
+            import _winapi
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.GetStdHandle(_winapi.STD_INPUT_HANDLE)
+            mode = wintypes.DWORD()
+            if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                return
+            # ENABLE_LINE_INPUT=0x0002, ENABLE_ECHO_INPUT=0x0004,
+            # ENABLE_VIRTUAL_TERMINAL_INPUT=0x0200
+            if raw:
+                new_mode = (mode.value & ~0x0002 & ~0x0004) | 0x0200
+            else:
+                new_mode = mode.value | 0x0002 | 0x0004
+            kernel32.SetConsoleMode(handle, new_mode)
+        except (OSError, AttributeError):
+            pass
+
+    @staticmethod
+    def _conpty_close_pipes_silent(
+        input_read: int,
+        input_write: int,
+        output_read: int,
+        output_write: int,
+    ) -> None:
+        """安全关闭 ConPTY 管道句柄。"""
+        import _winapi
+
+        for h in (input_read, input_write, output_read, output_write):
+            try:
+                _winapi.CloseHandle(h)
+            except OSError:
+                pass
 
     def forward_termination(self) -> None:
         """把终止信号转发给当前子进程并等待回收。"""

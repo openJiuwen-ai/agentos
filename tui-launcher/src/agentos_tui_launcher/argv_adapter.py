@@ -57,6 +57,7 @@ class LauncherArgvAdapter(Protocol):
         tui_argv: tuple[str, ...],
         mode: LaunchMode,
         context: Optional[UserContext],
+        gateway_url: Optional[str] = None,
     ) -> tuple[str, ...]:
         ...
 
@@ -68,7 +69,7 @@ class LauncherArgvAdapter(Protocol):
 
 # launcher 自有参数；这些不会透传给 JiuwenSwarm。
 # `--user-id` / `--token` 是共享边界：launcher 解析校验，最终仍传给 TUI。
-_LAUNCHER_ONLY_FLAGS = {"--api-url", "--no-save-login"}
+_LAUNCHER_ONLY_FLAGS = {"--api-url", "--gateway-url", "--no-save-login"}
 
 
 # 在 argv 中具有 `--flag value` 形式的参数。
@@ -165,12 +166,14 @@ class LauncherArgvAdapterImpl:
         tui_argv: tuple[str, ...],
         mode: LaunchMode,
         context: Optional[UserContext],
+        gateway_url: Optional[str] = None,
     ) -> tuple[str, ...]:
         """构造最终 JiuwenSwarm argv。
 
         返回的 argv 顺序：
           1. 原始 tui_argv 的元素（保持边界和相对顺序），但移除 launcher 自有参数和 `--` 分隔符。
           2. 托管模式：在末尾注入 `--user-id <context.user_id>` 和 `--token <context.access_token>`。
+          3. 托管模式：若 gateway_url 提供且原 argv 无 --url，注入 `--url <gateway_url>`。
 
         为什么不替换原 argv 中的 --user-id / --token，而是注入到末尾？
         - 显式模式不允许托管上下文，所以两者必居其一，不会冲突。
@@ -180,6 +183,11 @@ class LauncherArgvAdapterImpl:
 
         # 过滤 launcher 自有参数和 `--` 分隔符；保留所有其它 JiuwenSwarm 参数。
         filtered = self._filter_launcher_args(tui_argv)
+
+        # 检查原 argv 是否已有 --url。
+        has_url = any(
+            arg == "--url" or arg.startswith("--url=") for arg in filtered
+        )
 
         if mode == LaunchMode.EXPLICIT:
             # 显式兼容模式：原样保留用户提供的 --user-id 和 --token。
@@ -221,12 +229,18 @@ class LauncherArgvAdapterImpl:
 
         # 注入 --user-id 和 --token 到末尾。
         # 这两个字段是 launcher 拥有的、由 UserContext 决定，不属于"在上一轮结果上叠加"。
-        return filtered + (
+        result = list(filtered) + [
             "--user-id",
             context.username,
             "--token",
             context.access_token,
-        )
+        ]
+
+        # 若原 argv 无 --url 且提供了 gateway_url，注入 --url。
+        if gateway_url and not has_url:
+            result.extend(["--url", gateway_url])
+
+        return tuple(result)
 
     # ------------------------------------------------------------------
     # 内部辅助
@@ -253,21 +267,21 @@ class LauncherArgvAdapterImpl:
                 continue
 
             # launcher 自有参数：移除（含其值）。
-            # 注意 --api-url 是 launcher 自有，--user-id / --token 是共享边界，
+            # 注意 --api-url/--gateway-url 是 launcher 自有，--user-id / --token 是共享边界，
             # 共享边界由 analyze/build 处理，这里只过滤 _LAUNCHER_ONLY_FLAGS。
             if arg in _LAUNCHER_ONLY_FLAGS:
                 # 这些参数可能也以 --flag=value 形式给出
                 i += 1
                 # 如果下一个不是另一个 flag，则当作它的值跳过。
                 # 这里采用宽松策略：仅跳过 flag 本身，下一个元素如果是 flag 才不跳。
-                # 但更严格做法是 --api-url 必须有值。
-                # 简化处理：--no-save-login 是布尔型不需要值；--api-url 需要值。
-                if arg == "--api-url":
+                # 但更严格做法是 --api-url/--gateway-url 必须有值。
+                # 简化处理：--no-save-login 是布尔型不需要值；--api-url/--gateway-url 需要值。
+                if arg in ("--api-url", "--gateway-url"):
                     if i < n and not tui_argv[i].startswith("--"):
                         i += 1
                 continue
 
-            if arg.startswith("--api-url="):
+            if arg.startswith("--api-url=") or arg.startswith("--gateway-url="):
                 i += 1
                 continue
 

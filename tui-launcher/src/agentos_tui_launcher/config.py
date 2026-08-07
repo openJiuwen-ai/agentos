@@ -80,7 +80,7 @@ class FileConfigStore:
     # ------------------------------------------------------------------
 
     def load(self) -> ClientConfig:
-        path = self._config_path()
+        path = self.config_path()
         if not os.path.exists(path):
             # 缺失文件返回默认配置。
             return ClientConfig(
@@ -118,7 +118,7 @@ class FileConfigStore:
             raise errors.ConfigError(f"Config file schema invalid: {path}") from exc
 
     def save(self, config: ClientConfig) -> None:
-        path = self._config_path()
+        path = self.config_path()
         # 确保目录存在。
         os.makedirs(self._config_dir, exist_ok=True)
 
@@ -150,7 +150,7 @@ class FileConfigStore:
     # 内部辅助
     # ------------------------------------------------------------------
 
-    def _config_path(self) -> str:
+    def config_path(self) -> str:
         return os.path.join(self._config_dir, self.CONFIG_FILENAME)
 
 
