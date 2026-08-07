@@ -11,6 +11,7 @@ import {
   type FormRules,
 } from 'element-plus';
 import { login } from '@/api/auth';
+import { findDefaultLandingRouteName } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
@@ -42,7 +43,7 @@ async function handleLogin() {
   try {
     const result = await login(loginForm.value.username, loginForm.value.password);
     storeAuth(result);
-    router.push({ name: 'overview' });
+    router.push({ name: findDefaultLandingRouteName(result.role === 'admin') });
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '登录失败，请重试');
   } finally {

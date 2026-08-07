@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import { appRouteTree, buildRouterRoutes, findAdminOnlyRouteNames } from './menu';
+import { appRouteTree, buildRouterRoutes, findAdminOnlyRouteNames, findDefaultLandingRouteName, overviewEnabled } from './menu';
 
 const adminOnlyNames = new Set(findAdminOnlyRouteNames(appRouteTree));
 
@@ -13,6 +13,10 @@ const router = createRouter({
       component: () => import('@/views/auth/LoginPage.vue'),
       meta: { guest: true },
     },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: { name: 'not-found' },
+    },
   ],
 });
 
@@ -22,9 +26,14 @@ router.beforeEach((to) => {
   const isLoggedIn = !!accessToken;
   const isAdmin = role === 'admin';
 
-  // guest-only pages (login): redirect to overview if already logged in
+  // guest-only pages (login): redirect to default landing if already logged in
   if (to.meta.guest && isLoggedIn) {
-    return { name: 'overview' };
+    return { name: findDefaultLandingRouteName(isAdmin) };
+  }
+
+  // overview temporarily disabled
+  if (!overviewEnabled && to.name === 'overview') {
+    return { name: findDefaultLandingRouteName(isAdmin) };
   }
 
   // shell pages (have topMenu) require auth — redirect to login

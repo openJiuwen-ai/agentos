@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem } from 'element-plus';
-import { appRouteTree, findAdminOnlyRouteNames, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
+import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem, ElButton } from 'element-plus';
+import { appRouteTree, findAdminOnlyRouteNames, findDefaultLandingRouteName, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
 
 const adminOnlyRouteNames = new Set(findAdminOnlyRouteNames(appRouteTree));
 import { useAuth } from '@/composables/useAuth';
@@ -29,7 +29,7 @@ const workspaceLabel = computed(() => (workspace.value === 'admin' ? '管理工�
 function switchWorkspace(mode: 'admin' | 'user') {
   workspace.value = mode;
   localStorage.setItem('workspace', mode);
-  router.push({ name: 'overview' });
+  router.push({ name: findDefaultLandingRouteName(isAdmin.value) });
 }
 
 function goToProfile() {
@@ -77,10 +77,10 @@ function handleProfileCommand(command: string | number | object) {
       <img :src="logoImg" alt="AgentOS" class="top-nav__logo" />
       <span class="top-nav__brand">AgentOS</span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleWorkspaceCommand">
-        <button type="button" class="workspace-btn">
+        <ElButton class="workspace-btn">
           <span>{{ workspaceLabel }}</span>
           <img :src="arrowDownLine" alt="" width="10" height="10" />
-        </button>
+        </ElButton>
         <template #dropdown>
           <ElDropdownMenu>
             <ElDropdownItem command="admin" :class="{ 'is-workspace-active': workspace === 'admin' }">
@@ -109,9 +109,9 @@ function handleProfileCommand(command: string | number | object) {
 
     <div class="top-nav__right">
       <ElDropdown trigger="click" placement="bottom-end">
-        <button type="button" class="top-nav__icon-btn" title="帮助">
+        <ElButton text class="top-nav__icon-btn" title="帮助">
           <img :src="helpIcon" alt="帮助" width="20" height="20" />
-        </button>
+        </ElButton>
         <template #dropdown>
           <ElDropdownMenu>
             <ElDropdownItem>帮助中心</ElDropdownItem>
@@ -121,9 +121,9 @@ function handleProfileCommand(command: string | number | object) {
       </ElDropdown>
 
       <ElDropdown trigger="click" placement="bottom-end" @command="handleProfileCommand">
-        <button type="button" class="top-nav__icon-btn" title="个人中心">
+        <ElButton text class="top-nav__icon-btn" title="个人中心">
           <img :src="personIcon" alt="个人中心" width="20" height="20" />
-        </button>
+        </ElButton>
         <template #dropdown>
           <ElDropdownMenu class="profile-dropdown-menu">
             <ElDropdownItem command="profile" class="profile-dropdown-header">
@@ -198,9 +198,14 @@ function handleProfileCommand(command: string | number | object) {
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
+  height: auto;
+  margin: 0;
 }
 
-.workspace-btn:hover {
+.workspace-btn.el-button:hover,
+.workspace-btn.el-button:focus {
+  color: var(--text-primary);
+  background: var(--bg-2);
   border-color: var(--color-primary);
 }
 
@@ -225,10 +230,14 @@ function handleProfileCommand(command: string | number | object) {
   cursor: pointer;
   transition: background-color 0.2s;
   outline: none;
+  margin: 0;
+  min-height: unset;
 }
 
-.top-nav__icon-btn:hover {
+.top-nav__icon-btn.el-button:hover,
+.top-nav__icon-btn.el-button:focus {
   background: var(--bg-6);
+  border-color: transparent;
 }
 
 .top-nav__menu {

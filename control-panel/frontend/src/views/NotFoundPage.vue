@@ -5,18 +5,22 @@ import { findDefaultLandingRouteName } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
-const { isAdmin } = useAuth();
+const { isAdmin, isLoggedIn } = useAuth();
 
 function goHome() {
-  router.push({ name: findDefaultLandingRouteName(isAdmin.value) });
+  if (isLoggedIn.value) {
+    router.push({ name: findDefaultLandingRouteName(isAdmin.value) });
+    return;
+  }
+  router.push({ name: 'login' });
 }
 </script>
 
 <template>
   <section class="page">
-    <ElResult icon="warning" title="403" sub-title="无权访问此页面">
+    <ElResult icon="error" title="404" sub-title="页面不存在">
       <template #extra>
-        <ElButton type="primary" @click="goHome">返回首页</ElButton>
+        <ElButton type="primary" @click="goHome">{{ isLoggedIn ? '返回首页' : '去登录' }}</ElButton>
       </template>
     </ElResult>
   </section>

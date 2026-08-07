@@ -11,6 +11,13 @@ import {
   ElNotification,
   ElIcon,
   ElPopover,
+  ElButton,
+  ElInput,
+  ElUpload,
+  ElLink,
+  ElForm,
+  ElFormItem,
+  type UploadFile,
 } from 'element-plus';
 import { View, Hide, Filter } from '@element-plus/icons-vue';
 import {
@@ -45,7 +52,6 @@ const isActiveFilter = ref<string | null>(null); // null=all, 'true'=online, 'fa
 const showBatchModal = ref(false);
 const batchResults = ref<BatchCreateResult[]>([]);
 const batchLoading = ref(false);
-const batchFileInput = ref<HTMLInputElement | null>(null);
 const batchUploadError = ref('');
 
 interface ResetResult {
@@ -250,10 +256,6 @@ function openBatchModal() {
   showBatchModal.value = true;
 }
 
-function triggerFileUpload() {
-  batchFileInput.value?.click();
-}
-
 function parseCsvFile(file: File): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -278,16 +280,11 @@ function parseCsvFile(file: File): Promise<string[]> {
   });
 }
 
-async function handleFileChange(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-
+async function processBatchFile(file: File) {
   batchUploadError.value = '';
 
   if (!file.name.endsWith('.csv')) {
     batchUploadError.value = '仅支持 .csv 格式的文件';
-    input.value = '';
     return;
   }
 
@@ -301,40 +298,13 @@ async function handleFileChange(event: Event) {
     ElMessage.error(batchUploadError.value);
   } finally {
     batchLoading.value = false;
-    input.value = '';
   }
 }
 
-function handleBatchDragOver(event: DragEvent) {
-  event.preventDefault();
-}
-
-function handleBatchDrop(event: DragEvent) {
-  event.preventDefault();
-  const file = event.dataTransfer?.files?.[0];
-  if (!file) return;
-
-  batchUploadError.value = '';
-
-  if (!file.name.endsWith('.csv')) {
-    batchUploadError.value = '仅支持 .csv 格式的文件';
-    return;
+function handleUploadChange(uploadFile: UploadFile) {
+  if (uploadFile.raw) {
+    void processBatchFile(uploadFile.raw);
   }
-
-  batchLoading.value = true;
-  batchResults.value = [];
-  parseCsvFile(file)
-    .then((names) => batchCreateUsers(names))
-    .then((results) => {
-      batchResults.value = results;
-    })
-    .catch((e) => {
-      batchUploadError.value = e instanceof Error ? e.message : '批量创建失败';
-      ElMessage.error(batchUploadError.value);
-    })
-    .finally(() => {
-      batchLoading.value = false;
-    });
 }
 
 function downloadTemplate() {
@@ -454,18 +424,18 @@ function formatDate(iso: string | null) {
       <div class="user-mgmt__toolbar">
         <div class="user-mgmt__search">
           <img :src="searchIcon" alt="" class="user-mgmt__search-icon" />
-          <input
+          <ElInput
             v-model="search"
-            type="text"
             class="user-mgmt__search-input"
             placeholder="请输入搜索内容"
+            clearable
             @keyup.enter="handleSearch"
           />
         </div>
 
         <div class="user-mgmt__actions">
-          <button class="user-mgmt__btn user-mgmt__btn--secondary" @click="openBatchModal">批量导入</button>
-          <button class="user-mgmt__btn user-mgmt__btn--primary" @click="openCreateModal">创建用户</button>
+          <ElButton class="user-mgmt__btn user-mgmt__btn--secondary" @click="openBatchModal">批量导入</ElButton>
+          <ElButton type="primary" class="user-mgmt__btn user-mgmt__btn--primary" @click="openCreateModal">创建用户</ElButton>
         </div>
       </div>
 
@@ -504,9 +474,30 @@ function formatDate(iso: string | null) {
                     <ElIcon :size="14" :class="{ 'role-filter-icon--active': roleFilter }" class="role-filter-icon"><Filter /></ElIcon>
                   </template>
                   <div class="role-filter-popover">
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': !roleFilter }" @click="roleFilter = ''; handleRoleFilter()">全部角色</div>
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': roleFilter === 'admin' }" @click="roleFilter = 'admin'; handleRoleFilter()">管理员</div>
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': roleFilter === 'user' }" @click="roleFilter = 'user'; handleRoleFilter()">普通用户</div>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': !roleFilter }"
+                      @click="roleFilter = ''; handleRoleFilter()"
+                    >
+                      全部角色
+                    </ElButton>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': roleFilter === 'admin' }"
+                      @click="roleFilter = 'admin'; handleRoleFilter()"
+                    >
+                      管理员
+                    </ElButton>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': roleFilter === 'user' }"
+                      @click="roleFilter = 'user'; handleRoleFilter()"
+                    >
+                      普通用户
+                    </ElButton>
                   </div>
                 </ElPopover>
               </div>
@@ -526,9 +517,30 @@ function formatDate(iso: string | null) {
                     <ElIcon :size="14" :class="{ 'role-filter-icon--active': isActiveFilter !== null }" class="role-filter-icon"><Filter /></ElIcon>
                   </template>
                   <div class="role-filter-popover">
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': isActiveFilter === null }" @click="isActiveFilter = null; handleActiveFilter()">全部</div>
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': isActiveFilter === 'true' }" @click="isActiveFilter = 'true'; handleActiveFilter()">在线</div>
-                    <div class="role-filter-option" :class="{ 'role-filter-option--active': isActiveFilter === 'false' }" @click="isActiveFilter = 'false'; handleActiveFilter()">离线</div>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': isActiveFilter === null }"
+                      @click="isActiveFilter = null; handleActiveFilter()"
+                    >
+                      全部
+                    </ElButton>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': isActiveFilter === 'true' }"
+                      @click="isActiveFilter = 'true'; handleActiveFilter()"
+                    >
+                      在线
+                    </ElButton>
+                    <ElButton
+                      text
+                      class="role-filter-option"
+                      :class="{ 'role-filter-option--active': isActiveFilter === 'false' }"
+                      @click="isActiveFilter = 'false'; handleActiveFilter()"
+                    >
+                      离线
+                    </ElButton>
                   </div>
                 </ElPopover>
               </div>
@@ -552,19 +564,19 @@ function formatDate(iso: string | null) {
             <template #default="{ row }">
               <div class="row-actions">
                 <ElTooltip content="查看详情" placement="top">
-                  <button class="row-actions__btn" title="查看详情" @click="ElMessage.info('查看详情功能开发中')">
+                  <ElButton class="row-actions__btn" text title="查看详情" @click="ElMessage.info('查看详情功能开发中')">
                     <img :src="docIcon" alt="" width="14" height="14" />
-                  </button>
+                  </ElButton>
                 </ElTooltip>
                 <ElTooltip content="重置密码" placement="top">
-                  <button class="row-actions__btn" title="重置密码" @click="confirmResetPassword(row)">
+                  <ElButton class="row-actions__btn" text title="重置密码" @click="confirmResetPassword(row)">
                     <img :src="keyIcon" alt="" width="14" height="14" />
-                  </button>
+                  </ElButton>
                 </ElTooltip>
                 <ElTooltip content="删除" placement="top">
-                  <button class="row-actions__btn" title="删除" @click="handleDelete(row)">
+                  <ElButton class="row-actions__btn" text title="删除" @click="handleDelete(row)">
                     <img :src="deleteIcon" alt="" width="14" height="14" />
-                  </button>
+                  </ElButton>
                 </ElTooltip>
               </div>
             </template>
@@ -586,9 +598,8 @@ function formatDate(iso: string | null) {
 
           <div class="user-mgmt__jump">
             <span class="user-mgmt__jump-label">跳转</span>
-            <input
+            <ElInput
               v-model="jumpPage"
-              type="text"
               class="user-mgmt__jump-input"
               placeholder="1"
               @keyup.enter="handleJumpPage"
@@ -603,37 +614,33 @@ function formatDate(iso: string | null) {
       <template #header="{ close }">
         <div class="batch-dialog__header">
           <span class="batch-dialog__title">批量创建用户</span>
-          <button class="batch-dialog__close" @click="close">
+          <ElButton class="batch-dialog__close" text @click="close">
             <img :src="closeIcon" alt="关闭" width="14" height="14" />
-          </button>
+          </ElButton>
         </div>
       </template>
 
       <p class="batch-dialog__desc">
-        <a class="batch-dialog__link" @click="downloadTemplate">下载模板</a>
+        <ElLink class="batch-dialog__link" type="primary" :underline="false" @click="downloadTemplate">下载模板</ElLink>
         并填写用户信息，上传后系统将自动校验并生成用户 ID 和初始密码。
       </p>
 
-      <input
-        ref="batchFileInput"
-        type="file"
-        accept=".csv"
-        class="batch-dialog__file-input"
-        @change="handleFileChange"
-      />
-
-      <div
+      <ElUpload
         v-if="!batchLoading && !batchResults.length"
-        class="batch-dialog__upload"
-        @click="triggerFileUpload"
-        @dragover="handleBatchDragOver"
-        @drop="handleBatchDrop"
+        class="batch-dialog__upload-wrap"
+        drag
+        :show-file-list="false"
+        :auto-upload="false"
+        accept=".csv"
+        @change="handleUploadChange"
       >
-        <span class="batch-dialog__upload-plus">+</span>
-        <p class="batch-dialog__upload-text">将文件拖到此处或单击上传</p>
-        <p class="batch-dialog__upload-hint">支持 csv，单次最多导入 100 个用户</p>
-        <p v-if="batchUploadError" class="create-dialog__error">{{ batchUploadError }}</p>
-      </div>
+        <div class="batch-dialog__upload">
+          <span class="batch-dialog__upload-plus">+</span>
+          <p class="batch-dialog__upload-text">将文件拖到此处或单击上传</p>
+          <p class="batch-dialog__upload-hint">支持 csv，单次最多导入 100 个用户</p>
+          <p v-if="batchUploadError" class="create-dialog__error">{{ batchUploadError }}</p>
+        </div>
+      </ElUpload>
 
       <div v-if="batchLoading" class="batch-dialog__loading">
         <span class="table-loading-spinner" />
@@ -677,7 +684,7 @@ function formatDate(iso: string | null) {
 
       <template #footer>
         <div class="batch-dialog__footer">
-          <button
+          <ElButton
             class="user-mgmt__btn user-mgmt__btn--secondary"
             @click="
               showBatchModal = false;
@@ -685,10 +692,14 @@ function formatDate(iso: string | null) {
             "
           >
             {{ batchResults.length ? '关闭' : '取消' }}
-          </button>
-          <button v-if="batchResults.length" class="user-mgmt__btn user-mgmt__btn--secondary" @click="downloadCsv">
+          </ElButton>
+          <ElButton
+            v-if="batchResults.length"
+            class="user-mgmt__btn user-mgmt__btn--secondary"
+            @click="downloadCsv"
+          >
             下载用户凭证
-          </button>
+          </ElButton>
         </div>
       </template>
     </ElDialog>
@@ -711,9 +722,9 @@ function formatDate(iso: string | null) {
               用户需使用新临时密码登录，并在首次登录后修改密码。
             </p>
           </div>
-          <button class="batch-dialog__close" @click="close">
+          <ElButton class="batch-dialog__close" text @click="close">
             <img :src="closeIcon" alt="关闭" width="14" height="14" />
-          </button>
+          </ElButton>
         </div>
       </template>
 
@@ -734,19 +745,24 @@ function formatDate(iso: string | null) {
           <span class="reset-confirm__label">用户 ID</span>
           <div class="reset-confirm__value-wrap">
             <span class="reset-confirm__value">{{ resetTarget.user_id }}</span>
-            <button class="row-actions__btn" title="复制" @click="copyToClipboard(resetTarget.user_id)">
+            <ElButton class="row-actions__btn" text title="复制" @click="copyToClipboard(resetTarget.user_id)">
               <img :src="copyIcon" alt="" width="14" height="14" />
-            </button>
+            </ElButton>
           </div>
         </div>
       </div>
 
       <template #footer>
         <div class="reset-confirm__footer">
-          <button class="user-mgmt__btn user-mgmt__btn--secondary" @click="closeResetConfirm">取消</button>
-          <button class="user-mgmt__btn user-mgmt__btn--primary" :disabled="resetLoading" @click="handleConfirmReset">
+          <ElButton class="user-mgmt__btn user-mgmt__btn--secondary" @click="closeResetConfirm">取消</ElButton>
+          <ElButton
+            type="primary"
+            class="user-mgmt__btn user-mgmt__btn--primary"
+            :disabled="resetLoading"
+            @click="handleConfirmReset"
+          >
             {{ resetLoading ? '重置中...' : '确定' }}
-          </button>
+          </ElButton>
         </div>
       </template>
     </ElDialog>
@@ -762,9 +778,9 @@ function formatDate(iso: string | null) {
       <template #header="{ close }">
         <div class="reset-result__header">
           <span class="reset-result__title">密码重置成功</span>
-          <button class="batch-dialog__close" @click="close">
+          <ElButton class="batch-dialog__close" text @click="close">
             <img :src="closeIcon" alt="关闭" width="14" height="14" />
-          </button>
+          </ElButton>
         </div>
       </template>
 
@@ -785,9 +801,9 @@ function formatDate(iso: string | null) {
             <span class="reset-result__label">用户 ID</span>
             <div class="reset-result__value-wrap">
               <span class="reset-result__value">{{ resetResult.user_id }}</span>
-              <button class="row-actions__btn" title="复制" @click="copyToClipboard(resetResult.user_id)">
+              <ElButton class="row-actions__btn" text title="复制" @click="copyToClipboard(resetResult.user_id)">
                 <img :src="copyIcon" alt="" width="14" height="14" />
-              </button>
+              </ElButton>
             </div>
           </div>
           <div class="reset-result__row reset-result__row--highlight">
@@ -796,8 +812,9 @@ function formatDate(iso: string | null) {
               <span class="reset-result__value reset-result__password">
                 {{ passwordVisible ? resetResult.new_password : '••••••••••' }}
               </span>
-              <button
+              <ElButton
                 class="row-actions__btn"
+                text
                 :title="passwordVisible ? '隐藏密码' : '显示密码'"
                 @click="passwordVisible = !passwordVisible"
               >
@@ -805,10 +822,10 @@ function formatDate(iso: string | null) {
                   <View v-if="passwordVisible" />
                   <Hide v-else />
                 </ElIcon>
-              </button>
-              <button class="row-actions__btn" title="复制" @click="copyToClipboard(resetResult.new_password)">
+              </ElButton>
+              <ElButton class="row-actions__btn" text title="复制" @click="copyToClipboard(resetResult.new_password)">
                 <img :src="copyIcon" alt="" width="14" height="14" />
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>
@@ -816,8 +833,8 @@ function formatDate(iso: string | null) {
 
       <template #footer>
         <div class="reset-result__footer">
-          <button class="user-mgmt__btn user-mgmt__btn--secondary" @click="downloadResetCredential">下载凭证</button>
-          <button class="user-mgmt__btn user-mgmt__btn--primary" @click="closeResetResult">完成</button>
+          <ElButton class="user-mgmt__btn user-mgmt__btn--secondary" @click="downloadResetCredential">下载凭证</ElButton>
+          <ElButton type="primary" class="user-mgmt__btn user-mgmt__btn--primary" @click="closeResetResult">完成</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -833,30 +850,30 @@ function formatDate(iso: string | null) {
       <template #header="{ close }">
         <div class="create-dialog__header">
           <span class="create-dialog__title">创建用户</span>
-          <button class="create-dialog__close" @click="close">
+          <ElButton class="create-dialog__close" text @click="close">
             <img :src="closeIcon" alt="关闭" width="14" height="14" />
-          </button>
+          </ElButton>
         </div>
       </template>
 
       <template v-if="!createdUser">
         <p class="create-dialog__desc">请输入用户名，提交后系统将生成用户 ID 和初始密码。</p>
 
-        <div class="create-dialog__field">
-          <label class="create-dialog__label">用户名</label>
-          <input
-            v-model="createUsername"
-            type="text"
-            class="create-dialog__input"
-            placeholder="请输入用户名"
-            :disabled="createLoading"
-            maxlength="32"
-            @keyup.enter="handleCreateUser"
-            @input="createError = ''"
-          />
-          <p class="create-dialog__hint">3-32 位小写字母、数字、下划线或连字符</p>
-          <p v-if="createError" class="create-dialog__error">{{ createError }}</p>
-        </div>
+        <ElForm label-position="top" class="create-dialog__form">
+          <ElFormItem label="用户名" class="create-dialog__field">
+            <ElInput
+              v-model="createUsername"
+              class="create-dialog__input"
+              placeholder="请输入用户名"
+              :disabled="createLoading"
+              maxlength="32"
+              @keyup.enter="handleCreateUser"
+              @input="createError = ''"
+            />
+            <p class="create-dialog__hint">3-32 位小写字母、数字、下划线或连字符</p>
+            <p v-if="createError" class="create-dialog__error">{{ createError }}</p>
+          </ElFormItem>
+        </ElForm>
       </template>
 
       <template v-else>
@@ -870,9 +887,9 @@ function formatDate(iso: string | null) {
             <span class="create-success__label">用户 ID</span>
             <div class="create-success__value-wrap">
               <span class="create-success__value">{{ createdUser.user_id }}</span>
-              <button class="row-actions__btn" title="复制" @click="copyToClipboard(createdUser.user_id)">
+              <ElButton class="row-actions__btn" text title="复制" @click="copyToClipboard(createdUser.user_id)">
                 <img :src="copyIcon" alt="" width="14" height="14" />
-              </button>
+              </ElButton>
             </div>
           </div>
           <div class="create-success__row create-success__row--highlight">
@@ -881,8 +898,9 @@ function formatDate(iso: string | null) {
               <span class="create-success__value create-success__password">
                 {{ createdPasswordVisible ? createdUser.new_password : '••••••••••' }}
               </span>
-              <button
+              <ElButton
                 class="row-actions__btn"
+                text
                 :title="createdPasswordVisible ? '隐藏密码' : '显示密码'"
                 @click="createdPasswordVisible = !createdPasswordVisible"
               >
@@ -890,10 +908,10 @@ function formatDate(iso: string | null) {
                   <View v-if="createdPasswordVisible" />
                   <Hide v-else />
                 </ElIcon>
-              </button>
-              <button class="row-actions__btn" title="复制" @click="copyToClipboard(createdUser.new_password)">
+              </ElButton>
+              <ElButton class="row-actions__btn" text title="复制" @click="copyToClipboard(createdUser.new_password)">
                 <img :src="copyIcon" alt="" width="14" height="14" />
-              </button>
+              </ElButton>
             </div>
           </div>
         </div>
@@ -901,17 +919,22 @@ function formatDate(iso: string | null) {
 
       <template v-if="!createdUser" #footer>
         <div class="create-dialog__footer">
-          <button class="user-mgmt__btn user-mgmt__btn--secondary" @click="closeCreateModal">取消</button>
-          <button class="user-mgmt__btn user-mgmt__btn--primary" :disabled="createLoading" @click="handleCreateUser">
+          <ElButton class="user-mgmt__btn user-mgmt__btn--secondary" @click="closeCreateModal">取消</ElButton>
+          <ElButton
+            type="primary"
+            class="user-mgmt__btn user-mgmt__btn--primary"
+            :disabled="createLoading"
+            @click="handleCreateUser"
+          >
             {{ createLoading ? '创建中...' : '确定' }}
-          </button>
+          </ElButton>
         </div>
       </template>
 
       <template v-else #footer>
         <div class="create-success__footer">
-          <button class="user-mgmt__btn user-mgmt__btn--secondary" @click="downloadCreateCredential">下载凭证</button>
-          <button class="user-mgmt__btn user-mgmt__btn--primary" @click="completeCreate">完成</button>
+          <ElButton class="user-mgmt__btn user-mgmt__btn--secondary" @click="downloadCreateCredential">下载凭证</ElButton>
+          <ElButton type="primary" class="user-mgmt__btn user-mgmt__btn--primary" @click="completeCreate">完成</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -966,11 +989,34 @@ function formatDate(iso: string | null) {
   box-sizing: border-box;
 }
 
-.user-mgmt__search:focus-within,
-.user-mgmt__jump-input:focus,
-.create-dialog__input:focus {
+.user-mgmt__search:focus-within {
   border-color: var(--color-primary);
   outline: none;
+}
+
+.user-mgmt__search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-mgmt__search-input :deep(.el-input__wrapper) {
+  box-shadow: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  min-height: unset;
+}
+
+.user-mgmt__search-input :deep(.el-input__inner) {
+  height: 30px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.user-mgmt__search-input :deep(.el-input__inner::placeholder) {
+  color: var(--text-placeholder);
 }
 
 .user-mgmt__search-icon {
@@ -978,23 +1024,6 @@ function formatDate(iso: string | null) {
   height: 14px;
   flex-shrink: 0;
   opacity: 0.65;
-}
-
-.user-mgmt__search-input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--text-primary);
-  font-family: inherit;
-}
-
-.user-mgmt__search-input::placeholder {
-  color: var(--text-placeholder);
 }
 
 .user-mgmt__actions {
@@ -1019,6 +1048,10 @@ function formatDate(iso: string | null) {
   font-family: inherit;
   transition: all 0.15s ease;
   box-sizing: border-box;
+}
+
+.user-mgmt__btn.el-button {
+  margin: 0;
 }
 
 .user-mgmt__btn:disabled {
@@ -1113,18 +1146,28 @@ function formatDate(iso: string | null) {
 }
 
 .role-filter-option {
+  width: 100%;
+  justify-content: flex-start;
+  margin: 0;
   padding: 6px 12px;
   font-size: 13px;
   color: var(--text-primary);
   cursor: pointer;
   border-radius: 4px;
+  height: auto;
+  min-height: unset;
+  border: none;
 }
 
-.role-filter-option:hover {
+.role-filter-option.el-button:hover,
+.role-filter-option.el-button:focus {
   background: var(--bg-1);
+  color: var(--text-primary);
 }
 
-.role-filter-option--active {
+.role-filter-option--active,
+.role-filter-option--active.el-button:hover,
+.role-filter-option--active.el-button:focus {
   color: var(--color-primary);
   background: var(--bg-active);
 }
@@ -1164,16 +1207,25 @@ function formatDate(iso: string | null) {
 
 .user-mgmt__jump-input {
   width: 96px;
+}
+
+.user-mgmt__jump-input :deep(.el-input__wrapper) {
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border-separator);
   border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--border-separator) inset;
+  background: var(--bg-2);
+}
+
+.user-mgmt__jump-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--color-primary) inset;
+}
+
+.user-mgmt__jump-input :deep(.el-input__inner) {
+  text-align: center;
   font-size: 14px;
   color: var(--text-primary);
-  background: var(--bg-2);
   font-family: inherit;
-  box-sizing: border-box;
-  text-align: center;
 }
 
 .user-cell {
@@ -1261,6 +1313,11 @@ function formatDate(iso: string | null) {
   transition: background 0.15s ease;
 }
 
+.row-actions__btn.el-button {
+  margin: 0;
+  min-height: unset;
+}
+
 .row-actions__btn:hover {
   background: rgba(0, 0, 0, 0.04);
 }
@@ -1305,6 +1362,12 @@ function formatDate(iso: string | null) {
   border-radius: 4px;
 }
 
+.batch-dialog__close.el-button,
+.create-dialog__close.el-button {
+  margin: 0;
+  min-height: unset;
+}
+
 .batch-dialog__close:hover,
 .create-dialog__close:hover {
   background: rgba(0, 0, 0, 0.04);
@@ -1318,13 +1381,28 @@ function formatDate(iso: string | null) {
 }
 
 .batch-dialog__link {
-  color: var(--color-primary);
   cursor: pointer;
-  text-decoration: none;
+  vertical-align: baseline;
 }
 
 .batch-dialog__link:hover {
   text-decoration: underline;
+}
+
+.batch-dialog__upload-wrap {
+  width: 100%;
+}
+
+.batch-dialog__upload-wrap :deep(.el-upload) {
+  width: 100%;
+}
+
+.batch-dialog__upload-wrap :deep(.el-upload-dragger) {
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .batch-dialog__upload {
@@ -1354,10 +1432,6 @@ function formatDate(iso: string | null) {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.batch-dialog__file-input {
-  display: none;
 }
 
 .batch-dialog__loading {
@@ -1652,37 +1726,51 @@ function formatDate(iso: string | null) {
   color: var(--text-secondary);
 }
 
-.create-dialog__field {
+.create-dialog__form :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.create-dialog__field :deep(.el-form-item__label) {
+  padding: 0;
+  line-height: 22px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.create-dialog__field :deep(.el-form-item__content) {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.create-dialog__label {
-  font-size: 14px;
-  color: var(--text-primary);
+.create-dialog__field {
+  margin-bottom: 0;
 }
 
-.create-dialog__input {
+.create-dialog__input :deep(.el-input__wrapper) {
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border-separator);
   border-radius: 4px;
-  font-size: 14px;
-  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-separator) inset;
   background: var(--bg-2);
-  font-family: inherit;
-  box-sizing: border-box;
-  outline: none;
 }
 
-.create-dialog__input::placeholder {
+.create-dialog__input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px var(--color-primary) inset;
+}
+
+.create-dialog__input :deep(.el-input__inner) {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.create-dialog__input :deep(.el-input__inner::placeholder) {
   color: var(--text-placeholder);
 }
 
-.create-dialog__input:disabled {
+.create-dialog__input.is-disabled :deep(.el-input__wrapper) {
   background: #fafafa;
-  cursor: not-allowed;
 }
 
 .create-dialog__hint {

@@ -7,6 +7,9 @@ import alarmIcon from '@/assets/images/alarm.svg';
 import userManagementIcon from '@/assets/images/user-management.svg';
 import logCenterIcon from '@/assets/images/log-center.svg';
 
+/** 总览页面临时下线：恢复时改为 true 并去掉 hideInMenu */
+export const overviewEnabled = false;
+
 export interface AppRouteNode {
   key: string;
   label: string;
@@ -32,6 +35,7 @@ export const appRouteTree: AppRouteNode[] = [
     path: '/overview',
     name: 'overview',
     component: () => import('@/views/overview/OverviewPage.vue'),
+    hideInMenu: !overviewEnabled,
   },
   {
     key: 'resources',
@@ -205,6 +209,15 @@ export const appRouteTree: AppRouteNode[] = [
     path: '/403',
     name: 'forbidden',
     component: () => import('@/views/ForbiddenPage.vue'),
+    hideInMenu: true,
+  },
+  {
+    key: 'not-found',
+    label: '404',
+    order: 12,
+    path: '/404',
+    name: 'not-found',
+    component: () => import('@/views/NotFoundPage.vue'),
     hideInMenu: true,
   },
 ];
@@ -405,3 +418,28 @@ export function findAdminOnlyRouteNames(tree: AppRouteNode[]): string[] {
 }
 
 export const topMenus = buildTopMenus(appRouteTree);
+
+/** 登录后 / 返回首页时的默认路由（总览关闭时落到首个可访问菜单） */
+export function findDefaultLandingRouteName(isAdmin: boolean): string {
+  if (overviewEnabled) {
+    return 'overview';
+  }
+
+  const menus = isAdmin ? topMenus : topMenus.filter((menu) => !menu.adminOnly);
+  for (const menu of menus) {
+    if (menu.routeName) {
+      return menu.routeName;
+    }
+
+    if (menu.defaultRouteName) {
+      const adminOnlyNames = findAdminOnlyRouteNames(appRouteTree);
+      let target = menu.defaultRouteName;
+      if (!isAdmin && adminOnlyNames.includes(target)) {
+        target = findFirstAccessibleSideMenuRoute(menu.sideMenus, false) ?? target;
+      }
+      return target;
+    }
+  }
+
+  return 'inference-model-dashboard';
+}

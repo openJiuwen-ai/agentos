@@ -5,9 +5,6 @@ import {
   ElTable,
   ElTableColumn,
   ElInput,
-  ElDialog,
-  ElSelect,
-  ElOption,
   ElTag,
   ElMessage,
   ElMessageBox,
@@ -21,21 +18,14 @@ import {
   Refresh,
 } from "@element-plus/icons-vue";
 import {
-  createExport,
   getExports,
   getExportDownloadUrl,
   deleteExport,
-  getLogComponents,
-  getLogCategories,
   type LogExportTask,
-  type LogComponent,
-  type LogCategoryItem,
 } from "@/api/logs";
 import { http } from "@/api/index";
 
 const tasks = ref<LogExportTask[]>([]);
-const allComponents = ref<LogComponent[]>([]);
-const categories = ref<LogCategoryItem[]>([]);
 const loading = ref(false);
 const searchKeyword = ref("");
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null);
@@ -76,26 +66,10 @@ async function fetchTasks() {
   }
 }
 
-async function fetchComponents() {
-  try {
-    const [comps, cats] = await Promise.all([
-      getLogComponents(),
-      getLogCategories(),
-    ]);
-    allComponents.value = comps;
-    categories.value = cats;
-  } catch {
-    /* ignore */
-  }
-}
-
 function checkPending() {
-  const has = tasks.value.some(
-    (t) => t.status === "pending" || t.status === "running",
-  );
-  if (has && !pollingTimer.value) {
+  if (hasPending.value && !pollingTimer.value) {
     startPolling();
-  } else if (!has && pollingTimer.value) {
+  } else if (!hasPending.value && pollingTimer.value) {
     stopPolling();
   }
 }
@@ -179,13 +153,6 @@ function getStatusText(status: string): string {
   }
 }
 
-function formatFileSize(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return "-";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function formatDateTime(dateStr: string): string {
   const d = new Date(dateStr);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -213,47 +180,7 @@ function formatDuration(task: LogExportTask): string {
   return `${Math.floor(diff / 3600)}h${Math.floor((diff % 3600) / 60)}min`;
 }
 
-const showExportDialog = ref(false);
-const exportComponentId = ref("");
-const exportLineCount = ref(500);
-const exportLineOptions = [100, 200, 500, 1000];
-const exportSaving = ref(false);
-
-const filteredComponents = computed(() => {
-  return allComponents.value;
-});
-
-function openExportDialog() {
-  exportComponentId.value = "";
-  exportLineCount.value = 500;
-  showExportDialog.value = true;
-}
-
-async function handleCreateExport() {
-  if (!exportComponentId.value) {
-    ElMessage.warning("请选择日志组件");
-    return;
-  }
-  exportSaving.value = true;
-  try {
-    const result = await createExport({
-      component_id: exportComponentId.value,
-      line_count: exportLineCount.value,
-    });
-    ElMessage.success(`导出任务已创建: ${result.task_id}`);
-    showExportDialog.value = false;
-    await fetchTasks();
-    startPolling();
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "创建导出任务失败");
-  } finally {
-    exportSaving.value = false;
-  }
-}
-
-onMounted(async () => {
-  await Promise.all([fetchTasks(), fetchComponents()]);
-});
+onMounted(fetchTasks);
 
 onUnmounted(() => stopPolling());
 </script>
@@ -364,55 +291,6 @@ onUnmounted(() => stopPolling());
         small
       />
     </div>
-
-    <el-dialog
-      v-model="showExportDialog"
-      title="创建导出任务"
-      width="480px"
-      :close-on-click-modal="false"
-    >
-      <div class="export-dialog-body">
-        <div class="export-form-item">
-          <label class="export-form-label">日志组件</label>
-          <el-select
-            v-model="exportComponentId"
-            placeholder="选择日志组件"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="comp in filteredComponents"
-              :key="comp.id"
-              :label="`${comp.category} / ${comp.name}`"
-              :value="comp.id"
-            />
-          </el-select>
-        </div>
-        <div class="export-form-item">
-          <label class="export-form-label">导出行数</label>
-          <el-select
-            v-model="exportLineCount"
-            placeholder="选择行数"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="n in exportLineOptions"
-              :key="n"
-              :label="`最近 ${n} 行`"
-              :value="n"
-            />
-          </el-select>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="showExportDialog = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="exportSaving"
-          @click="handleCreateExport"
-          >创建</el-button
-        >
-      </template>
-    </el-dialog>
   </section>
 </template>
 
@@ -483,23 +361,5 @@ onUnmounted(() => stopPolling());
 .total-text {
   font-size: 14px;
   color: var(--el-text-color-secondary);
-}
-
-.export-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.export-form-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.export-form-label {
-  font-size: 14px;
-  color: var(--el-text-color-regular);
-  font-weight: 500;
 }
 </style>
