@@ -3,6 +3,8 @@ build/dist/
 .vscode/
 node_modules/
 dist/
+.vite/
+**/node_modules/.vite/
 __pycache__/
 .mimocode/
 *.db

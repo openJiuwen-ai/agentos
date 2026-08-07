@@ -107,6 +107,47 @@
   user-select: none;
 }
 
+/* 项目区标题 + 悬浮新建（ProjectSectionHeader） */
+.project-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 14px 12px 6px 20px;
+  user-select: none;
+}
+
+.project-section-header__title {
+  font-size: 12px;
+  color: var(--t3);
+}
+
+.project-section-header__add {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--t3);
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.project-section-header:hover .project-section-header__add,
+.project-section-header__add:focus-visible {
+  opacity: 1;
+}
+
+.project-section-header__add:hover {
+  background: var(--bg-hover);
+  color: var(--t1);
+}
+
 .sidebar-list {
   padding: 0 8px;
   display: flex;
@@ -215,4 +256,77 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---------- 项目：展开 / 嵌套会话 / 操作 ---------- */
+.sidebar-project-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-project-item {
+  position: relative;
+  padding-right: 4px;
+  gap: 4px;
+}
+
+.sidebar-project-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-project-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--t3);
+  flex-shrink: 0;
+}
+
+.sidebar-project-action {
+  flex-shrink: 0;
+  color: var(--t3);
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-project-item:hover .sidebar-project-action,
+.sidebar-project-item.is-menu-open .sidebar-project-action,
+.sidebar-project-action:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-project-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 12px;
+}
+
+.sidebar-conv-item--nested {
+  height: 34px;
+  font-size: 13px;
+}
+
+.sidebar-empty--nested {
+  padding: 4px 12px 8px 20px;
+  font-size: 12px;
+}
+
+.sidebar-dialog-error {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--danger, #e02128);
 }

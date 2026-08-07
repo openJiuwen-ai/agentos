@@ -1,3 +1,7 @@
+/**
+ * Desktop (pywebview) project directory picker helpers.
+ * Browser builds return unsupported; absolute-path paste still works.
+ */
 export type ProjectDirectoryPickResult =
   | { ok: true; path: string; name: string }
   | { ok: false; reason: 'unsupported' | 'cancelled' | 'failed'; message?: string };

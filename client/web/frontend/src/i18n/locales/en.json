@@ -2260,6 +2260,13 @@
       "newProject": "New project",
       "createBlank": "Create blank project",
       "selectExisting": "Select existing directory",
+      "browse": "Browse",
+      "nameLabel": "Project name",
+      "pathLabel": "Project path",
+      "pathPlaceholder": "Optional; leave empty to auto-create, or paste an absolute path",
+      "pathPlaceholderDesktop": "Optional; click or use Browse to pick an existing folder",
+      "pathHintBrowser": "In the browser, paste an absolute path, or use the desktop client and click the folder icon.",
+      "pathHintDesktop": "Click the folder icon on the left to pick an existing directory, or leave empty to auto-create",
       "addNewProject": "Add new project",
       "namePlaceholder": "Enter a short, recognizable project name",
       "chooseProjectDirectory": "Choose project directory",
@@ -2292,7 +2299,8 @@
         "pathMissing": "Project directory does not exist. Choose an existing directory."
       },
       "cancel": "Cancel",
-      "confirm": "Confirm"
+      "confirm": "Confirm",
+      "creating": "Creating…"
     },
     "runtime": { "processing": "Processing" },
     "deleteDialog": { "title": "Delete", "description": "Delete “<name>{{title}}</name>”? This action cannot be undone." },

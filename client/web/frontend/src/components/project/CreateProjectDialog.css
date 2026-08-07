@@ -1,0 +1,237 @@
+@import '../../styles/tokens.css';
+
+.create-project-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-mask);
+}
+
+.create-project-dialog {
+  box-sizing: border-box;
+  width: var(--width-dialog);
+  max-width: calc(100vw - 32px);
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-dialog);
+  border: 1px solid var(--color-dialog-border);
+  box-shadow: var(--shadow-dialog);
+  padding: var(--space-dialog-padding-top) 0 var(--space-dialog-padding-bottom);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-family);
+}
+
+.create-project-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 var(--space-dialog-header-x-right) 0 var(--space-dialog-header-x-left);
+}
+
+.create-project-dialog__title {
+  margin: 7px 0 0;
+  font-size: var(--font-title);
+  font-weight: 700;
+  line-height: var(--line-title);
+  color: var(--color-text-primary);
+}
+
+.create-project-dialog__close {
+  flex-shrink: 0;
+  width: var(--size-close);
+  height: var(--size-close);
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-close);
+  background: transparent;
+  color: var(--color-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.create-project-dialog__close:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.create-project-dialog__close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.create-project-dialog__body {
+  margin-top: 12px;
+  padding: 0 var(--space-dialog-body-x);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-dialog-gap);
+}
+
+.create-project-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-field-gap);
+}
+
+.create-project-dialog__label {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: var(--font-body);
+  font-weight: 400;
+  line-height: var(--line-body);
+  color: var(--color-text-primary);
+}
+
+.create-project-dialog__required {
+  color: var(--color-danger);
+}
+
+.create-project-dialog__input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  padding: var(--space-input-y) var(--space-input-x);
+  font-size: var(--font-body);
+  font-weight: 400;
+  line-height: var(--line-body);
+  color: var(--color-text-primary);
+  background: var(--color-bg-panel);
+  outline: none;
+}
+
+.create-project-dialog__input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.create-project-dialog__input:focus {
+  border-color: rgba(0, 0, 0, 0.45);
+}
+
+.create-project-dialog__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 路径：胶囊输入 + 左侧文件夹（跟稿视觉；逻辑仍选填） */
+.create-project-dialog__path-box {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  padding: 0 4px 0 12px;
+  background: var(--color-bg-panel);
+}
+
+.create-project-dialog__path-box:focus-within {
+  border-color: rgba(0, 0, 0, 0.45);
+}
+
+.create-project-dialog__folder-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-close);
+  background: transparent;
+  color: var(--color-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.create-project-dialog__folder-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.create-project-dialog__folder-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.create-project-dialog__input--path {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-input-y) 12px var(--space-input-y) 0;
+  background: transparent;
+}
+
+.create-project-dialog__input--path:focus {
+  border: none;
+  outline: none;
+}
+
+/* hint / error / loading 文案样式保持原有语义，仅微调字号对齐稿 */
+.create-project-dialog__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-placeholder);
+}
+
+.create-project-dialog__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-danger);
+}
+
+.create-project-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--space-actions-top);
+  padding: 0 var(--space-dialog-body-x);
+}
+
+.create-project-dialog__btn {
+  box-sizing: border-box;
+  min-width: var(--size-btn-min);
+  height: var(--size-btn-height);
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-button);
+  font-size: var(--font-body);
+  font-weight: 500;
+  line-height: var(--line-body);
+  text-align: center;
+  cursor: pointer;
+}
+
+.create-project-dialog__btn--secondary {
+  background: var(--color-secondary-bg);
+  color: var(--color-text-primary);
+}
+
+.create-project-dialog__btn--secondary:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.create-project-dialog__btn--primary {
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.create-project-dialog__btn--primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.create-project-dialog__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

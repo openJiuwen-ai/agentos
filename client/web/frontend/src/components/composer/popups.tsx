@@ -9,17 +9,19 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Plus, File, RefreshCcw, Box, Users, Link, ChevronRight, ChevronDown,
-  Check, Folder, FolderPlus, ShieldAlert, ShieldCheck, Cpu, Clock, Target, X,
+  Check, ShieldAlert, ShieldCheck, Cpu, Clock, Target, X,
 } from 'lucide-react';
 import { Popup } from '../common/Popup';
+import { CreateProjectDialog } from '../project/CreateProjectDialog';
+import {
+  NewProjectIcon,
+  ProjectChevronDownIcon,
+  ProjectSpaceIcon,
+} from '../project/projectIcons';
 import { useSessionStore, useWorkspaceStore } from '../../stores';
 import { getProjectDisplayName } from '../../stores/workspaceStore';
+import { useCreateProjectFlow } from '../../features/workspace/useCreateProjectFlow';
 import { webRequest } from '../../services/webClient';
-import {
-  isProjectDirectoryPickerSupported,
-  selectProjectDirectory,
-  getDirectoryName,
-} from '../../features/workspace/projectDirectoryPicker';
 import type { Permission } from '../../types';
 
 /* ================= 加号菜单 ================= */
@@ -336,61 +338,30 @@ export function SkillSelector({
 
 export function ProjectSelector() {
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [pathInput, setPathInput] = useState('');
-  const [nameInput, setNameInput] = useState('');
-  const [error, setError] = useState('');
   const anchorRef = useRef<HTMLButtonElement>(null);
   const projects = useWorkspaceStore((s) => s.projects);
   const selectedProject = useWorkspaceStore((s) => s.selectedProject);
   const setSelectedProject = useWorkspaceStore((s) => s.setSelectedProject);
-  const createProject = useWorkspaceStore((s) => s.createProject);
   const workMode = useWorkspaceStore((s) => s.workMode);
+  const {
+    open: createOpen,
+    submitting: createSubmitting,
+    error: createError,
+    openDialog: openCreateDialog,
+    closeDialog: closeCreateDialog,
+    submit: submitCreate,
+  } = useCreateProjectFlow();
 
   const visibleProjects = projects.filter((p) => !p.hidden && (p.work_mode ?? workMode) === workMode);
-
-  const handlePickDirectory = async () => {
-    setError('');
-    const result = await selectProjectDirectory();
-    if (!result.ok) {
-      if (result.reason === 'unsupported') setError('当前环境不支持目录选择，请手动输入路径');
-      return;
-    }
-    const dir = result.path;
-    try {
-      const project = await createProject(getDirectoryName(dir), dir);
-      setSelectedProject(project);
-      setCreating(false);
-      setOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建项目失败');
-    }
-  };
-
-  const handleManualCreate = async () => {
-    const dir = pathInput.trim();
-    if (!dir) { setError('请输入项目目录'); return; }
-    const name = nameInput.trim() || getDirectoryName(dir);
-    try {
-      const project = await createProject(name, dir);
-      setSelectedProject(project);
-      setCreating(false);
-      setPathInput('');
-      setNameInput('');
-      setOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建项目失败');
-    }
-  };
 
   return (
     <>
       <button ref={anchorRef} className="composer-chip" onClick={() => setOpen((v) => !v)} title="选择项目空间">
-        <Folder size={14} />
+        <ProjectSpaceIcon size={14} />
         <span>{selectedProject ? getProjectDisplayName(selectedProject) : '选择项目空间'}</span>
-        <ChevronDown size={11} className={open ? 'rotate-180' : ''} />
+        <ProjectChevronDownIcon size={10} className={open ? 'rotate-180' : ''} />
       </button>
-      <Popup open={open} anchorRef={anchorRef} placement="bottom-start" offset={8} onClose={() => { setOpen(false); setCreating(false); setError(''); }}>
+      <Popup open={open} anchorRef={anchorRef} placement="bottom-start" offset={8} onClose={() => setOpen(false)}>
         <div className="menu-pop project-menu">
           <div className="menu-title">项目空间</div>
           <button
@@ -408,47 +379,32 @@ export function ProjectSelector() {
                 className="menu-item"
                 onClick={() => { setSelectedProject(project); setOpen(false); }}
               >
-                <span className="menu-item-icon">{checked ? <Check size={14} /> : <Folder size={14} />}</span>
+                <span className="menu-item-icon">{checked ? <Check size={14} /> : <ProjectSpaceIcon size={14} />}</span>
                 <span className="menu-item-label">{getProjectDisplayName(project)}</span>
               </button>
             );
           })}
           <div className="menu-sep" />
-          {creating ? (
-            <div className="project-create">
-              {isProjectDirectoryPickerSupported() ? (
-                <button className="btn btn-ghost btn-sm project-create-pick" onClick={() => void handlePickDirectory()}>
-                  <FolderPlus size={14} /> 选择目录…
-                </button>
-              ) : null}
-              <input
-                className="form-input"
-                style={{ height: 34, fontSize: 13 }}
-                placeholder="项目目录路径"
-                value={pathInput}
-                onChange={(e) => setPathInput(e.target.value)}
-              />
-              <input
-                className="form-input"
-                style={{ height: 34, fontSize: 13 }}
-                placeholder="项目名称（可选）"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-              />
-              {error ? <div className="project-create-error">{error}</div> : null}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setCreating(false); setError(''); }}>取消</button>
-                <button className="btn btn-dark btn-sm" onClick={() => void handleManualCreate()}>创建</button>
-              </div>
-            </div>
-          ) : (
-            <button className="menu-item" onClick={() => setCreating(true)}>
-              <span className="menu-item-icon"><FolderPlus size={14} /></span>
-              <span className="menu-item-label">新建项目</span>
-            </button>
-          )}
+          <button
+            className="menu-item"
+            onClick={() => {
+              setOpen(false);
+              openCreateDialog();
+            }}
+          >
+            <span className="menu-item-icon"><NewProjectIcon size={14} /></span>
+            <span className="menu-item-label">新建项目</span>
+          </button>
         </div>
       </Popup>
+
+      <CreateProjectDialog
+        open={createOpen}
+        error={createError}
+        submitting={createSubmitting}
+        onCancel={closeCreateDialog}
+        onSubmit={submitCreate}
+      />
     </>
   );
 }

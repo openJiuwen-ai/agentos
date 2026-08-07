@@ -1,0 +1,59 @@
+/**
+ * Design tokens — 对齐「创建项目-新版」弹窗视觉。
+ * 由创建项目相关组件自行 @import，未改动现有 global.css。
+ */
+:root {
+  /* Color */
+  --color-text-primary: rgba(0, 0, 0, 0.9);
+  --color-text-placeholder: rgba(0, 0, 0, 0.4);
+  --color-text-secondary: rgba(0, 0, 0, 0.6);
+  --color-danger: #e84026;
+  --color-border: rgba(0, 0, 0, 0.2);
+  --color-dialog-border: rgba(0, 0, 0, 0.1);
+  --color-bg-page: #f5f5f5;
+  --color-bg-panel: #ffffff;
+  --color-bg-sidebar: #f7f7f7;
+  --color-bg-hover: rgba(0, 0, 0, 0.05);
+  --color-bg-active: #e8e8e8;
+  --color-mask: rgba(0, 0, 0, 0.15);
+  --color-primary: rgba(0, 0, 0, 0.9);
+  --color-primary-text: #ffffff;
+  --color-secondary-bg: rgba(0, 0, 0, 0.05);
+  --color-secondary-border: transparent;
+
+  /* Radius */
+  --radius-dialog: 16px;
+  --radius-input: 24px;
+  --radius-button: 8px;
+  --radius-close: 8px;
+  --radius-sm: 4px;
+
+  /* Spacing */
+  --space-dialog-padding-top: 16px;
+  --space-dialog-padding-bottom: 24px;
+  --space-dialog-header-x-left: 24px;
+  --space-dialog-header-x-right: 16px;
+  --space-dialog-body-x: 24px;
+  --space-dialog-gap: 16px;
+  --space-field-gap: 8px;
+  --space-input-y: 10px;
+  --space-input-x: 16px;
+  --space-actions-top: 28px;
+
+  /* Shadow */
+  --shadow-dialog: 0 0 4px 0 rgba(0, 0, 0, 0.1);
+
+  /* Size */
+  --width-dialog: 480px;
+  --width-sidebar: 280px;
+  --size-close: 40px;
+  --size-btn-min: 72px;
+  --size-btn-height: 32px;
+
+  /* Type */
+  --font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-title: 20px;
+  --font-body: 14px;
+  --line-title: 27px;
+  --line-body: 19px;
+}

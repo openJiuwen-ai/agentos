@@ -72,7 +72,7 @@ function findProject(projects: ProjectInfo[], projectId: string): ProjectInfo | 
   return projects.find((project) => project.project_id === projectId) ?? null;
 }
 
-function isDefaultProject(project: ProjectInfo): boolean {
+export function isDefaultProject(project: ProjectInfo): boolean {
   return project.is_default
     || project.project_id === DEFAULT_PROJECT_ID
     || project.project_id === DEFAULT_CODE_PROJECT_ID;

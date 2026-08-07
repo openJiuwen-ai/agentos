@@ -2264,6 +2264,13 @@
       "newProject": "新建项目",
       "createBlank": "新建空白项目",
       "selectExisting": "选择现有目录",
+      "browse": "浏览",
+      "nameLabel": "项目名称",
+      "pathLabel": "项目路径",
+      "pathPlaceholder": "选填，留空则自动创建；或粘贴绝对路径",
+      "pathPlaceholderDesktop": "选填；点击或右侧按钮选择已有目录",
+      "pathHintBrowser": "网页版请手动粘贴绝对路径，或使用桌面客户端点击左侧文件夹图标选择",
+      "pathHintDesktop": "点击左侧文件夹图标选择已有目录；留空则由后端自动创建目录",
       "addNewProject": "添加新项目",
       "namePlaceholder": "请输入简短易识别的项目名称",
       "chooseProjectDirectory": "选择项目目录",
@@ -2296,7 +2303,8 @@
         "pathMissing": "项目目录不存在，请选择已存在的目录"
       },
       "cancel": "取消",
-      "confirm": "确定"
+      "confirm": "确定",
+      "creating": "创建中…"
     },
     "runtime": { "processing": "处理中" },
     "deleteDialog": { "title": "删除", "description": "确定删除“<name>{{title}}</name>”吗？此操作不可撤销。" },
