@@ -301,14 +301,32 @@ async def _sync_metrics_on_update(
 
 
 async def _sync_metrics_on_delete(
+    db: AsyncSession,
     model_name: str,
     local: LitellmModelParams | None,
-) -> None:
+    model_id: str,
+) -> bool:
+    """删除模型时清理 agent-metrics 抓取条目。
+
+    - job 被其他模型共用时跳过清理，避免误删
+    - 清理失败降级为 warning，不阻断删除
+    返回 True 表示清理失败（需人工介入）。
+    """
     if not local:
-        return
+        return False
     old_job = _grafana_job_from_local(local)
     if not old_job and not local.instance_url:
-        return
+        return False
+    if old_job:
+        count = await LitellmModelParams.count_by_grafana_job(
+            db, old_job, exclude_id=model_id,
+        )
+        if count > 0:
+            logger.info(
+                "job '%s' 仍被其他模型引用，跳过 agent-metrics 清理 (model='%s')",
+                old_job, model_name,
+            )
+            return False
     engine = local.inference_engine
     try:
         await asyncio.to_thread(
@@ -317,12 +335,14 @@ async def _sync_metrics_on_delete(
             local.instance_url,
             engine,
         )
-    except agent_metrics_config.AgentMetricsConfigError as e:
-        logger.exception(
-            "Failed to update agent-metrics.json on delete for model '%s'",
-            model_name,
+    except (agent_metrics_config.AgentMetricsConfigError, OSError) as e:
+        logger.warning(
+            "Failed to clean agent-metrics.json for model '%s': %s. "
+            "Manual cleanup may be required.",
+            model_name, e,
         )
-        raise LitellmServiceError(str(e)) from e
+        return True
+    return False
 
 
 def _merge_extra_params(
@@ -612,18 +632,25 @@ class LitellmService:
             )
         except Exception:
             if metrics_extra:
-                try:
-                    await asyncio.to_thread(
-                        agent_metrics_config.remove_entry,
-                        metrics_extra.get(METRICS_JOB_KEY),
-                        extras.instance_url,
-                        extras.inference_engine,
-                    )
-                except Exception:
-                    logger.error(
-                        "Failed to rollback agent-metrics.json for model '%s'",
-                        model_name,
-                    )
+                job = metrics_extra.get(METRICS_JOB_KEY)
+                if job:
+                    try:
+                        count = await LitellmModelParams.count_by_grafana_job(db, job)
+                    except Exception:
+                        count = 0
+                    if count == 0:
+                        try:
+                            await asyncio.to_thread(
+                                agent_metrics_config.remove_entry,
+                                job,
+                                extras.instance_url,
+                                extras.inference_engine,
+                            )
+                        except Exception:
+                            logger.error(
+                                "Failed to rollback agent-metrics.json for model '%s'",
+                                model_name,
+                            )
             try:
                 await self.request(
                     "POST",
@@ -733,10 +760,11 @@ class LitellmService:
     ) -> dict:
         """删除模型。
 
-        1. 按 ID 查本地 DB → POST /model/delete → LiteLLM（404/400 幂等）
-        2. DELETE litellm_model_params → 本地
+        1. POST /model/delete → LiteLLM（404/400 幂等）
+        2. 清理 agent-metrics 抓取条目（job 被共用时跳过，失败降级告警）
+        3. DELETE litellm_model_params → 本地
 
-        当本地记录不存在时，跳过 LiteLLM 调用并告警。
+        当本地记录不存在时，LiteLLM 删除失败不阻塞。
         """
         local = await LitellmModelParams.get_by_id(db, model_id)
         orphan_warning = False
@@ -762,11 +790,18 @@ class LitellmService:
                 model_id,
             )
 
-        await LitellmModelParams.delete_by_id(db, model_id)
-        await _sync_metrics_on_delete(
-            local.model_name if local else model_id, local,
+        metrics_warning = await _sync_metrics_on_delete(
+            db,
+            local.model_name if local else model_id,
+            local,
+            model_id,
         )
-        return {"ok": True, "orphan_warning": orphan_warning}
+        await LitellmModelParams.delete_by_id(db, model_id)
+        return {
+            "ok": True,
+            "orphan_warning": orphan_warning,
+            "metrics_warning": metrics_warning,
+        }
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 用户管理

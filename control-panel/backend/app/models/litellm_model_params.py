@@ -166,3 +166,24 @@ class LitellmModelParams(Base):
         )
         await db.flush()
         return result.rowcount
+
+    @staticmethod
+    async def count_by_grafana_job(
+        db: AsyncSession,
+        job: str,
+        exclude_id: str | None = None,
+    ) -> int:
+        """统计引用了指定 grafana_job_name 的模型数（可排除当前模型）。
+
+        使用 Python 层过滤以兼容 SQLite（测试）和 PostgreSQL（生产），
+        避免 .astext / JSON_QUOTE 等方言特定行为。
+        """
+        stmt = select(LitellmModelParams.id, LitellmModelParams.extra_params)
+        if exclude_id:
+            stmt = stmt.where(LitellmModelParams.id != exclude_id)
+        result = await db.execute(stmt)
+        count = 0
+        for _id, extra in result.all():
+            if extra and extra.get("grafana_job_name") == job:
+                count += 1
+        return count

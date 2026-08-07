@@ -42,8 +42,8 @@ def _mock_agent_metrics_sync(monkeypatch: pytest.MonkeyPatch):
             "grafana_job_name": f"{desc}-metrics-target",
         }
 
-    async def fake_delete(model_name, local):
-        return None
+    async def fake_delete(db, model_name, local, model_id):
+        return False
 
     monkeypatch.setattr(
         "app.services.litellm_service._sync_metrics_on_create", fake_create,

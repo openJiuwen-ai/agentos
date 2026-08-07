@@ -101,7 +101,7 @@ def _find_index_by_job(
 
 
 def add_entry(inference_engine: str, instance_url: str) -> str:
-    """追加一条 scrape target，返回 job label。"""
+    """追加一条 scrape target，返回 job label。已存在相同 job 时幂等返回。"""
     entry = build_entry(inference_engine, instance_url)
     job = entry["labels"]["job"]
     path = get_config_path()
@@ -109,7 +109,7 @@ def add_entry(inference_engine: str, instance_url: str) -> str:
     with _file_lock:
         entries = _load_entries_unlocked(path)
         if _find_index_by_job(entries, job) is not None:
-            raise AgentMetricsConfigError(f"agent-metrics 中已存在 job: {job}")
+            return job
         entries.append(entry)
         _save_entries_unlocked(path, entries)
     return job

@@ -25,7 +25,6 @@ const emit = defineEmits<{
   close: [];
   save: [data: Partial<ModelDetail>];
   edit: [];
-  export: [];
 }>();
 
 function formatDateTime(value: string | null | undefined): string {
@@ -208,7 +207,7 @@ function handleSave() {
             <span class="form-hint">仅支持Openai API格式，模型名将自动添加前缀: openai/</span>
           </ElFormItem>
           <ElFormItem label="API Base" class="form-grid__item">
-            <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000" />
+            <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000/v1" />
           </ElFormItem>
           <ElFormItem label="API Key" class="form-grid__item">
             <ElInput
@@ -278,7 +277,6 @@ function handleSave() {
 
     <template #footer>
       <template v-if="mode === 'view'">
-        <ElButton @click="emit('export')">导出</ElButton>
         <ElButton type="primary" @click="emit('edit')">编辑信息</ElButton>
       </template>
       <template v-else>

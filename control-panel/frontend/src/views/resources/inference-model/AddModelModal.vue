@@ -23,8 +23,7 @@ interface ModelFormData {
   deployName: string;
   deployFramework: string;
   apiKey: string | undefined;
-  serviceIp: string;
-  servicePort: number | null;
+  serviceUrl: string;
   metricsUrl: string;
 }
 
@@ -47,8 +46,7 @@ const defaultFormData: ModelFormData = {
   deployName: '',
   deployFramework: 'vLLM',
   apiKey: undefined,
-  serviceIp: '',
-  servicePort: null,
+  serviceUrl: '',
   metricsUrl: '',
 };
 
@@ -97,7 +95,7 @@ function handleSave() {
             <ElOption label="completion" value="completion" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="上下文长度" required class="form-grid__item">
+        <ElFormItem label="上下文长度" class="form-grid__item">
           <ElInputNumber
             v-model="formData.contextLength"
             :controls="false"
@@ -159,19 +157,11 @@ function handleSave() {
         服务访问信息
       </h3>
       <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
-        <ElFormItem label="服务 IP 地址" required class="form-grid__item">
-          <ElInput v-model="formData.serviceIp" placeholder="请输入服务 IP 地址" />
+        <ElFormItem label="服务访问地址" required class="form-grid__item form-grid__item--full">
+          <ElInput v-model="formData.serviceUrl" placeholder="例如: http://192.168.1.10:8000/v1" />
+          <span class="form-hint">OpenAI 兼容推理引擎通常为 http://IP:端口/v1</span>
         </ElFormItem>
-        <ElFormItem label="服务端口" required class="form-grid__item">
-          <ElInputNumber
-            v-model="formData.servicePort"
-            :controls="false"
-            :min="0"
-            placeholder="请输入服务端口"
-            class="form-field"
-          />
-        </ElFormItem>
-        <ElFormItem label="模型监控 URL" required class="form-grid__item form-grid__item--full">
+        <ElFormItem label="模型监控 URL" class="form-grid__item form-grid__item--full">
           <ElInput v-model="formData.metricsUrl" placeholder="请输入模型监控 URL" />
         </ElFormItem>
       </ElForm>

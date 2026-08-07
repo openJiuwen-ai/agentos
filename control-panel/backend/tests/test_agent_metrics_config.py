@@ -60,10 +60,12 @@ class TestAddEntry:
         }]
 
     @staticmethod
-    def test_duplicate_job_raises(metrics_file: Path):
-        amc.add_entry("vllm", "141.1.1.1:9000")
-        with pytest.raises(amc.AgentMetricsConfigError, match="已存在"):
-            amc.add_entry("vllm", "141.1.1.1:9000")
+    def test_duplicate_job_is_idempotent(metrics_file: Path):
+        job1 = amc.add_entry("vllm", "141.1.1.1:9000")
+        job2 = amc.add_entry("vllm", "141.1.1.1:9000")
+        assert job1 == job2 == "vllm-141.1.1.1:9000"
+        data = json.loads(metrics_file.read_text(encoding="utf-8"))
+        assert len(data) == 1
 
     @staticmethod
     def test_appends_to_existing(metrics_file: Path):

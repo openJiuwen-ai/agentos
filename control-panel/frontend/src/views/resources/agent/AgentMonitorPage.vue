@@ -69,7 +69,7 @@ const overviewAbnormal = ref(0);
 const overviewStopped = ref(0);
 const firstLoaded = ref(false);
 const lastUpdateTime = ref('');
-const notConfigured = ref(false);
+const unavailableMsg = ref('');
 
 let instancesAbort: AbortController | null = null;
 
@@ -77,7 +77,8 @@ let instancesAbort: AbortController | null = null;
 const pageSummary = computed(() => `总计：${total.value}`);
 
 const emptyText = computed(() => {
-  if (notConfigured.value) return '注册中心服务未配置，智能体监控不可用';
+  if (listLoading.value) return '加载中...';
+  if (unavailableMsg.value) return unavailableMsg.value;
   if (total.value === 0) return '暂无实例';
   if (instances.value.length === 0 && page.value > totalPages.value) {
     return '当前页无数据，数据可能已更新，请返回第 1 页或刷新';
@@ -104,7 +105,7 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
   instancesAbort = controller;
 
   listLoading.value = true;
-  notConfigured.value = false;
+  unavailableMsg.value = '';
   try {
     const data = await fetchInstances(
       {
@@ -137,11 +138,24 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
     if (e instanceof Error && e.message === 'canceled') {
       return;
     }
-    if (e instanceof ApiError && e.status === 503) {
-      notConfigured.value = true;
-      return;
+    if (e instanceof ApiError && e.status) {
+      switch (e.status) {
+        case 503: unavailableMsg.value = '未接入注册中心'; break;
+        case 502:
+          unavailableMsg.value = e.message.includes('格式')
+            ? '返回数据格式异常'
+            : e.message.includes('返回错误')
+              ? '注册中心返回错误'
+              : '无法连接注册中心';
+          break;
+        case 504: unavailableMsg.value = '无法连接注册中心'; break;
+        default:
+          ElMessage.error(e instanceof Error ? e.message : '加载失败');
+      }
+      if (e.status === 502 || e.status === 503 || e.status === 504) return;
+    } else {
+      ElMessage.error(e instanceof Error ? e.message : '加载失败');
     }
-    ElMessage.error(e instanceof Error ? e.message : '加载失败');
   } finally {
     if (instancesAbort === controller) {
       listLoading.value = false;

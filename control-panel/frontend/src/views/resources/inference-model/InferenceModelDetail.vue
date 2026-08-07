@@ -129,7 +129,6 @@ onMounted(() => {
       @close="drawerVisible = false"
       @edit="drawerMode = 'edit'"
       @save="handleSave"
-      @export="() => {}"
     />
   </section>
 </template>

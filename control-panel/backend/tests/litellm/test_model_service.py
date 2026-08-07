@@ -303,6 +303,72 @@ class TestDeleteModel:
                 await svc.delete_model(db_session, "uuid-old")
         assert await LitellmModelParams.get_by_id(db_session, "uuid-old") is not None
 
+    async def test_shared_job_not_removed(self, svc, db_session):
+        """
+        场景: 两个模型共用同一 grafana_job_name.
+
+        预期: 删除其中一个时跳过 remove_entry, 不误清共用的 job
+        """
+        shared_job = "vllm-1.2.3.4:8000"
+        await LitellmModelParams.upsert(
+            db_session, "uuid-a", "model-a",
+            LocalModelExtension(
+                instance_url="http://1.2.3.4:8000",
+                inference_engine="vLLM",
+                extra_params={"grafana_job_name": shared_job},
+            ),
+        )
+        await LitellmModelParams.upsert(
+            db_session, "uuid-b", "model-b",
+            LocalModelExtension(
+                instance_url="http://1.2.3.4:8000",
+                inference_engine="vLLM",
+                extra_params={"grafana_job_name": shared_job},
+            ),
+        )
+
+        with (
+            patch.object(svc, "request", new=AsyncMock(return_value={})),
+            patch(
+                "app.services.litellm_service.agent_metrics_config.remove_entry",
+            ) as mock_remove,
+        ):
+            r = await svc.delete_model(db_session, "uuid-a")
+        assert r["ok"] is True
+        assert r["metrics_warning"] is False
+        mock_remove.assert_not_called()
+        assert await LitellmModelParams.get_by_id(db_session, "uuid-a") is None
+        assert await LitellmModelParams.get_by_id(db_session, "uuid-b") is not None
+
+    async def test_metrics_failure_does_not_block_delete(self, svc, db_session):
+        """
+        场景: agent-metrics 清理抛错.
+
+        预期: 删除不阻断, 返回 metrics_warning=True, 本地记录仍被删
+        """
+        from app.services import agent_metrics_config
+
+        await LitellmModelParams.upsert(
+            db_session, "uuid-x", "model-x",
+            LocalModelExtension(
+                instance_url="http://1.2.3.4:8000",
+                inference_engine="vLLM",
+                extra_params={"grafana_job_name": "vllm-1.2.3.4:8000"},
+            ),
+        )
+
+        with (
+            patch.object(svc, "request", new=AsyncMock(return_value={})),
+            patch(
+                "app.services.litellm_service.agent_metrics_config.remove_entry",
+                side_effect=agent_metrics_config.AgentMetricsConfigError("file broken"),
+            ),
+        ):
+            r = await svc.delete_model(db_session, "uuid-x")
+        assert r["ok"] is True
+        assert r["metrics_warning"] is True
+        assert await LitellmModelParams.get_by_id(db_session, "uuid-x") is None
+
 
 class TestUpdateModel:
     """update_model — 更新 + 本地写入失败传播"""

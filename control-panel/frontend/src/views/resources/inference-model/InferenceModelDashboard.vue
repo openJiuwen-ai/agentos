@@ -206,8 +206,7 @@ async function handleAddModel(formData: {
   contextLength: number | null;
   deployName: string;
   deployFramework: string;
-  serviceIp: string;
-  servicePort: number | null;
+  serviceUrl: string;
   metricsUrl: string;
   apiKey?: string;
   paramSize?: string;
@@ -223,25 +222,24 @@ async function handleAddModel(formData: {
     ElMessage.warning('请输入部署模型名称');
     return;
   }
-  if (!formData.serviceIp?.trim()) {
-    ElMessage.warning('请输入服务IP地址');
+  if (!formData.serviceUrl?.trim()) {
+    ElMessage.warning('请输入服务访问地址');
     return;
   }
-  if (!formData.servicePort) {
-    ElMessage.warning('请输入服务端口');
+  if (!formData.deployFramework) {
+    ElMessage.warning('请选择部署框架');
     return;
   }
 
   try {
     // 默认使用openai前缀
     const modelIdentifier = `openai/${formData.deployName}`;
-    const serviceUrl = `http://${formData.serviceIp}:${formData.servicePort}`;
 
     await createModel({
       model_name: formData.name,
       litellm_params: {
         model: modelIdentifier,
-        api_base: serviceUrl,
+        api_base: formData.serviceUrl,
         api_key: formData.apiKey || 'sk-1234',
       },
       model_info: formData.contextLength ? { context_window: formData.contextLength } : undefined,
@@ -379,7 +377,6 @@ onMounted(() => {
       @close="drawerVisible = false"
       @edit="drawerMode = 'edit'"
       @save="handleSaveModel"
-      @export="() => {}"
     />
   </section>
 </template>
