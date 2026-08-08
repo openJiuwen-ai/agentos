@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { webRequest } from '../services/webClient';
 import { projectRegistryClient } from '../features/workspace/projectRegistryClient';
-import type { Session } from '../types';
+import type { CronJobDTO, CronJobPatch, CronPreviewItem, CronTemplateUI, FilterKind, Session, ViewMode } from '../types';
+import { CRON_TEMPLATES } from '../utils/cronTemplates';
 
 export interface SidebarCronJob {
   id: string;
@@ -21,7 +22,7 @@ export interface SidebarCronJob {
 export function isWebChannelJob(targets?: string): boolean {
   const s = (targets ?? '').trim();
   if (!s) return true;
-  return s.split(',').some((p) => p.trim().toLowerCase() === 'web');
+  return s.split(',').some(p => p.trim().toLowerCase() === 'web');
 }
 
 interface CronState {
@@ -44,13 +45,29 @@ interface CronState {
   toggleCronGroup: (groupId: string) => void;
   loadCronSessions: (projectId: string, cronId: string) => Promise<void>;
   isCronGroupExpanded: (groupId: string) => boolean;
+  // ---- Phase 0 新增:列表/筛选/视图状态 ----
+  filter: FilterKind;
+  searchKeyword: string;
+  viewMode: ViewMode;
+  templates: CronTemplateUI[];
+  setFilter: (filter: FilterKind) => void;
+  setSearchKeyword: (keyword: string) => void;
+  setViewMode: (mode: ViewMode) => void;
+  // ---- Phase 0 新增:RPC action(对齐后端 cron.job.get/update/preview)----
+  getJob: (id: string) => Promise<CronJobDTO | null>;
+  updateJob: (id: string, patch: CronJobPatch) => Promise<void>;
+  previewJob: (id: string, count?: number) => Promise<CronPreviewItem[]>;
 }
 
 // 将未读状态持久化到 localStorage，用 queueMicrotask 延迟到当前同步热路径之后执行，
 // 避免阻塞 WebSocket 消息处理；try/catch 防止配额满/隐私模式导致异常影响 store 状态
 function persistCronUnread(state: Record<string, boolean>) {
   queueMicrotask(() => {
-    try { localStorage.setItem('jiuwenswarm_cron_unread', JSON.stringify(state)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem('jiuwenswarm_cron_unread', JSON.stringify(state));
+    } catch {
+      /* ignore */
+    }
   });
 }
 
@@ -61,26 +78,25 @@ export const useCronStore = create<CronState>((set, get) => ({
   cronSessions: {},
   cronSessionsLoading: {},
   lastRunSessionId: {},
-  setLastRunSessionId: (jobId, sessionId) =>
-    set((s) => ({ lastRunSessionId: { ...s.lastRunSessionId, [jobId]: sessionId } })),
+  setLastRunSessionId: (jobId, sessionId) => set(s => ({ lastRunSessionId: { ...s.lastRunSessionId, [jobId]: sessionId } })),
   unreadCronJobs: (() => {
     try {
       const value = JSON.parse(localStorage.getItem('jiuwenswarm_cron_unread') || '{}');
-      return typeof value === 'object' && value !== null ? value as Record<string, boolean> : {};
+      return typeof value === 'object' && value !== null ? (value as Record<string, boolean>) : {};
     } catch {
       return {};
     }
   })(),
-  markCronJobUnread: (jobId) => {
-    set((s) => {
+  markCronJobUnread: jobId => {
+    set(s => {
       if (s.unreadCronJobs[jobId]) return s;
       const next = { ...s.unreadCronJobs, [jobId]: true };
       persistCronUnread(next);
       return { unreadCronJobs: next };
     });
   },
-  clearCronJobUnread: (jobId) => {
-    set((s) => {
+  clearCronJobUnread: jobId => {
+    set(s => {
       if (!s.unreadCronJobs[jobId]) return s;
       const next = { ...s.unreadCronJobs };
       delete next[jobId];
@@ -94,7 +110,7 @@ export const useCronStore = create<CronState>((set, get) => ({
     try {
       const payload = await webRequest<{ jobs: SidebarCronJob[] }>('cron.job.list');
       // 侧边栏是 Web 端工作区,只展示 targets 含 "web" 的定时任务
-      const webJobs = (payload.jobs || []).filter((j) => isWebChannelJob(j.targets));
+      const webJobs = (payload.jobs || []).filter(j => isWebChannelJob(j.targets));
       set({ jobs: webJobs, isLoading: false });
     } catch {
       set({ jobs: [], isLoading: false });
@@ -106,7 +122,7 @@ export const useCronStore = create<CronState>((set, get) => ({
   },
 
   toggleCronGroup: (groupId: string) => {
-    set((state) => ({
+    set(state => ({
       expandedCronGroups: {
         ...state.expandedCronGroups,
         [groupId]: !state.expandedCronGroups[groupId],
@@ -119,12 +135,12 @@ export const useCronStore = create<CronState>((set, get) => ({
   },
 
   loadCronSessions: async (projectId: string, cronId: string) => {
-    set((state) => ({
+    set(state => ({
       cronSessionsLoading: { ...state.cronSessionsLoading, [cronId]: true },
     }));
     try {
       const payload = await projectRegistryClient.getCronSessions(projectId, cronId);
-      set((state) => ({
+      set(state => ({
         cronSessions: {
           ...state.cronSessions,
           [cronId]: payload.sessions || [],
@@ -132,12 +148,36 @@ export const useCronStore = create<CronState>((set, get) => ({
         cronSessionsLoading: { ...state.cronSessionsLoading, [cronId]: false },
       }));
     } catch {
-      set((state) => ({
+      set(state => ({
         cronSessionsLoading: { ...state.cronSessionsLoading, [cronId]: false },
       }));
     }
   },
 
+  // ---- Phase 0 新增:列表/筛选/视图状态 + RPC action ----
+  filter: 'all',
+  searchKeyword: '',
+  viewMode: 'grid',
+  templates: CRON_TEMPLATES as CronTemplateUI[],
+  setFilter: filter => set({ filter }),
+  setSearchKeyword: searchKeyword => set({ searchKeyword }),
+  setViewMode: viewMode => set({ viewMode }),
+  getJob: async id => {
+    const payload = await webRequest<{ job: CronJobDTO }>('cron.job.get', { id });
+    return payload?.job ?? null;
+  },
+  updateJob: async (id, patch) => {
+    await webRequest<{ job: CronJobDTO }>('cron.job.update', { id, patch });
+    // 后端无 CRUD 推送事件,本地 mutate 后刷新列表
+    await get().loadJobs();
+  },
+  previewJob: async (id, count = 3) => {
+    const payload = await webRequest<{ next: CronPreviewItem[] }>('cron.job.preview', {
+      id,
+      count,
+    });
+    return payload?.next ?? [];
+  },
 }));
 
 const DEFAULT_PROJECT_ID = 'default';
@@ -155,8 +195,8 @@ export function isDefaultProjectId(projectId: string): boolean {
 /** 按项目过滤定时任务（默认项目返回 project_id 为空的）；系统自动维护 job 不进会话侧栏。 */
 export function filterJobsForProject(jobs: SidebarCronJob[], projectId: string): SidebarCronJob[] {
   const filtered = isDefaultProjectId(projectId)
-    ? jobs.filter((job) => isDefaultProjectId(job.project_id) && !SYSTEM_AUTO_JOB_IDS.has(job.id))
-    : jobs.filter((job) => job.project_id === projectId && !SYSTEM_AUTO_JOB_IDS.has(job.id));
+    ? jobs.filter(job => isDefaultProjectId(job.project_id) && !SYSTEM_AUTO_JOB_IDS.has(job.id))
+    : jobs.filter(job => job.project_id === projectId && !SYSTEM_AUTO_JOB_IDS.has(job.id));
   return filtered.sort((a, b) => {
     const au = typeof a.updated_at === 'number' ? a.updated_at : 0;
     const bu = typeof b.updated_at === 'number' ? b.updated_at : 0;

@@ -22,6 +22,7 @@
   --color-surface-panel-hover-rgb: 255, 255, 255;
   --color-surface-chrome: rgba(255, 255, 255, 0.95);
   --color-surface-shell: #f3f3f3;
+  --color-surface-secondary: #f5f5f5;
   --color-surface-transparent: transparent;
 
   /* Text */
@@ -36,6 +37,7 @@
   --color-text-card: #18181b;
   --color-text-inverse: #ffffff;
   --color-text-link: #0067d1;
+  --color-text-muted: #aeaeae;
 
   /* Borders */
   --color-border-default: #e4e4e7;
@@ -237,6 +239,14 @@
   --color-cron-auto-managed-text: #0369a1;
   --color-overlay-cron-dialog: rgba(0, 0, 0, 0.4);
   --color-overlay-cron-drawer: rgba(0, 0, 0, 0.3);
+  /* cron 卡片细边框(#dfdfdf)、淡色 tint 面(rgba(25,25,25,.05);同时用于 chip 背景、hover、视图切换槽)、
+     搜索框边框(#c9c9c9)、分段/视图切换白卡的细阴影 —— 取自设计稿"定时任务"4 屏,按角色命名 */
+  --color-cron-border: #dfdfdf;
+  --color-cron-tint: rgba(25, 25, 25, 0.05);
+  --color-cron-input-border: #c9c9c9;
+  --effect-cron-card-shadow: 0 1px 6px 0 rgba(0, 0, 0, 0.08);
+  /* Phase 3 抽屉阴影(设计稿"定时任务 - 创建":0 16px 48px rgba(0,0,0,0.16)) */
+  --effect-cron-drawer-shadow: 0 16px 48px rgba(0, 0, 0, 0.16);
 
   color-scheme: light;
 }

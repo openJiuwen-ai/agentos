@@ -1,0 +1,516 @@
+/**
+ * cron 组合件 / 页面样式 — Phase 2 屏幕重排(空白首页 + 首页)。
+ * 像素值取自设计稿"定时任务 - {空白首页,首页}"/index.html 第 13 行内联 spec。
+ * 颜色一律用 var(--color-*) / var(--effect-*) 语义 token(AGENTS.md 红线)。
+ * 命名空间 .cron-*,平面 CSS(本仓库约定)。原子件样式见 cronAtoms.css。
+ */
+
+/* ============ 页面骨架(CronHomePage) ============ */
+.cron-home {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-section);
+  height: 100%;
+  padding: var(--cron-pad-page-top) var(--cron-pad-page-x);
+  background-color: var(--cron-bg-page);
+  overflow: auto;
+}
+/* 决策 5:小视口页边距收窄(参考分辨率 1920 用 80px/100px) */
+@media (max-width: 1280px) {
+  .cron-home { padding: 48px 64px; }
+}
+@media (max-width: 960px) {
+  .cron-home { padding: 32px 40px; }
+}
+/* 内容区:撑满 tabs 以下到页底的空间。
+   空白首页时 hero flex:1 把插图居中、模板区自然钉到底(对照设计稿模板贴底)。 */
+.cron-home__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-section); /* 空白首页:hero↔模板区段间 24(设计稿 Frame 21 gap) */
+}
+.cron-home__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--cron-gap-heading);
+}
+.cron-home__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-heading);
+  min-width: 0;
+}
+.cron-home__title {
+  margin: 0;
+  font-size: var(--cron-fs-page-title);
+  font-weight: var(--cron-fw-bold);
+  line-height: var(--cron-lh-page-title);
+  color: var(--cron-text-page-title);
+}
+.cron-home__subtitle {
+  font-size: var(--cron-fs-body);
+  font-weight: var(--cron-fw-regular);
+  line-height: var(--cron-lh-body);
+  color: var(--cron-text-subtitle);
+}
+.cron-home__tools {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+/* 右组:搜索框 + 视图切换(设计稿 440px:328 搜索 + 96 切换) */
+.cron-home__tools-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.cron-home__search {
+  width: 328px;
+  max-width: 100%;
+}
+.cron-home__search .cron-search {
+  width: 100%;
+}
+
+/* ============ 任务列表 / 网格容器 ============ */
+/* 决策 5:卡片按 457px 单元换行。grid = 多列(auto-fill 457,左对齐不拉伸);
+   list = 单列整宽(设计稿仅画了 grid 态,list 为兼容视图)。 */
+.cron-job-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--cron-gap-card);
+}
+.cron-job-list--grid {
+  /* 固定 457px 卡列(设计稿卡宽),按可用宽度自动换行。侧栏 316 + 页边距 100 → 内容 1404px,
+     3×457+2×16=1403 恰好排 3 列(与设计稿首页三列一致)。 */
+  grid-template-columns: repeat(auto-fill, var(--cron-card-width));
+  justify-content: start;
+}
+
+/* ============ CronCard(任务卡) ============ */
+/* 1:1 设计稿「定时任务 - 首页」:457px / 无 border / radius24 / 双层阴影 / padding 20·24。
+   内层 409px(=457−24×2) gap20;顶部组 gap12;底部行 space-between。 */
+.cron-card {
+  border: none;
+  border-radius: var(--cron-radius-card);
+  background-color: var(--cron-bg-card);
+  box-shadow: var(--cron-shadow-card);
+  padding: var(--cron-pad-card);
+  display: flex;
+  flex-direction: column;
+}
+.cron-card--disabled {
+  opacity: 0.7;
+}
+.cron-card--flash {
+  animation: cron-card-flash 2.5s ease-out;
+}
+@keyframes cron-card-flash {
+  0% { box-shadow: 0 0 0 2px var(--cron-toggle-on), var(--cron-shadow-card); }
+  100% { box-shadow: var(--cron-shadow-card); }
+}
+.cron-card__inner {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-card-section);
+}
+.cron-card__top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-card-head);
+}
+.cron-card__title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cron-card__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--cron-fs-card-title);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-card-title);
+  color: var(--cron-text-card-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cron-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+/* 分类标签:数据驱动,无 category 不渲染。tint 底 + radius4 + pad2·8 + 12px 图标/文字。 */
+.cron-card__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  width: fit-content;
+  padding: var(--cron-pad-tag);
+  border-radius: var(--cron-radius-tag);
+  background-color: var(--cron-tint);
+}
+.cron-card__tag-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--cron-text-tag);
+}
+.cron-card__tag-text {
+  font-size: var(--cron-fs-tag);
+  font-weight: var(--cron-fw-regular);
+  line-height: var(--cron-lh-tag);
+  color: var(--cron-text-tag);
+  white-space: nowrap;
+}
+/* 描述:14/500/24 rgba(0,0,0,0.5),2 行截断(设计稿高度 48 = 2×24)。 */
+.cron-card__desc {
+  margin: 0;
+  font-size: var(--cron-fs-body);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-desc);
+  color: var(--cron-text-desc);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+/* 底部行:调度(左) | 下次执行(右)。 */
+.cron-card__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ============ 开关 toggle(CSS 还原;设计 36×20,ON=#0A59F7 + 白钮) ============ */
+.cron-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background-color: var(--cron-toggle-off);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+.cron-toggle--on {
+  background-color: var(--cron-toggle-on);
+}
+.cron-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  transition: transform 0.15s ease;
+}
+.cron-toggle--on .cron-toggle__knob {
+  transform: translateX(16px);
+}
+.cron-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ============ 卡片"更多"菜单(hover/打开时淡入;静态态与设计稿一致:仅开关) ============ */
+.cron-card-menu {
+  position: relative;
+}
+.cron-card-menu__btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--cron-radius-tag);
+  background: transparent;
+  color: var(--cron-text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.cron-card:hover .cron-card-menu__btn,
+.cron-card-menu--open .cron-card-menu__btn,
+.cron-card-menu__btn:focus-visible {
+  opacity: 1;
+}
+.cron-card-menu__btn:hover {
+  background-color: var(--cron-tint);
+  color: var(--cron-text-card-title);
+}
+.cron-card-menu__icon {
+  width: 16px;
+  height: 16px;
+}
+.cron-card-menu__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 128px;
+  padding: 7px 8px;
+  border-radius: var(--cron-radius-field);
+  background-color: var(--cron-bg-solid);
+  box-shadow: var(--effect-shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cron-card-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--cron-radius-tag);
+  background: transparent;
+  color: var(--cron-text-card-title);
+  font-size: var(--cron-fs-body);
+  font-weight: var(--cron-fw-regular);
+  line-height: var(--cron-lh-body-tight);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cron-card-menu__item:hover {
+  background-color: var(--cron-tint);
+}
+.cron-card-menu__item--danger:hover {
+  color: #e54848;
+}
+
+/* ============ CronTemplateCard(模板卡) ============ */
+/* 1:1 设计稿「定时任务 - 空白首页」模板卡:与任务卡同壳(457 / 白 / radius24 / 双层阴影 /
+   padding20·24 / gap20,纵向)+ 彩色插图(≈30)+ 名称(20/500/27 #000)+ 描述(14/500/24 0.5 截2行)。 */
+.cron-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-card-section);
+  padding: var(--cron-pad-card);
+  border: none;
+  border-radius: var(--cron-radius-card);
+  background-color: var(--cron-bg-card);
+  box-shadow: var(--cron-shadow-card);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: box-shadow 0.12s ease, transform 0.12s ease;
+}
+.cron-template-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 8px 0 rgba(0, 0, 0, 0.18), inset 0 1px 1px 0 #ffffff;
+}
+.cron-template-card__icon {
+  width: 30px;
+  height: 30px;
+  display: block;
+  object-fit: contain;
+}
+.cron-template-card__icon--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cron-text-card-title);
+}
+.cron-template-card__name {
+  font-size: var(--cron-fs-card-title);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-card-title);
+  color: var(--cron-text-card-title);
+}
+.cron-template-card__desc {
+  font-size: var(--cron-fs-body);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-desc);
+  color: var(--cron-text-desc);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* ============ TaskTemplateSection(模板区段) ============ */
+/* 1:1 设计稿:标题"定时任务模板"18/500/24 #000 + "查看更多"#0a59f7 16/500/21(space-between);
+   3 列 457 卡网格 gap16。 */
+.cron-template-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cron-gap-card);
+  flex-shrink: 0;
+}
+.cron-template-section__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.cron-template-section__title {
+  font-size: var(--cron-fs-tab);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-tab);
+  color: var(--cron-text-card-title);
+}
+.cron-template-section__more {
+  padding: 0;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  font-size: var(--cron-fs-btn);
+  font-weight: var(--cron-fw-medium);
+  line-height: var(--cron-lh-btn);
+  color: var(--cron-accent);
+  cursor: pointer;
+}
+.cron-template-section__more:hover {
+  opacity: 0.85;
+}
+.cron-template-section__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--cron-card-width));
+  justify-content: start;
+  gap: var(--cron-gap-card);
+}
+
+/* ============ CronEmptyState(筛选/搜索无结果空态) ============ */
+.cron-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  gap: 12px;
+  color: var(--color-text-muted);
+}
+.cron-empty-state__text {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--color-text-secondary);
+}
+
+/* ============ 空态 hero(空白首页:小鸟插图 + "创建定时任务"轮廓按钮) ============ */
+/* 1:1 设计稿 #Frame 21:hero 撑满 tabs↔模板区之间,插图(143×113)+ 轮廓按钮(gap12)垂直水平居中;
+   模板区贴底。轮廓按钮样式见 cronAtoms.css .cron-create-dropdown__trigger--outline(radius24/#777)。 */
+.cron-empty-hero {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 20px;
+}
+.cron-empty-hero__img {
+  width: 143px;
+  height: 113px;
+  display: block;
+  object-fit: contain;
+}
+
+/* ============ CronHistoryList(执行历史 - Phase 4 真实会话列表) ============ */
+.cron-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-history-row {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-cron-border);
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.cron-history-row:hover {
+  border-color: var(--color-cron-input-border);
+  background: var(--color-surface-hover);
+}
+
+.cron-history-row:focus-visible {
+  outline: 2px solid var(--color-action-primary);
+  outline-offset: 1px;
+}
+
+.cron-history-row__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--color-text-card);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cron-history-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cron-history-row__time,
+.cron-history-row__count {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+
+.cron-history-loading {
+  padding: 48px 20px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+.cron-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 80px 20px;
+}
+
+.cron-history-empty__text {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--color-text-secondary);
+}
+
+.cron-history-empty__hint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+}

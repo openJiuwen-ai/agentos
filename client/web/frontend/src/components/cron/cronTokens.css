@@ -1,0 +1,139 @@
+/**
+ * cronTokens.css — 定时任务设计令牌(1:1 取自高保真设计稿 DSL)。
+ *
+ * 这是 cron 视觉重建的「单一事实来源」:每个值都从设计稿 index.html 的内联样式逐字提取,
+ * 并在注释中标注来源(屏幕 + 元素),便于对照设计稿审计。组件 CSS 一律引用这里的变量,
+ * 不再内联魔法数字 —— 改设计只需改这一处。
+ *
+ * 命名约定:全部 --cron-* 前缀,避免与主题里既有的 --color-cron-* / --effect-cron-*
+ * (旧值,重建后逐步弃用)冲突。作用域挂在 :root,因创建抽屉以 body 级遮罩渲染,
+ * 不在 .cron-home 子树内,故不能用组件级作用域。
+ *
+ * 布局策略(决策 5):排版/颜色/圆角/阴影/组件内部间距 = 固定精确值;
+ * 卡片网格按 457px 单元换行;外层页边距在小视口用媒体查询收窄。
+ */
+:root {
+  /* ============================================================
+   * Color — 文字
+   * ============================================================ */
+  --cron-text-page-title: #191919;          /* 首页「定时任务」标题 24/700 */
+  --cron-text-card-title: #000000;          /* 卡片标题 20/500 */
+  --cron-text-subtitle: #777777;            /* 首页副标题 / 抽屉设置行标签 14/400 */
+  --cron-text-desc: rgba(0, 0, 0, 0.5);     /* 卡片描述 14/500 */
+  --cron-text-faint: rgba(0, 0, 0, 0.3);    /* 卡片调度文字「每周五 17:00」「下次执行…」 14/400 */
+  --cron-text-tag: #191919;                 /* 分类标签文字「个人工作」 12/400 */
+  --cron-text-tab-active: #000000;          /* tab 选中「任务列表」 18/700 */
+  --cron-text-tab-inactive: rgba(0, 0, 0, 0.4); /* tab 未选「执行历史」「任务模板」 18/400 */
+  --cron-text-seg-active: rgba(0, 0, 0, 0.9);   /* 分段控件/视图切换 选中 14/500 */
+  --cron-text-seg-inactive: rgba(0, 0, 0, 0.6); /* 分段控件未选 / 搜索占位 16/400 */
+  --cron-text-placeholder: #aeaeae;         /* 抽屉输入框占位 14/400 */
+  --cron-text-field-label: #191919;         /* 抽屉字段标签「任务名称」 14/400 */
+  --cron-text-on-dark: #ffffff;             /* 黑底按钮文字 */
+  --cron-text-drawer-title: #191919;        /* 抽屉标题「创建新的定时任务」 18/500 */
+  --cron-text-ghost-btn: #191919;           /* 抽屉「取消」按钮文字 14/400 */
+
+  /* ============================================================
+   * Color — 表面 / 填充
+   * ============================================================ */
+  --cron-bg-page: #f1f3f5;                  /* 右侧主区背景 */
+  --cron-bg-card: rgba(255, 255, 255, 0.9); /* 任务卡片背景 */
+  --cron-bg-solid: #ffffff;                 /* 输入框 / 选中态 / 抽屉面板 */
+  --cron-tint: rgba(25, 25, 25, 0.05);      /* 标签/分段/搜索/视图切换 容器底色 */
+  --cron-fill-primary: #000000;             /* 首页「创建」胶囊按钮(pill) */
+  --cron-fill-primary-drawer: #191919;      /* 抽屉「创建」按钮 */
+  --cron-overlay-drawer: rgba(0, 0, 0, 0.3); /* 抽屉遮罩 */
+  --cron-accent: #0a59f7;                    /* HarmonyOS 强调蓝:开关 ON / "查看更多"链接(设计稿采样) */
+  --cron-toggle-on: var(--cron-accent);      /* 开关 ON */
+  --cron-toggle-off: rgba(0, 0, 0, 0.2);     /* 开关 OFF(设计无 OFF 样例,取与白钮有对比的中性灰) */
+
+  /* ============================================================
+   * Color — 边框
+   * ============================================================ */
+  --cron-border-field: #dfdfdf;             /* 抽屉输入框 / 设置组边框 */
+  --cron-border-ghost: #777777;             /* 抽屉「取消」按钮边框 */
+
+  /* ============================================================
+   * Shape — 圆角
+   * ============================================================ */
+  --cron-radius-card: 24px;                 /* 任务卡片 */
+  --cron-radius-pill: 24px;                 /* 首页「创建」按钮 / 搜索框 */
+  --cron-radius-search: 24px;               /* 搜索框 */
+  --cron-radius-field: 8px;                 /* 抽屉输入框 / 设置组 */
+  --cron-radius-seg: 8px;                   /* 分段控件 / 视图切换 容器 */
+  --cron-radius-seg-item: 6px;              /* 分段控件 / 视图切换 选中项 */
+  --cron-radius-tag: 4px;                   /* 分类标签 */
+  --cron-radius-chip: 32px;                 /* 抽屉设置值 pill(大语言模型…的取值胶囊) */
+  --cron-radius-drawer-icon: 6px;           /* 抽屉关闭图标 */
+
+  /* ============================================================
+   * Shadow
+   * ============================================================ */
+  --cron-shadow-card: 0 4px 4px 0 rgba(0, 0, 0, 0.25), inset 0 1px 1px 0 #ffffff; /* 任务卡片 */
+  --cron-shadow-drawer: 0 16px 48px 0 rgba(0, 0, 0, 0.16);                       /* 创建抽屉 */
+  --cron-shadow-panel: 0 0 2px 0 rgba(0, 0, 0, 0.12);                            /* 右侧主区 */
+
+  /* ============================================================
+   * Spacing — 间距 / 内边距
+   * ============================================================ */
+  --cron-pad-page-x: 100px;                 /* 主区左右页边距(小视口媒体查询收窄) */
+  --cron-pad-page-top: 80px;                /* 主区上页边距 */
+  --cron-gap-section: 24px;                 /* 页头→工具行→tab→内容 段间距 */
+  --cron-gap-heading: 4px;                  /* 标题→副标题 */
+  --cron-gap-card: 16px;                    /* 卡片之间(列/行) */
+  --cron-gap-card-section: 20px;            /* 卡片主区段之间 */
+  --cron-gap-card-head: 12px;               /* 卡片标题→标签 */
+  --cron-gap-tools: 16px;                   /* 工具行内(分段/搜索/视图切换)间距基准 */
+  --cron-pad-card: 20px 24px;               /* 卡片内边距 */
+  --cron-pad-tag: 2px 8px;                  /* 分类标签内边距 */
+  --cron-pad-create-btn: 9px 12px 9px 16px; /* 首页「创建」胶囊按钮 */
+  --cron-pad-search: 9px 12px;              /* 搜索框 */
+  --cron-pad-seg: 2px;                      /* 分段/视图切换 容器内边距 */
+  --cron-pad-input: 9px 12px;               /* 抽屉单行输入框 */
+  --cron-pad-textarea: 12px 16px 8px 16px;  /* 抽屉提示词多行框 */
+  --cron-pad-drawer-head: 14px 16px 14px 24px; /* 抽屉头 */
+  --cron-pad-setting-group: 12px 0;         /* 抽屉设置组(任务设置/执行频率) */
+  --cron-pad-setting-row-x: 16px;           /* 抽屉设置行左右内缩 */
+  --cron-gap-drawer-panel: 8px;             /* 抽屉面板内段间距(头↔正文↔底) */
+  --cron-gap-drawer-body: 24px;             /* 抽屉正文字段间距 */
+  --cron-gap-setting-row: 12px;             /* 设置组内行间距 */
+  --cron-pad-drawer-btn: 5px 26px;          /* 抽屉底部按钮(取消/创建) */
+  --cron-pad-drawer-foot: 24px;             /* 抽屉底部栏 padding */
+  --cron-setting-row-w: 520px;              /* 设置行宽(552−16×2=520,设计稿 margin-left:16+width:520) */
+
+  /* ============================================================
+   * Sizing — 关键尺寸
+   * ============================================================ */
+  --cron-card-width: 457px;                 /* 任务卡片宽(网格换行基准) */
+  --cron-drawer-width: 600px;               /* 创建抽屉宽 */
+  --cron-drawer-body-width: 552px;          /* 抽屉内容宽 */
+  --cron-seg-item-w: 108px;                 /* 分段控件单项宽(全部任务/运行中/已暂停) */
+  --cron-tab-item-w: 72px;                  /* tab 单项宽(任务列表/执行历史/任务模板);3×72+2×24=264 */
+
+  /* ============================================================
+   * Typography — 字号 / 行高 / 字重
+   * ============================================================ */
+  --cron-fs-page-title: 24px;
+  --cron-lh-page-title: 32px;
+  --cron-fs-card-title: 20px;
+  --cron-lh-card-title: 27px;
+  --cron-fs-tab: 18px;
+  --cron-lh-tab: 24px;
+  --cron-fs-btn: 16px;                      /* 首页「创建」按钮 */
+  --cron-lh-btn: 21px;
+  --cron-fs-search: 16px;                   /* 搜索占位 */
+  --cron-lh-search: 21px;
+  --cron-fs-body: 14px;                     /* 通用正文 / 副标题 / 字段标签 / 分段 / 调度 */
+  --cron-lh-body: 22px;                     /* 副标题行高 */
+  --cron-lh-body-tight: 19px;               /* 分段 / 调度 行高 */
+  --cron-fs-seg: 14px;                      /* 分段控件文本(全部任务/运行中/已暂停) */
+  --cron-lh-seg: 19px;
+  --cron-lh-desc: 24px;                     /* 卡片描述行高 */
+  --cron-fs-tag: 12px;
+  --cron-lh-tag: 20px;
+  --cron-fs-drawer-title: 18px;
+  --cron-lh-drawer-title: 26px;
+
+  --cron-fw-regular: 400;
+  --cron-fw-medium: 500;
+  --cron-fw-bold: 700;
+}
