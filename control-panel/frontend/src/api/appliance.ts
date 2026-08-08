@@ -70,6 +70,31 @@ export interface ApplianceMonitorData {
   timestamp: string;
 }
 
-export async function fetchApplianceMonitor(): Promise<ApplianceMonitorData> {
-  return get<ApplianceMonitorData>('/api/v1/hardware/snapshot');
+export interface HardwareNodeSummary {
+  id: string;
+  role: string;
+  host: string;
+  product_name: string;
+  status: 'online' | 'offline';
+  error: string | null;
+}
+
+export interface HardwareNodesData {
+  nodes: HardwareNodeSummary[];
+  timestamp: string;
+}
+
+export interface NodeSnapshotData {
+  node: string;
+  status: 'online' | 'offline';
+  error: string | null;
+  snapshot: ApplianceMonitorData | null;
+}
+
+export async function fetchHardwareNodes(): Promise<HardwareNodesData> {
+  return get<HardwareNodesData>('/api/v1/hardware/nodes');
+}
+
+export async function fetchApplianceMonitor(id: string): Promise<NodeSnapshotData> {
+  return get<NodeSnapshotData>('/api/v1/hardware/snapshot', { node: id });
 }

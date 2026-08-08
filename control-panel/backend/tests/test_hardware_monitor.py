@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-from app.services.hardware_monitor import HardwareMonitorService, _parse_prometheus
+from app.services.hardware_monitor import HardwareMonitorService, _NodeRateState, _parse_prometheus
 from app.schemas.hardware import CpuInfo, DiskInfo, DiskIoInfo, MemoryInfo, NetworkInfo, SystemInfo
 
 
@@ -270,14 +270,13 @@ class TestDiskInfo:
 class TestDiskIoInfo:
     @staticmethod
     def test_parse_disk_io_first_call_returns_zeros():
-        svc = HardwareMonitorService()
         metrics = {
             "node_disk_read_bytes_total": [({"device": "sda"}, 1000000)],
             "node_disk_written_bytes_total": [({"device": "sda"}, 500000)],
             "node_disk_reads_completed_total": [({"device": "sda"}, 100)],
             "node_disk_writes_completed_total": [({"device": "sda"}, 50)],
         }
-        disk_io = svc.parse_disk_io(metrics)
+        disk_io = HardwareMonitorService.parse_disk_io(metrics, _NodeRateState())
         assert len(disk_io) == 1  # just "all" summary
         assert disk_io[0].device == "all"
         assert disk_io[0].read_bytes_per_sec == 0
@@ -285,7 +284,6 @@ class TestDiskIoInfo:
 
     @staticmethod
     def test_parse_disk_io_calculates_rates():
-        svc = HardwareMonitorService()
         # First call - sets baseline
         metrics1 = {
             "node_disk_read_bytes_total": [({"device": "sda"}, 1000000)],
@@ -293,7 +291,8 @@ class TestDiskIoInfo:
             "node_disk_reads_completed_total": [({"device": "sda"}, 100)],
             "node_disk_writes_completed_total": [({"device": "sda"}, 50)],
         }
-        svc.parse_disk_io(metrics1)
+        state = _NodeRateState()
+        HardwareMonitorService.parse_disk_io(metrics1, state)
 
         # Second call - should calculate rates
         metrics2 = {
@@ -302,7 +301,7 @@ class TestDiskIoInfo:
             "node_disk_reads_completed_total": [({"device": "sda"}, 200)],  # +100
             "node_disk_writes_completed_total": [({"device": "sda"}, 100)],  # +50
         }
-        disk_io = svc.parse_disk_io(metrics2)
+        disk_io = HardwareMonitorService.parse_disk_io(metrics2, state)
         assert len(disk_io) == 2  # sda + all
         assert disk_io[0].device == "sda"
         # Rates depend on time delta, but should be non-zero
@@ -314,14 +313,13 @@ class TestDiskIoInfo:
 class TestNetworkInfo:
     @staticmethod
     def test_parse_network_first_call_returns_zeros():
-        svc = HardwareMonitorService()
         metrics = {
             "node_network_receive_bytes_total": [({"device": "eth0"}, 10000)],
             "node_network_transmit_bytes_total": [({"device": "eth0"}, 5000)],
             "node_network_receive_packets_total": [({"device": "eth0"}, 100)],
             "node_network_transmit_packets_total": [({"device": "eth0"}, 50)],
         }
-        net = svc.parse_network(metrics)
+        net = HardwareMonitorService.parse_network(metrics, _NodeRateState())
         assert len(net) == 2  # eth0 + all
         assert net[0].interface == "eth0"
         assert net[0].rx_bytes_per_sec == 0
@@ -329,7 +327,6 @@ class TestNetworkInfo:
 
     @staticmethod
     def test_parse_network_calculates_rates():
-        svc = HardwareMonitorService()
         # First call
         metrics1 = {
             "node_network_receive_bytes_total": [({"device": "eth0"}, 10000)],
@@ -337,7 +334,8 @@ class TestNetworkInfo:
             "node_network_receive_packets_total": [({"device": "eth0"}, 100)],
             "node_network_transmit_packets_total": [({"device": "eth0"}, 50)],
         }
-        svc.parse_network(metrics1)
+        state = _NodeRateState()
+        HardwareMonitorService.parse_network(metrics1, state)
 
         # Second call
         metrics2 = {
@@ -346,7 +344,7 @@ class TestNetworkInfo:
             "node_network_receive_packets_total": [({"device": "eth0"}, 150)],   # +50
             "node_network_transmit_packets_total": [({"device": "eth0"}, 80)],   # +30
         }
-        net = svc.parse_network(metrics2)
+        net = HardwareMonitorService.parse_network(metrics2, state)
         assert len(net) == 2
         assert net[0].interface == "eth0"
         # Rates depend on time delta
@@ -354,7 +352,6 @@ class TestNetworkInfo:
 
     @staticmethod
     def test_parse_network_filters_loopback():
-        svc = HardwareMonitorService()
         metrics = {
             "node_network_receive_bytes_total": [
                 ({"device": "lo"}, 1000000),
@@ -367,14 +364,13 @@ class TestNetworkInfo:
             "node_network_receive_packets_total": [],
             "node_network_transmit_packets_total": [],
         }
-        net = svc.parse_network(metrics)
+        net = HardwareMonitorService.parse_network(metrics, _NodeRateState())
         interfaces = [n.interface for n in net]
         assert "lo" not in interfaces
         assert "eth0" in interfaces
 
     @staticmethod
     def test_parse_network_multiple_nics():
-        svc = HardwareMonitorService()
         metrics = {
             "node_network_receive_bytes_total": [
                 ({"device": "eth0"}, 10000),
@@ -387,7 +383,7 @@ class TestNetworkInfo:
             "node_network_receive_packets_total": [],
             "node_network_transmit_packets_total": [],
         }
-        net = svc.parse_network(metrics)
+        net = HardwareMonitorService.parse_network(metrics, _NodeRateState())
         assert len(net) == 3  # eth0 + eth1 + all
         assert net[2].interface == "all"
 
@@ -396,64 +392,30 @@ class TestNetworkInfo:
 
 class TestSystemInfo:
     @staticmethod
-    @patch("app.config.settings")
-    @patch("app.services.hardware_monitor.time")
-    def test_get_system_info(mock_time, mock_settings):
-        mock_time.time.return_value = 1700001000.0
-        mock_settings.AGENTOS_HOSTNAME = "test-host"
-        mock_settings.AGENTOS_PRODUCT_NAME = "Test Server"
-        mock_settings.node_exporter_url = "http://localhost:9090"
-
-        svc = HardwareMonitorService()
-        info = svc.get_system_info(boot_time=1700000000.0)
-
+    def test_build_system_info_from_metrics():
+        metrics = {
+            "node_uname_info": [({"nodename": "test-host"}, 1.0)],
+            "node_dmi_info": [({"product_name": "Atlas 800"}, 1.0)],
+            "node_time_seconds": [({}, 1700001000.0)],
+            "node_boot_time_seconds": [({}, 1700000000.0)],
+        }
+        info = HardwareMonitorService.build_system_info(metrics, boot_time=1700000000.0)
         assert info.hostname == "test-host"
-        assert info.product_name == "Test Server"
+        assert info.product_name == "Atlas 800"
         assert info.uptime_seconds == 1000.0
         assert "T" in info.boot_time
 
     @staticmethod
-    @patch("app.config.settings")
-    def test_get_system_info_defaults(mock_settings):
-        mock_settings.AGENTOS_HOSTNAME = ""
-        mock_settings.AGENTOS_PRODUCT_NAME = ""
-        mock_settings.node_exporter_url = "http://localhost:9090"
-
-        svc = HardwareMonitorService()
-        with patch.object(svc, 'get_boot_time', return_value=0.0):
-            info = svc.get_system_info()
-
+    def test_build_system_info_defaults():
+        info = HardwareMonitorService.build_system_info({}, boot_time=0.0)
         assert info.hostname == "-"
         assert info.product_name == "-"
+        assert info.uptime_seconds == -1
 
 
 # ── Boot Time 测试 ───────────────────────────────────────────────────────────
 
 class TestBootTime:
-    @staticmethod
-    @patch("app.config.settings")
-    def test_get_boot_time_from_node_exporter(mock_settings):
-        mock_settings.node_exporter_url = "http://localhost:9090"
-        mock_response = MagicMock()
-        mock_response.text = "node_boot_time_seconds 1700000000\n"
-
-        svc = HardwareMonitorService()
-        with patch("httpx.get", return_value=mock_response):
-            boot_time = svc.get_boot_time()
-
-        assert boot_time == 1700000000.0
-
-    @staticmethod
-    @patch("app.config.settings")
-    def test_get_boot_time_returns_zero_on_error(mock_settings):
-        mock_settings.node_exporter_url = "http://localhost:9090"
-
-        svc = HardwareMonitorService()
-        with patch("httpx.get", side_effect=ConnectionError("Connection refused")):
-            boot_time = svc.get_boot_time()
-
-        assert boot_time == 0.0
-
     @staticmethod
     def test_extract_boot_time_from_metrics():
         metrics = {
@@ -472,12 +434,7 @@ class TestGetSnapshot:
     @staticmethod
     @pytest.mark.asyncio
     @patch("app.services.hardware_monitor._IS_LINUX", True)
-    @patch("app.config.settings")
-    async def test_get_snapshot_linux(mock_settings):
-        mock_settings.node_exporter_url = "http://localhost:9090"
-        mock_settings.AGENTOS_HOSTNAME = "test-host"
-        mock_settings.AGENTOS_PRODUCT_NAME = "Test Server"
-
+    async def test_get_snapshot_linux():
         mock_response = MagicMock()
         mock_response.text = (
             'node_cpu_seconds_total{cpu="0",mode="idle"} 1000\n'
@@ -489,18 +446,15 @@ class TestGetSnapshot:
             'node_network_receive_bytes_total{device="eth0"} 10000\n'
             'node_network_transmit_bytes_total{device="eth0"} 5000\n'
             'node_boot_time_seconds 1700000000\n'
+            'node_time_seconds 1700001000\n'
+            'node_uname_info{nodename="test-host"} 1\n'
+            'node_dmi_info{product_name="Test Server"} 1\n'
         )
 
         mock_response2 = MagicMock()
         mock_response2.text = (
             'node_cpu_seconds_total{cpu="0",mode="idle"} 1050\n'
             'node_cpu_seconds_total{cpu="0",mode="user"} 600\n'
-            'node_memory_MemTotal_bytes 16000000000\n'
-            'node_memory_MemAvailable_bytes 8000000000\n'
-            'node_filesystem_size_bytes{device="/dev/sda1",fstype="ext4",mountpoint="/"} 100000000000\n'
-            'node_filesystem_avail_bytes{device="/dev/sda1",fstype="ext4",mountpoint="/"} 60000000000\n'
-            'node_network_receive_bytes_total{device="eth0"} 10000\n'
-            'node_network_transmit_bytes_total{device="eth0"} 5000\n'
         )
 
         parsed1 = _parse_prometheus(mock_response.text)
@@ -509,34 +463,29 @@ class TestGetSnapshot:
         svc = HardwareMonitorService()
         mock_fetch = AsyncMock(return_value=parsed1)
         mock_fetch_cpu = AsyncMock(return_value=parsed2)
-        with patch.object(svc, 'fetch_metrics', mock_fetch):
-            with patch.object(svc, 'fetch_cpu_metrics', mock_fetch_cpu):
-                snapshot = await svc.get_snapshot()
+        with patch.object(svc, "fetch_metrics", mock_fetch):
+            with patch.object(svc, "fetch_cpu_metrics", mock_fetch_cpu):
+                snapshot = await svc.get_snapshot("local", "http://localhost:9090")
 
+        assert snapshot is not None
         assert snapshot.system.hostname == "test-host"
+        assert snapshot.system.product_name == "Test Server"
         assert snapshot.cpu.cores == 1
         assert snapshot.cpu.usage == 66.7
         assert snapshot.memory.total_bytes == 16000000000
-        assert len(snapshot.disks) == 2  # sda1 + all
+        assert len(snapshot.disks) == 2
         assert snapshot.npus == []
         assert "T" in snapshot.timestamp
 
     @staticmethod
     @pytest.mark.asyncio
-    @patch("app.config.settings")
-    async def test_get_snapshot_empty_on_fetch_error(mock_settings):
-        mock_settings.node_exporter_url = "http://localhost:9090"
-        mock_settings.AGENTOS_HOSTNAME = "test-host"
-        mock_settings.AGENTOS_PRODUCT_NAME = "Test Server"
-
+    @patch("app.services.hardware_monitor._IS_LINUX", True)
+    async def test_get_snapshot_empty_on_fetch_error():
         svc = HardwareMonitorService()
-        with patch.object(svc, 'fetch_metrics', return_value=None):
-            snapshot = await svc.get_snapshot()
+        with patch.object(svc, "fetch_metrics", return_value=None):
+            snapshot = await svc.get_snapshot("local", "http://localhost:9090")
 
-        assert snapshot.cpu.cores == 0
-        assert snapshot.memory.total_bytes == 0
-        assert len(snapshot.disks) == 1  # just "all"
-        assert snapshot.disks[0].mount_point == "all"
+        assert snapshot is None
 
 
 # ── Windows 测试 ─────────────────────────────────────────────────────────────
@@ -545,16 +494,11 @@ class TestWindows:
     @staticmethod
     @pytest.mark.asyncio
     @patch("app.services.hardware_monitor._IS_LINUX", False)
-    @patch("app.config.settings")
-    async def test_get_snapshot_windows_returns_zeros(mock_settings):
-        mock_settings.AGENTOS_HOSTNAME = "windows-host"
-        mock_settings.AGENTOS_PRODUCT_NAME = "Windows PC"
-        mock_settings.node_exporter_url = "http://localhost:9090"
-
+    async def test_get_snapshot_windows_returns_zeros():
         svc = HardwareMonitorService()
-        snapshot = await svc.get_snapshot()
+        snapshot = await svc.get_snapshot("local", "http://localhost:9090")
 
-        assert snapshot.cpu.cores == 0
+        assert snapshot is not None
         assert snapshot.memory.total_bytes == 0
         assert len(snapshot.disks) == 1
         assert snapshot.disks[0].mount_point == "all"

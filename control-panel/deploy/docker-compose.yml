@@ -35,8 +35,9 @@ services:
       NODE_EXPORTER_PORT: ${NODE_EXPORTER_PORT:-8091}
       NPU_EXPORTER_HOST: ${NPU_EXPORTER_HOST:-host.docker.internal}
       NPU_EXPORTER_PORT: ${NPU_EXPORTER_PORT:-8092}
-      AGENTOS_HOSTNAME: ${AGENTOS_HOSTNAME:-}
-      AGENTOS_PRODUCT_NAME: ${AGENTOS_PRODUCT_NAME:-}
+      MONITOR_NODES: ${MONITOR_NODES:-}
+      VICTORIAMETRICS_URL: http://victoriametrics:8428
+      AGENTOS_NODE_ROLE: ${AGENTOS_NODE_ROLE:-master}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
@@ -59,6 +60,8 @@ services:
       litellm:
         condition: service_healthy
       image-process:
+        condition: service_started
+      victoriametrics:
         condition: service_started
     restart: unless-stopped
 

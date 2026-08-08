@@ -59,15 +59,11 @@ async def lifespan(fastapi_app: FastAPI):
     logger.info("LitellmService attached to app.state")
 
     # 5. Hardware monitoring service
-    from app.config import settings
-    from app.services.hardware_monitor import HardwareMonitorService
-    from app.services.npu_monitor import NpuMonitor
+    from app.services.hardware_service import HardwareService
 
-    hw_svc = HardwareMonitorService()
-    npu_monitor = NpuMonitor(npu_url=settings.npu_exporter_url)
+    hw_svc = HardwareService()
     fastapi_app.state.hardware_svc = hw_svc
-    fastapi_app.state.npu_monitor = npu_monitor
-    logger.info("HardwareMonitorService + NpuMonitor attached to app.state")
+    logger.info("HardwareService attached to app.state")
 
     # 6. 日志中心 — 定时任务 + 导出 Worker
     await start_log_services()

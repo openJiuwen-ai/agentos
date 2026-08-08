@@ -1,6 +1,19 @@
 """Application configuration loaded from environment variables."""
 
+import json
+
+from pydantic import field_validator
+
 from pydantic_settings import BaseSettings
+
+from app.models.monitor_node import (
+    MASTER_NODE_ID,
+    MASTER_ROLE,
+    WORKER_ROLE,
+    ConfiguredHardwareNode,
+    MonitorNodeConfig,
+    NodeTarget,
+)
 
 
 class Settings(BaseSettings):
@@ -63,9 +76,11 @@ class Settings(BaseSettings):
 
     # ── Hardware monitoring ──
     NPU_EXPORTER_HOST: str = "host.docker.internal"
-    NPU_EXPORTER_PORT: int = 8083
+    NPU_EXPORTER_PORT: int = 8092
     NODE_EXPORTER_HOST: str = "host.docker.internal"
-    NODE_EXPORTER_PORT: int = 8084
+    NODE_EXPORTER_PORT: int = 8091
+    MONITOR_NODES: str = ""
+    VICTORIAMETRICS_URL: str = ""
 
     @property
     def npu_exporter_url(self) -> str:
@@ -75,8 +90,78 @@ class Settings(BaseSettings):
     def node_exporter_url(self) -> str:
         return f"http://{self.NODE_EXPORTER_HOST}:{self.NODE_EXPORTER_PORT}"
 
-    AGENTOS_PRODUCT_NAME: str = ""  # 物理机型号，从 .env 配置（dmidecode -s system-product-name）
-    AGENTOS_HOSTNAME: str = ""  # 物理机 hostname，从 .env 配置
+    @property
+    def monitor_nodes(self) -> list[MonitorNodeConfig]:
+        raw = self.MONITOR_NODES.strip()
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(data, list):
+            return []
+        nodes: list[MonitorNodeConfig] = []
+        for item in data:
+            if not isinstance(item, str):
+                continue
+            host = item.strip()
+            if not host:
+                continue
+            nodes.append(MonitorNodeConfig(host=host))
+        return nodes
+
+    @property
+    def configured_hardware_nodes(self) -> list[ConfiguredHardwareNode]:
+        nodes: list[ConfiguredHardwareNode] = [
+            ConfiguredHardwareNode(
+                id=MASTER_NODE_ID,
+                host=self.NODE_EXPORTER_HOST,
+                role=MASTER_ROLE,
+                vm_label=MASTER_NODE_ID,
+            )
+        ]
+        for index, worker in enumerate(self.monitor_nodes, start=1):
+            nodes.append(
+                ConfiguredHardwareNode(
+                    id=f"worker-{index}",
+                    host=worker.host,
+                    role=WORKER_ROLE,
+                    vm_label=f"worker-{index}",
+                )
+            )
+        return nodes
+
+    @property
+    def allowed_node_ids(self) -> set[str]:
+        return {node.id for node in self.configured_hardware_nodes}
+
+    def resolve_vm_label(self, node_id: str) -> str | None:
+        for node in self.configured_hardware_nodes:
+            if node.id == node_id:
+                return node.vm_label
+        return None
+
+    def resolve_node(self, node_id: str) -> NodeTarget | None:
+        for node in self.configured_hardware_nodes:
+            if node.id != node_id:
+                continue
+            host = node.host
+            return NodeTarget(
+                id=node.id,
+                host=host,
+                vm_label=node.vm_label,
+                node_exporter_url=f"http://{host}:{self.NODE_EXPORTER_PORT}",
+                npu_exporter_url=f"http://{host}:{self.NPU_EXPORTER_PORT}",
+            )
+        return None
+
+    @field_validator("MONITOR_NODES", mode="before")
+    @classmethod
+    def _coerce_monitor_nodes(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
     # ── 注册中心后端 (选填；未配置时智能体监控功能不可用) ──
     AGENT_REGISTER_URL: str = ""

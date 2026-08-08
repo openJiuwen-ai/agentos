@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import {
   ElAlert,
   ElButton,
@@ -14,7 +15,12 @@ import {
   ElText,
 } from 'element-plus';
 import { Bottom, RefreshRight, Top } from '@element-plus/icons-vue';
-import { fetchApplianceMonitor, type ApplianceMonitorData } from '@/api/appliance';
+import {
+  fetchApplianceMonitor,
+  fetchHardwareNodes,
+  type ApplianceMonitorData,
+  type HardwareNodeSummary,
+} from '@/api/appliance';
 import cpuIcon from '@/assets/images/cpu.svg';
 import npuIcon from '@/assets/images/npu.svg';
 import memoryIcon from '@/assets/images/memory.svg';
@@ -35,9 +41,20 @@ import {
 
 const POLL_INTERVAL_MS = 30_000;
 
+const route = useRoute();
+const router = useRouter();
+
+const nodesLoading = ref(false);
+const listRefreshing = ref(false);
+const nodesError = ref('');
+const nodes = ref<HardwareNodeSummary[]>([]);
+
 const loading = ref(false);
 const refreshing = ref(false);
 const error = ref('');
+const nodeId = computed(() => String(route.params.node ?? route.query.node ?? ''));
+const nodeOffline = ref(false);
+const nodeOfflineError = ref<string | null>(null);
 const monitorData = ref<ApplianceMonitorData | null>(null);
 const viewModel = ref<ApplianceMonitorViewModel | null>(null);
 const npuDetailVisible = ref(false);
@@ -45,6 +62,62 @@ const diskDetailVisible = ref(false);
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let loadRequestSeq = 0;
+let nodesRequestSeq = 0;
+
+function resolveDefaultNode(items: HardwareNodeSummary[]): string {
+  const online = items.find((item) => item.status === 'online');
+  if (online) {
+    return online.id;
+  }
+  return items[0]?.id ?? 'master';
+}
+
+async function loadNodes(isRefresh = false) {
+  const requestSeq = ++nodesRequestSeq;
+
+  if (isRefresh) {
+    listRefreshing.value = true;
+  } else {
+    nodesLoading.value = true;
+  }
+  if (!isRefresh) {
+    nodesError.value = '';
+  }
+
+  try {
+    const data = await fetchHardwareNodes();
+    if (requestSeq !== nodesRequestSeq) {
+      return;
+    }
+    nodes.value = data.nodes;
+
+    if (!nodeId.value && data.nodes.length > 0) {
+      selectNode(resolveDefaultNode(data.nodes), true);
+    }
+  } catch (e) {
+    if (requestSeq !== nodesRequestSeq) {
+      return;
+    }
+    nodesError.value = e instanceof Error ? e.message : '加载节点列表失败';
+  } finally {
+    if (requestSeq !== nodesRequestSeq) {
+      return;
+    }
+    nodesLoading.value = false;
+    listRefreshing.value = false;
+  }
+}
+
+function selectNode(node: string, replace = false) {
+  if (node === nodeId.value) {
+    return;
+  }
+  router.push({
+    name: 'appliance',
+    params: { node },
+    replace,
+  });
+}
 
 const npuDevices = computed(() => (monitorData.value ? listNpuDevices(monitorData.value) : []));
 const diskMounts = computed(() => (monitorData.value ? listDiskMounts(monitorData.value) : []));
@@ -103,6 +176,10 @@ const usageCards = computed(() => {
 });
 
 async function loadMonitor(isRefresh = false) {
+  if (!nodeId.value) {
+    return;
+  }
+
   const requestSeq = ++loadRequestSeq;
 
   if (isRefresh) {
@@ -113,12 +190,22 @@ async function loadMonitor(isRefresh = false) {
   error.value = '';
 
   try {
-    const data = await fetchApplianceMonitor();
+    const data = await fetchApplianceMonitor(nodeId.value);
     if (requestSeq !== loadRequestSeq) {
       return;
     }
-    monitorData.value = data;
-    viewModel.value = mapApplianceMonitorToView(data);
+
+    nodeOffline.value = data.status === 'offline';
+    nodeOfflineError.value = data.error;
+
+    if (data.status === 'offline' || !data.snapshot) {
+      monitorData.value = null;
+      viewModel.value = null;
+      return;
+    }
+
+    monitorData.value = data.snapshot;
+    viewModel.value = mapApplianceMonitorToView(data.snapshot);
   } catch (e) {
     if (requestSeq !== loadRequestSeq) {
       return;
@@ -132,6 +219,25 @@ async function loadMonitor(isRefresh = false) {
     refreshing.value = false;
   }
 }
+
+function handleListRefresh() {
+  void loadNodes(true);
+}
+
+function handleDetailRefresh() {
+  restartPollTimer();
+  void loadMonitor(true);
+}
+
+onMounted(() => {
+  void loadNodes().finally(() => {
+    if (nodeId.value) {
+      void loadMonitor().finally(() => {
+        restartPollTimer();
+      });
+    }
+  });
+});
 
 function restartPollTimer() {
   if (pollTimer !== undefined) {
@@ -154,12 +260,13 @@ function openMetricDetail(key: string) {
   }
 }
 
-function handleRefresh() {
-  restartPollTimer();
-  void loadMonitor(true);
-}
-
-onMounted(() => {
+watch(nodeId, () => {
+  loadRequestSeq += 1;
+  monitorData.value = null;
+  viewModel.value = null;
+  if (!nodeId.value) {
+    return;
+  }
   void loadMonitor().finally(() => {
     restartPollTimer();
   });
@@ -167,6 +274,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   loadRequestSeq += 1;
+  nodesRequestSeq += 1;
   if (pollTimer !== undefined) {
     clearTimeout(pollTimer);
   }
@@ -183,17 +291,75 @@ onUnmounted(() => {
           text
           :loading="refreshing"
           :icon="RefreshRight"
-          aria-label="刷新"
+          aria-label="刷新详情"
           class="appliance-page__refresh-btn"
-          @click="handleRefresh"
+          @click="handleDetailRefresh"
         />
       </div>
     </header>
 
-    <ElAlert v-if="error" :title="error" type="error" show-icon :closable="false" class="appliance-page__alert" />
-    <ElSkeleton v-if="loading" :rows="10" animated />
+    <div class="appliance-page__layout">
+      <aside class="appliance-page__sidebar">
+        <div class="appliance-page__sidebar-head">
+          <ElText type="info" size="small">节点列表</ElText>
+          <ElButton
+            text
+            :loading="listRefreshing"
+            :icon="RefreshRight"
+            aria-label="刷新节点列表"
+            class="appliance-page__sidebar-refresh"
+            @click="handleListRefresh"
+          />
+        </div>
 
-    <template v-else-if="viewModel">
+        <ElAlert
+          v-if="nodesError"
+          :title="nodesError"
+          type="error"
+          show-icon
+          :closable="false"
+          class="appliance-page__alert"
+        />
+        <ElSkeleton v-if="nodesLoading" :rows="4" animated />
+
+        <div v-else class="appliance-page__node-list">
+          <button
+            v-for="item in nodes"
+            :key="item.id"
+            type="button"
+            class="appliance-node"
+            :class="{
+              'appliance-node--active': item.id === nodeId,
+              'appliance-node--offline': item.status === 'offline',
+            }"
+            @click="selectNode(item.id)"
+          >
+            <span class="appliance-node__role">{{ item.role }}</span>
+            <span class="appliance-node__host">{{ item.host }}</span>
+            <span class="appliance-node__model">{{ item.product_name || '—' }}</span>
+            <span
+              class="appliance-node__status"
+              :class="item.status === 'online' ? 'is-online' : 'is-offline'"
+            >
+              {{ item.status === 'online' ? '在线' : '离线' }}
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="appliance-page__main">
+        <ElAlert v-if="error" :title="error" type="error" show-icon :closable="false" class="appliance-page__alert" />
+        <ElAlert
+          v-else-if="nodeOffline"
+          :title="nodeOfflineError ?? '节点不可达'"
+          type="warning"
+          show-icon
+          :closable="false"
+          class="appliance-page__alert"
+        />
+        <ElSkeleton v-if="loading" :rows="10" animated />
+
+        <template v-else-if="viewModel">
       <div class="appliance-page__body">
         <div class="appliance-page__visual">
           <div class="appliance-page__device-head">
@@ -368,7 +534,17 @@ onUnmounted(() => {
           </ElTableColumn>
         </ElTable>
       </ElDialog>
-    </template>
+        </template>
+
+        <div v-else-if="nodeId && !loading" class="appliance-page__empty">
+          <ElText type="info">暂无硬件监控数据</ElText>
+        </div>
+
+        <div v-else-if="!nodeId && !nodesLoading" class="appliance-page__empty">
+          <ElText type="info">请选择节点查看硬件详情</ElText>
+        </div>
+      </main>
+    </div>
   </section>
 </template>
 
@@ -387,6 +563,124 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+}
+
+.appliance-page__layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.appliance-page__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+}
+
+.appliance-page__sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.appliance-page__sidebar-refresh {
+  padding: 0;
+  width: 14px;
+  height: 22px;
+}
+
+.appliance-page__node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.appliance-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-2);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.appliance-node:hover {
+  border-color: var(--color-primary);
+}
+
+.appliance-node--active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.appliance-node--offline {
+  opacity: 0.85;
+}
+
+.appliance-node__role {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+}
+
+.appliance-node__host {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.appliance-node__model {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.appliance-node__status {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.appliance-node__status.is-online {
+  color: var(--success);
+}
+
+.appliance-node__status.is-offline {
+  color: var(--text-secondary);
+}
+
+.appliance-page__main {
+  min-width: 0;
+}
+
+.appliance-page__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.appliance-page__header-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.appliance-page__back-btn {
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .appliance-page__title {
@@ -733,6 +1027,12 @@ onUnmounted(() => {
 .health-tag--unknown {
   color: var(--tag-text-info) !important;
   background: var(--tag-bg-info) !important;
+}
+
+@media (max-width: 1200px) {
+  .appliance-page__layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1400px) {

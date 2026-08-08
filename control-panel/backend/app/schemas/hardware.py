@@ -71,3 +71,24 @@ class HardwareSnapshot(BaseModel):
     network: list[NetworkInfo]
     npus: list[NpuInfo]
     timestamp: str
+
+
+class HardwareNodeSummary(BaseModel):
+    id: str
+    role: str
+    host: str
+    product_name: str
+    status: str
+    error: str | None
+
+
+class HardwareNodesData(BaseModel):
+    nodes: list[HardwareNodeSummary]
+    timestamp: str
+
+
+class NodeSnapshotData(BaseModel):
+    node: str
+    status: str
+    error: str | None
+    snapshot: HardwareSnapshot | None

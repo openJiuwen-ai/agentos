@@ -11,8 +11,8 @@ fi
 # AgentOS 一体机 部署脚本
 #
 # 用法:
-#   sudo bash deploy.sh install              # 安装（非交互式，不在目标目录时自动拷贝）
-#   sudo bash deploy.sh install -i           # 安装（交互式，不在目标目录时自动拷贝）
+#   sudo bash deploy.sh install              # 安装（默认非交互，单机 master 场景）
+#   sudo bash deploy.sh install -i           # 安装（交互式，可选 master/worker、多机监控）
 #   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
 #   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷、.env 和安装目录）
 #   sudo bash deploy.sh up                   # 启动：更新 exporter 配置 → 启动服务
@@ -34,7 +34,7 @@ NPU_RUN_GROUP="hwMindX"
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────
 
-log()  { echo "[agentos] $*"; }
+log()  { echo "[agentos] $*" >&2; }
 fail() { echo "[agentos] ERROR: $*" >&2; exit 1; }
 
 # 生成安全随机十六进制字符串
@@ -57,17 +57,37 @@ valid_ipv4() {
     done
 }
 
-# 带校验的 IP 输入
+# 带校验的 IP 输入（错误提示走 stderr，stdout 仅输出合法 IP）
 read_ip() {
     local prompt="$1" default="$2" val
     while true; do
-        read -rp "$prompt" val
+        read -erp "$prompt" val
         val="${val:-$default}"
         if valid_ipv4 "$val"; then
             echo "$val"
             return
         fi
         log "  ERROR: '$val' 不是有效的 IPv4 地址，请重新输入"
+    done
+}
+
+# 录入 worker IP；成功时 stdout 仅输出 IP；输入 q/Q 结束录入（return 1）
+read_worker_ip() {
+    local prompt="$1" val
+    while true; do
+        read -erp "$prompt" val
+        if [ "$val" = "q" ] || [ "$val" = "Q" ]; then
+            return 1
+        fi
+        if [ -z "$val" ]; then
+            log "  ERROR: 从节点 IP 不能为空（输入 'q' 结束添加）"
+            continue
+        fi
+        if valid_ipv4 "$val"; then
+            echo "$val"
+            return 0
+        fi
+        log "  ERROR: '$val' 不是有效的 IPv4 地址，请重新输入（输入 'q' 结束添加）"
     done
 }
 
@@ -81,6 +101,39 @@ detect_host_ip() {
 # 转义 sed 替换字符串中的特殊字符：\ & / |
 sed_escape() {
     printf '%s' "$1" | sed 's/[\\&/|]/\\&/g'
+}
+
+# 从 .env 直接读取 MONITOR_NODES（bash source 会剥掉 JSON 内层双引号，如 ["ip"] → [ip]）
+read_monitor_nodes_json() {
+    local env_file="${DEPLOY_DIR}/.env"
+    ENV_FILE="$env_file" python3 <<'PY'
+import os
+from pathlib import Path
+
+env_file = Path(os.environ.get("ENV_FILE", ""))
+if not env_file.is_file():
+    print("[]")
+    raise SystemExit
+
+for line in env_file.read_text(encoding="utf-8").splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if not stripped.startswith("MONITOR_NODES="):
+        continue
+    value = stripped.split("=", 1)[1].strip()
+    if not value:
+        print("[]")
+        raise SystemExit
+    if (value.startswith("'") and value.endswith("'")) or (
+        value.startswith('"') and value.endswith('"')
+    ):
+        value = value[1:-1]
+    print(value)
+    raise SystemExit
+
+print("[]")
+PY
 }
 
 # 加载 .env 到当前 shell（init_env 之后调用）
@@ -98,6 +151,109 @@ env_default() {
     local var="$1" default="$2"
     local val="${!var}"
     printf '%s' "${val:-$default}"
+}
+
+# ── 节点角色 ────────────────────────────────────────────────────────────────
+
+INSTALL_ROLE=""
+
+node_role() {
+    load_env
+    env_default AGENTOS_NODE_ROLE master
+}
+
+is_master() {
+    [ "$(node_role)" = "master" ]
+}
+
+is_worker() {
+    [ "$(node_role)" = "worker" ]
+}
+
+_set_monitor_nodes_json() {
+    local env_file="$1" json="$2"
+    # 外层单引号：避免 load_env/source .env 时剥掉 JSON 内的双引号
+    sed -i "s|^MONITOR_NODES=.*|MONITOR_NODES='$(sed_escape "$json")'|" "$env_file"
+}
+
+_prompt_monitor_nodes() {
+    local env_file="$1"
+    local workers=() host master_host w duplicate
+
+    master_host=$(grep '^NODE_EXPORTER_HOST=' "$env_file" | head -1 | cut -d= -f2-)
+
+    echo ""
+    log "  多机监控：依次录入 worker IP（端口全集群统一），输入 'q' 结束添加"
+    while true; do
+        if ! host=$(read_worker_ip "  请添加从节点 IP (输入 'q' 结束添加): "); then
+            break
+        fi
+        if [ -n "$master_host" ] && [ "$host" = "$master_host" ]; then
+            log "  ERROR: 从节点 IP 不能与 master 本机 NODE_EXPORTER_HOST (${master_host}) 相同"
+            continue
+        fi
+        duplicate=0
+        for w in "${workers[@]}"; do
+            if [ "$w" = "$host" ]; then
+                duplicate=1
+                break
+            fi
+        done
+        if [ "$duplicate" -eq 1 ]; then
+            log "  ERROR: 从节点 ${host} 已添加，请勿重复"
+            continue
+        fi
+
+        workers+=("$host")
+        log "  已添加从节点 ${host}"
+    done
+
+    local json="[]"
+    if [ ${#workers[@]} -gt 0 ]; then
+        local quoted=()
+        for host in "${workers[@]}"; do
+            quoted+=("\"${host}\"")
+        done
+        json="[$(IFS=,; echo "${quoted[*]}")]"
+    fi
+    _set_monitor_nodes_json "$env_file" "$json"
+    log "  MONITOR_NODES = ${json}"
+}
+
+_init_env_worker_noninteractive() {
+    local env_file="$1"
+    local detected_ip ne_host npu_host
+
+    detected_ip=$(detect_host_ip)
+    ne_host="${NODE_EXPORTER_HOST:-$detected_ip}"
+    npu_host="${NPU_EXPORTER_HOST:-$detected_ip}"
+
+    sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$ne_host")/" "$env_file"
+    sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$npu_host")/" "$env_file"
+    _set_monitor_nodes_json "$env_file" "[]"
+
+    log "  worker 非交互模式："
+    log "  NODE_EXPORTER_HOST = ${ne_host}"
+    log "  NPU_EXPORTER_HOST  = ${npu_host}"
+}
+
+_init_env_worker_interactive() {
+    local env_file="$1" val detected_ip
+
+    detected_ip=$(detect_host_ip)
+    echo ""
+    log "  worker 节点：仅需配置本机 exporter 地址"
+    echo ""
+
+    val=$(read_ip "NODE_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NODE_EXPORTER_HOST = ${val}"
+
+    val=$(read_ip "NPU_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NPU_EXPORTER_HOST = ${val}"
+
+    _set_monitor_nodes_json "$env_file" "[]"
 }
 
 need_root() {
@@ -138,6 +294,21 @@ init_env() {
     trap 'rm -f "'"$env_file"'"' EXIT
 
     if [ "$INTERACTIVE" -eq 1 ]; then
+        local role_val
+        read -rp "节点角色 (master/worker) [master]: " role_val
+        INSTALL_ROLE="${role_val:-master}"
+    else
+        INSTALL_ROLE="${AGENTOS_NODE_ROLE:-master}"
+    fi
+    sed -i "s/^AGENTOS_NODE_ROLE=.*/AGENTOS_NODE_ROLE=$(sed_escape "$INSTALL_ROLE")/" "$env_file"
+
+    if [ "$INSTALL_ROLE" = "worker" ]; then
+        if [ "$INTERACTIVE" -eq 1 ]; then
+            _init_env_worker_interactive "$env_file"
+        else
+            _init_env_worker_noninteractive "$env_file"
+        fi
+    elif [ "$INTERACTIVE" -eq 1 ]; then
         _init_env_interactive "$env_file"
     else
         _init_env_noninteractive "$env_file"
@@ -145,20 +316,6 @@ init_env() {
 
     # 初始化成功，取消 trap
     trap - EXIT
-
-    # ── 自动检测硬件信息 ──
-    local host_name product_name
-    host_name=$(hostname 2>/dev/null || echo "")
-    if [ -n "$host_name" ]; then
-        sed -i "s/^AGENTOS_HOSTNAME=.*/AGENTOS_HOSTNAME=\"$(sed_escape "$host_name")\"/" "$env_file"
-        log "  AGENTOS_HOSTNAME = ${host_name}"
-    fi
-
-    product_name=$(dmidecode -s system-product-name 2>/dev/null || echo "")
-    if [ -n "$product_name" ]; then
-        sed -i "s/^AGENTOS_PRODUCT_NAME=.*/AGENTOS_PRODUCT_NAME=\"$(sed_escape "$product_name")\"/" "$env_file"
-        log "  AGENTOS_PRODUCT_NAME = ${product_name}"
-    fi
 
     echo ""
     log ".env 已生成。"
@@ -202,6 +359,7 @@ _init_env_noninteractive() {
     if [ -n "$register_url" ]; then
         sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$register_url")|" "$env_file"
     fi
+    _set_monitor_nodes_json "$env_file" "${MONITOR_NODES:-[]}"
 
     log "  非交互模式："
     log "  POSTGRES_USER      = ${pg_user}"
@@ -281,6 +439,15 @@ _init_env_interactive() {
         log "  AGENT_REGISTER_URL = ${val}"
     else
         log "  AGENT_REGISTER_URL = (已禁用)"
+    fi
+
+    echo ""
+    read -rp "启用多机监控? (y/N): " val
+    if [ "$val" = "y" ] || [ "$val" = "Y" ]; then
+        _prompt_monitor_nodes "$env_file"
+    else
+        _set_monitor_nodes_json "$env_file" "[]"
+        log "  MONITOR_NODES = []"
     fi
 }
 
@@ -565,8 +732,12 @@ do_install() {
     log "[3/4] 安装 npu_exporter"
     install_npu_exporter || true
 
-    log "[4/4] 拉取 Docker 镜像"
-    pull_images
+    if is_master; then
+        log "[4/4] 拉取 Docker 镜像"
+        pull_images
+    else
+        log "[4/4] worker 节点跳过 Docker 镜像拉取"
+    fi
 
     log "install 完成。"
     echo ""
@@ -583,14 +754,18 @@ do_uninstall() {
     need_install_dir
     log "========== uninstall =========="
 
-    log "[1/3] 停止 Docker 服务"
-    cd "$DEPLOY_DIR"
-    if [ "$CLEAN" -eq 1 ]; then
-        docker compose down -v || true
-        log "  已停止并删除数据卷"
+    if is_master; then
+        log "[1/3] 停止 Docker 服务"
+        cd "$DEPLOY_DIR"
+        if [ "$CLEAN" -eq 1 ]; then
+            docker compose down -v || true
+            log "  已停止并删除数据卷"
+        else
+            docker compose down || true
+            log "  已停止（数据卷保留）"
+        fi
     else
-        docker compose down || true
-        log "  已停止（数据卷保留）"
+        log "[1/3] worker 节点跳过 Docker 服务"
     fi
 
     log "[2/3] 注销 node_exporter"
@@ -653,15 +828,74 @@ update_exporter_configs() {
 
 # ── up ──────────────────────────────────────────────────────────────────────
 
+generate_hardware_metrics_json() {
+    load_env
+    local json_file="${DEPLOY_DIR}/victoriametrics/hardware-metrics.json"
+    local ne_host ne_port npu_port monitor_json
+
+    ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
+    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
+    npu_port=$(env_default NPU_EXPORTER_PORT 8092)
+    monitor_json=$(read_monitor_nodes_json)
+
+    NE_HOST="$ne_host" NE_PORT="$ne_port" NPU_PORT="$npu_port" MONITOR_NODES_JSON="$monitor_json" \
+        python3 <<'PY' > "$json_file"
+import json
+import os
+
+ne_host = os.environ["NE_HOST"]
+ne_port = os.environ["NE_PORT"]
+npu_port = os.environ["NPU_PORT"]
+raw_nodes = os.environ.get("MONITOR_NODES_JSON", "[]") or "[]"
+nodes = json.loads(raw_nodes)
+
+targets = [
+    {
+        "targets": [f"{ne_host}:{ne_port}"],
+        "labels": {"exporter": "node", "node": "master", "host": ne_host},
+    },
+    {
+        "targets": [f"{ne_host}:{npu_port}"],
+        "labels": {"exporter": "npu", "node": "master", "host": ne_host},
+    },
+]
+
+for index, item in enumerate(nodes, start=1):
+    if not isinstance(item, str):
+        continue
+    host = item.strip()
+    if not host:
+        continue
+    worker_id = f"worker-{index}"
+
+    targets.append(
+        {
+            "targets": [f"{host}:{ne_port}"],
+            "labels": {"exporter": "node", "node": worker_id, "host": host},
+        }
+    )
+    targets.append(
+        {
+            "targets": [f"{host}:{npu_port}"],
+            "labels": {"exporter": "npu", "node": worker_id, "host": host},
+        }
+    )
+
+print(json.dumps(targets, indent=2))
+PY
+
+    log "  hardware-metrics.json 已生成 (${json_file})"
+}
+
 do_up() {
     need_root
     need_install_dir
     log "========== up =========="
 
-    log "[1/4] 更新 exporter 配置"
+    log "[1/5] 更新 exporter 配置"
     update_exporter_configs
 
-    log "[2/4] 启动 node_exporter"
+    log "[2/5] 启动 node_exporter"
     if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
         log "  node_exporter 已在运行"
     elif systemctl cat "$SERVICE_NAME" &>/dev/null; then
@@ -674,7 +908,7 @@ do_up() {
         && log "  node_exporter: running" \
         || log "  WARNING: node_exporter 未运行"
 
-    log "[3/4] 启动 npu_exporter"
+    log "[3/5] 启动 npu_exporter"
     if systemctl cat "$NPU_SERVICE" &>/dev/null; then
         systemctl start "$NPU_SERVICE" 2>/dev/null || true
         systemctl start "$NPU_TIMER" 2>/dev/null || true
@@ -685,14 +919,26 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[4/4] 启动 Docker 服务"
-    cd "$DEPLOY_DIR"
-    docker compose up -d
+    log "[4/5] 生成 hardware-metrics.json"
+    if is_master; then
+        generate_hardware_metrics_json
+    else
+        log "  跳过：worker 节点无需生成"
+    fi
 
-    log "等待服务就绪 ..."
-    sleep 3
+    log "[5/5] 启动 Docker 服务"
+    if is_master; then
+        cd "$DEPLOY_DIR"
+        docker compose up -d
 
-    do_status
+        log "等待服务就绪 ..."
+        sleep 3
+
+        do_status
+    else
+        log "  worker 节点跳过 Docker 服务"
+        do_status
+    fi
 }
 
 # ── down ────────────────────────────────────────────────────────────────────
@@ -703,8 +949,12 @@ do_down() {
     log "========== down =========="
 
     log "[1/3] 停止 Docker 服务"
-    cd "$DEPLOY_DIR"
-    docker compose down
+    if is_master; then
+        cd "$DEPLOY_DIR"
+        docker compose down
+    else
+        log "  worker 节点跳过 Docker 服务"
+    fi
 
     log "[2/3] 停止 node_exporter"
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -728,6 +978,45 @@ do_restart() {
 
 # ── status ──────────────────────────────────────────────────────────────────
 
+_check_remote_workers() {
+    local json ne_port
+    json=$(read_monitor_nodes_json)
+    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
+    [ "$json" = "[]" ] && return
+    [ -z "$json" ] && return
+
+    echo ""
+    log "--- 远程从节点 exporter ---"
+
+    MONITOR_NODES_JSON="$json" NE_PORT="$ne_port" python3 <<'PY'
+import json
+import os
+import subprocess
+
+nodes = json.loads(os.environ.get("MONITOR_NODES_JSON", "[]") or "[]")
+ne_port = os.environ.get("NE_PORT", "8091")
+for node in nodes:
+    if not isinstance(node, str):
+        continue
+    host = node.strip()
+    if not host:
+        continue
+    url = f"http://{host}:{ne_port}/metrics"
+    try:
+        result = subprocess.run(
+            ["curl", "-sf", url],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        ok = result.returncode == 0
+    except Exception:
+        ok = False
+    mark = "OK" if ok else "--"
+    print(f"  [{mark}]   worker node_exporter ({host}:{ne_port})")
+PY
+}
+
 do_status() {
     need_install_dir
     load_env
@@ -744,9 +1033,13 @@ do_status() {
     grafana_port=$(env_default GRAFANA_PORT 8093)
 
     echo ""
-    log "--- docker compose ps ---"
-    cd "$DEPLOY_DIR"
-    docker compose ps 2>/dev/null
+    if is_master; then
+        log "--- docker compose ps ---"
+        cd "$DEPLOY_DIR"
+        docker compose ps 2>/dev/null
+    else
+        log "--- worker 节点（无 Docker Compose）---"
+    fi
 
     echo ""
     log "--- 端口健康检查 ---"
@@ -772,11 +1065,11 @@ do_status() {
         && _check "frontend         (:${frontend_port})" 1 \
         || _check "frontend         (:${frontend_port})" 0
 
-    docker compose exec -T image-process \
-        .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')" \
-        &>/dev/null \
-        && _check "image-process    (internal)" 1 \
-        || _check "image-process    (internal)" 0
+        docker compose exec -T image-process \
+            .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')" \
+            &>/dev/null \
+            && _check "image-process    (internal)" 1 \
+            || _check "image-process    (internal)" 0
 
     docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-agentos}" 2>/dev/null | grep -qi accepting \
         && _check "postgres         (127.0.0.1:${postgres_port})" 1 \
@@ -793,6 +1086,8 @@ do_status() {
     curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${grafana_port}/api/health" 2>/dev/null | grep -qi ok \
         && _check "grafana          (:${grafana_port})" 1 \
         || _check "grafana          (:${grafana_port})" 0
+
+    _check_remote_workers
 
     unset -f _check
     echo ""
@@ -836,7 +1131,7 @@ case "$ACTION" in
         echo "用法: sudo bash $0 <command> [options]"
         echo ""
         echo "命令:"
-        echo "  install   安装（默认非交互，不在目标目录时自动拷贝到 ~/.agentos/.agent-manager）"
+        echo "  install   安装（默认非交互、单机 master；自动检测 IP 生成 .env，并拷贝到 ~/.agentos/.agent-manager）"
         echo "  uninstall 卸载：停止服务 + 注销 systemd（默认保留数据和 .env）"
         echo "  up        启动：更新 exporter 配置 → 启动服务"
         echo "  down      停止：docker compose → node/npu_exporter（反序）"
@@ -846,8 +1141,11 @@ case "$ACTION" in
         echo "注意: up/down/restart/status/uninstall 需在安装目录 ~/.agentos/.agent-manager 下执行"
         echo ""
         echo "选项:"
-        echo "  --interactive, -i  交互式模式（install 时逐项询问，默认非交互）"
+        echo "  --interactive, -i  交互式安装（可选 master/worker、多机监控；多机/worker 场景推荐）"
         echo "  --clean            uninstall 时删除数据卷、.env 和安装目录"
+        echo ""
+        echo "install 环境变量（非交互）:"
+        echo "  AGENTOS_NODE_ROLE=worker  从节点安装（仅 exporter，跳过 Docker）"
         exit 1
         ;;
 esac

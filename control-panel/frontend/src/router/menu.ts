@@ -47,7 +47,7 @@ export const appRouteTree: AppRouteNode[] = [
         key: 'appliance',
         label: '一体机',
         order: 1,
-        path: '/resources/appliance',
+        path: '/resources/appliance/:node?',
         name: 'appliance',
         icon: applianceIcon,
         adminOnly: true,
