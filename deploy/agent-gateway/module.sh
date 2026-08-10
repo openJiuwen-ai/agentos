@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-# 模块: agent-gateway (A2X 注册中心 + rqlite 存储)
+# 模块: agent-gateway (A2X 注册中心 + sqlite 存储)
 # 优先使用 systemd 托管；无 systemd 时回退到 nohup 后台进程。
 # 钩子函数: agent-gateway_up / agent-gateway_down / agent-gateway_install / agent-gateway_uninstall
 # ============================================================
 
 # ===== 端口号 =====
-RQLITE_HTTP_PORT="${RQLITE_HTTP_PORT:-4001}"
-RQLITE_RAFT_PORT="${RQLITE_RAFT_PORT:-4002}"
 A2X_REGISTRY_PORT="${A2X_REGISTRY_PORT:-4003}"
 
 # ===== mTLS 证书路径（三者齐全=开双向 TLS，空=纯 http） =====
@@ -17,9 +15,6 @@ A2X_REGISTRY_TLS_CA_CERTS="${A2X_REGISTRY_TLS_CA_CERTS:-}"
 
 # ===== 公共常量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
-RQLITE_DATA_DIR="${RQLITE_DATA_DIR:-/var/lib/rqlite/data}"
-RQLITE_NODE_ID="${RQLITE_NODE_ID:-1}"
-RQLITE_BOOTSTRAP_EXPECT="${RQLITE_BOOTSTRAP_EXPECT:-1}"
 HEALTH_CHECK_RETRIES="${HEALTH_CHECK_RETRIES:-15}"
 STOP_WAIT_RETRIES="${STOP_WAIT_RETRIES:-10}"
 
@@ -28,16 +23,12 @@ AGENTREGISTRY_SVC="agent-registry"
 AGENTREGISTRY_UNIT="/etc/systemd/system/${AGENTREGISTRY_SVC}.service"
 AGENTREGISTRY_DROPIN_DIR="/etc/systemd/system/${AGENTREGISTRY_SVC}.service.d"
 AGENTREGISTRY_DROPIN="${AGENTREGISTRY_DROPIN_DIR}/env.conf"
-RQLITE_DROPIN_DIR="/etc/systemd/system/rqlited.service.d"
-RQLITE_DROPIN="${RQLITE_DROPIN_DIR}/single-node.conf"
 
 # ===== nohup 模式常量 =====
 AGENTGW_RUN_DIR="${AGENTGW_RUN_DIR:-/var/run/agent-registry}"
 AGENTGW_LOG_DIR="${AGENTGW_LOG_DIR:-/var/log/agent-registry}"
 
-RQLITED_PID_FILE="${AGENTGW_RUN_DIR}/rqlited.pid"
 REGISTRY_PID_FILE="${AGENTGW_RUN_DIR}/agent-registry.pid"
-RQLITED_LOG="${AGENTGW_LOG_DIR}/rqlited.log"
 REGISTRY_LOG="${AGENTGW_LOG_DIR}/agent-registry.log"
 
 # ===== 检测 systemd 是否可用 =====
@@ -97,12 +88,10 @@ _stop_bg() {
     rm -f "${pidfile}"
 }
 
-# ===== install: 装 rqlite rpm + 注册中心 whl，准备运行环境 =====
+# ===== install: 装注册中心 whl，准备运行环境 =====
 agent-gateway_install() {
-    local rpm whl py
-    rpm=$(ls "${AGENTOS_ROOT}"/rqlite-*.rpm 2>/dev/null | sort -V | tail -n1)
+    local whl py
     whl=$(ls "${AGENTOS_ROOT}"/a2x_registry-*-py3-none-any.whl 2>/dev/null | sort -V | tail -n1)
-    [ -n "${rpm}" ] || error "rqlite rpm not found in ${AGENTOS_ROOT}"
     [ -n "${whl}" ] || error "registry whl not found in ${AGENTOS_ROOT}"
 
     # 校验 Python（与 yuanrong 共用同一 Python 环境）
@@ -119,12 +108,6 @@ agent-gateway_install() {
     # 确保 pip 可用（与 yuanrong 一致）
     info "Ensuring pip..."
     "python${YR_PYTHON_VERSION}" -m ensurepip 2>/dev/null || true
-
-    # 无 systemd 时跳过 RPM 脚本（groupadd/useradd/systemctl 在docker环境中不可用，
-    # rqlited 以 root 身份经 nohup 启动，不需要系统用户和 systemd 注册）
-    local rpm_opts="--force --nodeps --replacepkgs"
-    _agentgw_has_systemd || rpm_opts="${rpm_opts} --noscripts"
-    rpm -ivh ${rpm_opts} "${rpm}" || error "Failed to install rqlite rpm"
 
     # 安装 a2x-registry whl。
     # agent-gateway 在 yuanrong 之后安装，Python 依赖已由 yuanrong 装好，
@@ -143,20 +126,15 @@ agent-gateway_install() {
 
     py=$(command -v "python${YR_PYTHON_VERSION}") || error "python${YR_PYTHON_VERSION} not found"
 
-    # 数据目录（两种模式都需要）
-    mkdir -p "${RQLITE_DATA_DIR}"
-
     if _agentgw_has_systemd; then
-        info "systemd detected, generating unit files..."
-        local py_bindir py_libdir rqlite_bin
+        info "systemd detected, generating unit file..."
+        local py_bindir py_libdir
         py_bindir=$(dirname "${py}")
         py_libdir=$(dirname "${py}")/lib
-        rqlite_bin=$(command -v rqlited) || error "rqlited not found after rpm install"
 
         cat > "${AGENTREGISTRY_UNIT}" <<EOF
 [Unit]
-Requires=rqlited.service
-After=rqlited.service
+After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 [Service]
@@ -169,19 +147,6 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-        # rqlited 单节点 drop-in: 覆盖 ExecStart + User，以当前用户运行而非 RPM 默认的 rqlite 用户
-        mkdir -p "${RQLITE_DROPIN_DIR}"
-        cat > "${RQLITE_DROPIN}" <<EOF
-[Service]
-User=
-ExecStart=
-ExecStart=${rqlite_bin} -node-id ${RQLITE_NODE_ID} -bootstrap-expect ${RQLITE_BOOTSTRAP_EXPECT} -http-addr 127.0.0.1:${RQLITE_HTTP_PORT} -raft-addr 127.0.0.1:${RQLITE_RAFT_PORT} ${RQLITE_DATA_DIR}
-EOF
-
-        # 清理旧 Raft 状态，确保单节点能重新 bootstrap 为 leader
-        systemctl stop rqlited 2>/dev/null || true
-        rm -rf "${RQLITE_DATA_DIR:?}/"*
-
         systemctl daemon-reload
     else
         info "systemd not available, using nohup mode..."
@@ -191,13 +156,12 @@ EOF
     success "agent-registry installed"
 }
 
-# ===== up: 现算 BIND 设环境变量，起 rqlited + 注册中心，健康检查 =====
+# ===== up: 现算 BIND 设环境变量，起注册中心，健康检查 =====
 agent-gateway_up() {
-    local bind port endpoint i scheme curl_tls
+    local bind port i scheme curl_tls
     bind=$(_agentregistry_bind)
     port="${A2X_REGISTRY_PORT}"
-    endpoint="${A2X_REGISTRY_DB_ENDPOINT:-http://127.0.0.1:${RQLITE_HTTP_PORT}}"
-    info "Starting agent-registry on ${bind}:${port} (db: ${endpoint})"
+    info "Starting agent-registry on ${bind}:${port} (db: sqlite)"
 
     command -v curl >/dev/null 2>&1 || error "curl not found (required for health check)"
 
@@ -218,7 +182,6 @@ agent-gateway_up() {
             warning "agent-registry already running; run 'down' first to restart"
             return 0
         fi
-        systemctl cat rqlited >/dev/null 2>&1 || error "rqlited.service not found; run 'install' first"
 
         mkdir -p "${AGENTREGISTRY_DROPIN_DIR}"
         cat > "${AGENTREGISTRY_DROPIN}" <<EOF
@@ -226,8 +189,7 @@ agent-gateway_up() {
 Environment=A2X_REGISTRY_BIND=${bind}
 Environment=A2X_REGISTRY_PORT=${port}
 Environment=A2X_REGISTRY_MODE=appliance
-Environment=A2X_REGISTRY_DB_KIND=rqlite
-Environment=A2X_REGISTRY_DB_ENDPOINT=${endpoint}
+Environment=A2X_REGISTRY_DB_KIND=sqlite
 EOF
         if _agentregistry_tls_enabled; then
             cat >> "${AGENTREGISTRY_DROPIN}" <<EOF
@@ -237,13 +199,6 @@ Environment=A2X_REGISTRY_TLS_CA_CERTS=${A2X_REGISTRY_TLS_CA_CERTS}
 EOF
         fi
         systemctl daemon-reload
-        # 先启动 rqlited，等其选主完成后再启动 agent-registry
-        systemctl enable --now rqlited || error "Failed to start rqlited"
-        for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
-            curl -sf --noproxy '*' "http://127.0.0.1:${RQLITE_HTTP_PORT}/leader" | grep -q '"node_id"' \
-                && break
-            sleep 1
-        done
         systemctl enable --now "${AGENTREGISTRY_SVC}" || error "Failed to start ${AGENTREGISTRY_SVC}"
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
@@ -253,31 +208,16 @@ EOF
         done
         error "agent-registry not healthy in 15s, see: journalctl -u ${AGENTREGISTRY_SVC}"
     else
-        local py rqlite_bin py_bindir py_libdir
+        local py py_bindir py_libdir
         if [ -f "${REGISTRY_PID_FILE}" ] && kill -0 "$(cat "${REGISTRY_PID_FILE}" 2>/dev/null)" 2>/dev/null; then
             warning "agent-registry already running; run 'down' first to restart"
             return 0
         fi
-        command -v rqlited >/dev/null 2>&1 || error "rqlited not found; run 'install' first"
-        rqlite_bin=$(command -v rqlited)
         py=$(command -v "python${YR_PYTHON_VERSION}") || error "python${YR_PYTHON_VERSION} not found"
         py_bindir=$(dirname "${py}")
         py_libdir=$(dirname "${py}")/lib
 
-        mkdir -p "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}" "${RQLITE_DATA_DIR}"
-
-        # 清理旧 Raft 状态，确保单节点能重新 bootstrap 为 leader
-        _stop_bg rqlited "${RQLITED_PID_FILE}" rqlited || true
-        rm -rf "${RQLITE_DATA_DIR:?}/"*
-
-        # 先启动 rqlited，等其选主完成后再启动 agent-registry
-        _start_bg rqlited "${RQLITED_PID_FILE}" "${RQLITED_LOG}" \
-            "${rqlite_bin}" -node-id "${RQLITE_NODE_ID}" -bootstrap-expect "${RQLITE_BOOTSTRAP_EXPECT}" -http-addr "127.0.0.1:${RQLITE_HTTP_PORT}" -raft-addr "127.0.0.1:${RQLITE_RAFT_PORT}" "${RQLITE_DATA_DIR}"
-        for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
-            curl -sf --noproxy '*' "http://127.0.0.1:${RQLITE_HTTP_PORT}/leader" | grep -q '"node_id"' \
-                && break
-            sleep 1
-        done
+        mkdir -p "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
 
         if _agentregistry_tls_enabled; then
             export A2X_REGISTRY_TLS_CERTFILE A2X_REGISTRY_TLS_KEYFILE A2X_REGISTRY_TLS_CA_CERTS
@@ -287,8 +227,7 @@ EOF
         A2X_REGISTRY_BIND="${bind}" \
         A2X_REGISTRY_PORT="${port}" \
         A2X_REGISTRY_MODE=appliance \
-        A2X_REGISTRY_DB_KIND=rqlite \
-        A2X_REGISTRY_DB_ENDPOINT="${endpoint}" \
+        A2X_REGISTRY_DB_KIND=sqlite \
             _start_bg agent-registry "${REGISTRY_PID_FILE}" "${REGISTRY_LOG}" \
                 "${py}" -m a2x_registry.backend
 
@@ -301,30 +240,27 @@ EOF
     fi
 }
 
-# ===== down: 停服务（rqlited 仅注册中心使用，随之停用），不禁用开机自启动 =====
+# ===== down: 停服务 =====
 agent-gateway_down() {
     if _agentgw_has_systemd; then
-        systemctl stop "${AGENTREGISTRY_SVC}" rqlited 2>/dev/null \
+        systemctl stop "${AGENTREGISTRY_SVC}" 2>/dev/null \
             && success "agent-registry stopped" || warning "agent-registry not running"
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
-        _stop_bg rqlited "${RQLITED_PID_FILE}" rqlited || true
         success "agent-registry stopped"
     fi
 }
 
-# ===== uninstall: 停服务 + 清理 + 卸 whl/rpm =====
+# ===== uninstall: 停服务 + 清理 + 卸 whl =====
 agent-gateway_uninstall() {
     if _agentgw_has_systemd; then
-        systemctl disable --now "${AGENTREGISTRY_SVC}" rqlited 2>/dev/null || true
-        rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}" "${RQLITE_DROPIN_DIR}"
+        systemctl disable --now "${AGENTREGISTRY_SVC}" 2>/dev/null || true
+        rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}"
         systemctl daemon-reload
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
-        _stop_bg rqlited "${RQLITED_PID_FILE}" rqlited || true
         rm -rf "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
     fi
     "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
-    rpm -e rqlite 2>/dev/null || true
     success "agent-registry uninstalled"
 }
