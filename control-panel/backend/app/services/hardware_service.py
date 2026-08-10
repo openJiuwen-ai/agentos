@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.config import settings
-from app.models.monitor_node import ConfiguredHardwareNode
+from app.models.monitor_node import ConfiguredHardwareNode, MASTER_NODE_ID
 from app.schemas.hardware import (
     HardwareNodeSummary,
     HardwareNodesData,
@@ -49,23 +49,31 @@ class HardwareService:
         )
         return dict(zip(keys, results))
 
+    @staticmethod
+    def _sort_master_first(nodes: list[HardwareNodeSummary]) -> list[HardwareNodeSummary]:
+        masters = [node for node in nodes if node.id == MASTER_NODE_ID]
+        workers = [node for node in nodes if node.id != MASTER_NODE_ID]
+        return masters + workers
+
     async def list_nodes(self) -> HardwareNodesData:
         configured = self._configured_nodes()
         vm_ok = await self._vm_available()
 
         if not vm_ok:
             return HardwareNodesData(
-                nodes=[
-                    HardwareNodeSummary(
-                        id=node.id,
-                        role=node.role,
-                        host=node.host,
-                        product_name="-",
-                        status="offline",
-                        error=VM_UNAVAILABLE_ERROR,
-                    )
-                    for node in configured
-                ],
+                nodes=self._sort_master_first(
+                    [
+                        HardwareNodeSummary(
+                            id=node.id,
+                            role=node.role,
+                            host=node.host,
+                            product_name="-",
+                            status="offline",
+                            error=VM_UNAVAILABLE_ERROR,
+                        )
+                        for node in configured
+                    ]
+                ),
                 timestamp=self._timestamp(),
             )
 
@@ -97,7 +105,10 @@ class HardwareService:
                 )
             )
 
-        return HardwareNodesData(nodes=nodes, timestamp=self._timestamp())
+        return HardwareNodesData(
+            nodes=self._sort_master_first(nodes),
+            timestamp=self._timestamp(),
+        )
 
     async def get_node_snapshot(self, node_id: str) -> NodeSnapshotData:
         vm_label = settings.resolve_vm_label(node_id)

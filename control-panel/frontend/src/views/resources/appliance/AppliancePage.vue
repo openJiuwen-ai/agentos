@@ -64,12 +64,22 @@ let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let loadRequestSeq = 0;
 let nodesRequestSeq = 0;
 
+const MASTER_NODE_ID = 'master';
+
+function getNodeItemId(item: HardwareNodeSummary): string {
+  return item.id || MASTER_NODE_ID;
+}
+
 function resolveDefaultNode(items: HardwareNodeSummary[]): string {
-  const online = items.find((item) => item.status === 'online');
-  if (online) {
-    return online.id;
+  const master = items.find((item) => getNodeItemId(item) === MASTER_NODE_ID);
+  if (master) {
+    return MASTER_NODE_ID;
   }
-  return items[0]?.id ?? 'master';
+  return items[0] ? getNodeItemId(items[0]) : MASTER_NODE_ID;
+}
+
+function applianceNodePath(node: string): string {
+  return `/resources/appliance/${encodeURIComponent(node)}`;
 }
 
 async function loadNodes(isRefresh = false) {
@@ -90,10 +100,7 @@ async function loadNodes(isRefresh = false) {
       return;
     }
     nodes.value = data.nodes;
-
-    if (!nodeId.value && data.nodes.length > 0) {
-      selectNode(resolveDefaultNode(data.nodes), true);
-    }
+    await ensureDefaultNodeSelection(data.nodes);
   } catch (e) {
     if (requestSeq !== nodesRequestSeq) {
       return;
@@ -108,26 +115,48 @@ async function loadNodes(isRefresh = false) {
   }
 }
 
-function selectNode(node: string, replace = false) {
-  if (node === nodeId.value) {
+async function selectNode(node: string, replace = false) {
+  if (!node) {
     return;
   }
-  router.push({
-    name: 'appliance',
-    params: { node },
-    replace,
-  });
+  if (node === nodeId.value) {
+    void loadMonitor(false, node);
+    return;
+  }
+  const location = { path: applianceNodePath(node) };
+  if (replace) {
+    await router.replace(location);
+  } else {
+    await router.push(location);
+  }
+}
+
+async function ensureDefaultNodeSelection(items: HardwareNodeSummary[]) {
+  if (nodeId.value || items.length === 0) {
+    return;
+  }
+  const defaultNodeId = resolveDefaultNode(items);
+  await selectNode(defaultNodeId, true);
+  if (!nodeId.value) {
+    await loadMonitor(false, defaultNodeId);
+  }
 }
 
 const npuDevices = computed(() => (monitorData.value ? listNpuDevices(monitorData.value) : []));
 const diskMounts = computed(() => (monitorData.value ? listDiskMounts(monitorData.value) : []));
-const infoTags = computed(() => {
-  if (!viewModel.value) {
-    return [];
-  }
+const selectedNode = computed(() =>
+  nodes.value.find((item) => getNodeItemId(item) === nodeId.value),
+);
+const deviceDisplayName = computed(
+  () => viewModel.value?.deviceName ?? selectedNode.value?.host ?? nodeId.value ?? '—',
+);
+const deviceHeadTags = computed(() => {
+  const node = selectedNode.value;
+  const vm = viewModel.value;
   return [
-    { label: '型号', value: viewModel.value.modelName },
-    { label: '运行时长', value: viewModel.value.uptimeText },
+    { label: '型号', value: vm?.modelName ?? node?.product_name ?? '—' },
+    { label: 'IP地址', value: node?.host ?? '—' },
+    { label: '运行时长', value: vm?.uptimeText ?? '—' },
   ];
 });
 const usageCards = computed(() => {
@@ -175,8 +204,9 @@ const usageCards = computed(() => {
   ];
 });
 
-async function loadMonitor(isRefresh = false) {
-  if (!nodeId.value) {
+async function loadMonitor(isRefresh = false, targetNodeId?: string) {
+  const activeNodeId = targetNodeId ?? nodeId.value;
+  if (!activeNodeId) {
     return;
   }
 
@@ -190,7 +220,7 @@ async function loadMonitor(isRefresh = false) {
   error.value = '';
 
   try {
-    const data = await fetchApplianceMonitor(nodeId.value);
+    const data = await fetchApplianceMonitor(activeNodeId);
     if (requestSeq !== loadRequestSeq) {
       return;
     }
@@ -229,13 +259,13 @@ function handleDetailRefresh() {
   void loadMonitor(true);
 }
 
+async function pollApplianceData() {
+  await Promise.all([loadNodes(true), nodeId.value ? loadMonitor(true) : Promise.resolve()]);
+}
+
 onMounted(() => {
   void loadNodes().finally(() => {
-    if (nodeId.value) {
-      void loadMonitor().finally(() => {
-        restartPollTimer();
-      });
-    }
+    restartPollTimer();
   });
 });
 
@@ -244,7 +274,7 @@ function restartPollTimer() {
     clearTimeout(pollTimer);
   }
   pollTimer = setTimeout(() => {
-    void loadMonitor(true).finally(() => {
+    void pollApplianceData().finally(() => {
       restartPollTimer();
     });
   }, POLL_INTERVAL_MS);
@@ -260,17 +290,31 @@ function openMetricDetail(key: string) {
   }
 }
 
-watch(nodeId, () => {
-  loadRequestSeq += 1;
-  monitorData.value = null;
-  viewModel.value = null;
-  if (!nodeId.value) {
-    return;
-  }
-  void loadMonitor().finally(() => {
-    restartPollTimer();
-  });
-});
+watch(
+  nodeId,
+  (id, previousId) => {
+    if (!id) {
+      loadRequestSeq += 1;
+      monitorData.value = null;
+      viewModel.value = null;
+      nodeOffline.value = false;
+      nodeOfflineError.value = null;
+      return;
+    }
+    if (id === previousId) {
+      return;
+    }
+    loadRequestSeq += 1;
+    monitorData.value = null;
+    viewModel.value = null;
+    nodeOffline.value = false;
+    nodeOfflineError.value = null;
+    void loadMonitor(false, id).finally(() => {
+      restartPollTimer();
+    });
+  },
+  { immediate: true },
+);
 
 onUnmounted(() => {
   loadRequestSeq += 1;
@@ -329,10 +373,10 @@ onUnmounted(() => {
             type="button"
             class="appliance-node"
             :class="{
-              'appliance-node--active': item.id === nodeId,
+              'appliance-node--active': getNodeItemId(item) === nodeId,
               'appliance-node--offline': item.status === 'offline',
             }"
-            @click="selectNode(item.id)"
+            @click="selectNode(getNodeItemId(item))"
           >
             <span class="appliance-node__role">{{ item.role }}</span>
             <span class="appliance-node__host">{{ item.host }}</span>
@@ -359,23 +403,23 @@ onUnmounted(() => {
         />
         <ElSkeleton v-if="loading" :rows="10" animated />
 
-        <template v-else-if="viewModel">
+        <template v-else-if="nodeId">
       <div class="appliance-page__body">
         <div class="appliance-page__visual">
           <div class="appliance-page__device-head">
-            <h2 class="appliance-page__device-name">{{ viewModel.deviceName }}</h2>
+            <h2 class="appliance-page__device-name">{{ deviceDisplayName }}</h2>
             <ElSpace wrap :size="12">
-              <ElTag v-for="tag in infoTags" :key="tag.label" round effect="plain" class="appliance-page__tag">
+              <ElTag v-for="tag in deviceHeadTags" :key="tag.label" round effect="plain" class="appliance-page__tag">
                 <span class="appliance-page__tag-label">{{ tag.label }}</span>
                 <span class="appliance-page__tag-value">{{ tag.value }}</span>
               </ElTag>
             </ElSpace>
           </div>
-          <div class="appliance-page__device-image" aria-hidden="true">
+          <div v-if="viewModel" class="appliance-page__device-image" aria-hidden="true">
             <img :src="deviceImage" alt="" class="appliance-page__device-photo" />
           </div>
         </div>
-        <aside class="appliance-page__metrics">
+        <aside v-if="viewModel" class="appliance-page__metrics">
           <ElCard v-for="card in usageCards" :key="card.key" shadow="never" class="metric-card">
             <div class="metric-card__header">
               <img :src="card.icon" alt="" class="metric-card__icon" width="48" height="48" />
@@ -431,7 +475,11 @@ onUnmounted(() => {
             </div>
           </ElCard>
         </aside>
+        <div v-else class="appliance-page__metrics appliance-page__metrics--empty">
+          <ElText type="info">暂无硬件监控数据</ElText>
+        </div>
       </div>
+      <template v-if="viewModel">
       <ElDialog v-model="npuDetailVisible" title="NPU 卡详情" width="720px" destroy-on-close class="npu-detail-dialog">
         <div v-if="npuDevices.length === 0" class="metric-detail-empty">
           <ElText type="info">暂无 NPU 卡数据</ElText>
@@ -534,13 +582,10 @@ onUnmounted(() => {
           </ElTableColumn>
         </ElTable>
       </ElDialog>
+      </template>
         </template>
 
-        <div v-else-if="nodeId && !loading" class="appliance-page__empty">
-          <ElText type="info">暂无硬件监控数据</ElText>
-        </div>
-
-        <div v-else-if="!nodeId && !nodesLoading" class="appliance-page__empty">
+        <div v-else-if="!nodesLoading" class="appliance-page__empty">
           <ElText type="info">请选择节点查看硬件详情</ElText>
         </div>
       </main>
@@ -793,6 +838,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.appliance-page__metrics--empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  border-radius: 24px;
+  background: var(--el-fill-color-blank);
 }
 
 .metric-card {

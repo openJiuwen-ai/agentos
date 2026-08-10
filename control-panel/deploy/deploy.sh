@@ -11,8 +11,10 @@ fi
 # AgentOS 一体机 部署脚本
 #
 # 用法:
-#   sudo bash deploy.sh install              # 安装（默认非交互，单机 master 场景）
+#   sudo bash deploy.sh install              # 安装（默认非交互，单机 master）
 #   sudo bash deploy.sh install -i           # 安装（交互式，可选 master/worker、多机监控）
+#   sudo bash deploy.sh install --role worker
+#   sudo bash deploy.sh install --mode multi --workers 192.168.1.11,192.168.1.12
 #   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
 #   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷、.env 和安装目录）
 #   sudo bash deploy.sh up                   # 启动：更新 exporter 配置 → 启动服务
@@ -103,8 +105,8 @@ sed_escape() {
     printf '%s' "$1" | sed 's/[\\&/|]/\\&/g'
 }
 
-# 从 .env 直接读取 MONITOR_NODES（bash source 会剥掉 JSON 内层双引号，如 ["ip"] → [ip]）
-read_monitor_nodes_json() {
+# 从 .env 直接读取 WORKER_NODES（bash source 会剥掉 JSON 内层双引号，如 ["ip"] → [ip]）
+read_worker_nodes_json() {
     local env_file="${DEPLOY_DIR}/.env"
     ENV_FILE="$env_file" python3 <<'PY'
 import os
@@ -119,7 +121,7 @@ for line in env_file.read_text(encoding="utf-8").splitlines():
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
         continue
-    if not stripped.startswith("MONITOR_NODES="):
+    if not stripped.startswith("WORKER_NODES="):
         continue
     value = stripped.split("=", 1)[1].strip()
     if not value:
@@ -153,6 +155,103 @@ env_default() {
     printf '%s' "${val:-$default}"
 }
 
+# 从 .env 读取 NODE_EXPORTER_HOST（不依赖 load_env）；空则自动检测本机 IP
+resolve_master_exporter_host() {
+    local env_file="${DEPLOY_DIR}/.env" host
+    if [ ! -f "$env_file" ]; then
+        detect_host_ip
+        return
+    fi
+
+    host=$(grep -E '^NODE_EXPORTER_HOST=' "$env_file" | head -1 | cut -d= -f2-)
+    host="${host//$'\r'/}"
+    host="${host#"${host%%[![:space:]]*}"}"
+    host="${host%"${host##*[![:space:]]}"}"
+    host="${host#\'}"
+    host="${host%\'}"
+    host="${host#\"}"
+    host="${host%\"}"
+
+    if [ -z "$host" ] || [ "$host" = "0.0.0.0" ]; then
+        detect_host_ip
+    else
+        printf '%s' "$host"
+    fi
+}
+
+# 比较规范化前后 WORKER_NODES 是否变化（语义比较 JSON 数组）
+worker_nodes_need_sync() {
+    local raw="$1" sanitized="$2"
+    RAW_JSON="$raw" SANITIZED_JSON="$sanitized" python3 <<'PY'
+import json
+import os
+import sys
+
+def load_list(raw: str) -> list:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+raw = load_list(os.environ.get("RAW_JSON", "[]"))
+sanitized = load_list(os.environ.get("SANITIZED_JSON", "[]"))
+sys.exit(1 if raw != sanitized else 0)
+PY
+}
+
+# 规范化 WORKER_NODES：去重并排除与 master 相同的 IP；stdout 输出 JSON 数组
+sanitize_worker_nodes_json() {
+    local master_host="$1" raw_json="$2"
+    MASTER_HOST="$master_host" RAW_JSON="${raw_json:-[]}" python3 <<'PY'
+import json
+import os
+import sys
+
+master = os.environ.get("MASTER_HOST", "").strip()
+raw = os.environ.get("RAW_JSON", "[]") or "[]"
+try:
+    nodes = json.loads(raw)
+except json.JSONDecodeError:
+    nodes = []
+if not isinstance(nodes, list):
+    nodes = []
+
+seen = set()
+result = []
+for item in nodes:
+    if not isinstance(item, str):
+        continue
+    host = item.strip()
+    if not host or host in seen:
+        if host in seen:
+            print(f"[agentos]   跳过重复 worker IP: {host}", file=sys.stderr)
+        continue
+    if master and host == master:
+        print(f"[agentos]   跳过与 master 相同的 worker IP: {host}", file=sys.stderr)
+        continue
+    seen.add(host)
+    result.append(host)
+print(json.dumps(result))
+PY
+}
+
+# up 时若 .env 中 WORKER_NODES 含重复或与 master 相同 IP，写回规范化结果
+sync_worker_nodes_env() {
+    local env_file="${DEPLOY_DIR}/.env" ne_host raw sanitized
+    [ -f "$env_file" ] || return
+
+    ne_host=$(resolve_master_exporter_host)
+    raw=$(read_worker_nodes_json)
+    sanitized=$(sanitize_worker_nodes_json "$ne_host" "$raw")
+    if worker_nodes_need_sync "$raw" "$sanitized"; then
+        return
+    fi
+
+    _set_worker_nodes_json "$env_file" "$sanitized"
+    log "  WORKER_NODES 已规范化: ${sanitized}"
+}
+
 # ── 节点角色 ────────────────────────────────────────────────────────────────
 
 INSTALL_ROLE=""
@@ -170,13 +269,13 @@ is_worker() {
     [ "$(node_role)" = "worker" ]
 }
 
-_set_monitor_nodes_json() {
+_set_worker_nodes_json() {
     local env_file="$1" json="$2"
     # 外层单引号：避免 load_env/source .env 时剥掉 JSON 内的双引号
-    sed -i "s|^MONITOR_NODES=.*|MONITOR_NODES='$(sed_escape "$json")'|" "$env_file"
+    sed -i "s|^WORKER_NODES=.*|WORKER_NODES='$(sed_escape "$json")'|" "$env_file"
 }
 
-_prompt_monitor_nodes() {
+_prompt_worker_nodes() {
     local env_file="$1"
     local workers=() host master_host w duplicate
 
@@ -216,8 +315,53 @@ _prompt_monitor_nodes() {
         done
         json="[$(IFS=,; echo "${quoted[*]}")]"
     fi
-    _set_monitor_nodes_json "$env_file" "$json"
-    log "  MONITOR_NODES = ${json}"
+    _set_worker_nodes_json "$env_file" "$json"
+    log "  WORKER_NODES = ${json}"
+}
+
+# 逗号分隔 worker IP → WORKER_NODES JSON（去重、校验、排除 master 本机）
+_build_worker_nodes_json() {
+    local csv="$1" master_host="$2"
+    local workers=() host part duplicate
+    local IFS=','
+
+    read -ra parts <<< "$csv"
+    for part in "${parts[@]}"; do
+        host="${part//[[:space:]]/}"
+        [ -z "$host" ] && continue
+        valid_ipv4 "$host" || fail "无效的 worker IP: ${host}"
+        if [ -n "$master_host" ] && [ "$host" = "$master_host" ]; then
+            fail "worker IP 不能与 master 本机 NODE_EXPORTER_HOST (${master_host}) 相同: ${host}"
+        fi
+        duplicate=0
+        for w in "${workers[@]}"; do
+            if [ "$w" = "$host" ]; then
+                duplicate=1
+                log "  跳过重复 worker IP: ${host}"
+                break
+            fi
+        done
+        [ "$duplicate" -eq 1 ] && continue
+        workers+=("$host")
+    done
+    [ ${#workers[@]} -gt 0 ] || fail "--workers 至少需要一个有效 IP"
+
+    local quoted=()
+    for host in "${workers[@]}"; do
+        quoted+=("\"${host}\"")
+    done
+    echo "[$(IFS=,; echo "${quoted[*]}")]"
+}
+
+# 非交互 master：仅 CLI --workers / --mode，默认单机 []
+_resolve_worker_nodes_for_master() {
+    local ne_host="$1"
+
+    if [ -n "$INSTALL_WORKERS" ]; then
+        _build_worker_nodes_json "$INSTALL_WORKERS" "$ne_host"
+    else
+        echo "[]"
+    fi
 }
 
 _init_env_worker_noninteractive() {
@@ -230,7 +374,7 @@ _init_env_worker_noninteractive() {
 
     sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$ne_host")/" "$env_file"
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$npu_host")/" "$env_file"
-    _set_monitor_nodes_json "$env_file" "[]"
+    _set_worker_nodes_json "$env_file" "[]"
 
     log "  worker 非交互模式："
     log "  NODE_EXPORTER_HOST = ${ne_host}"
@@ -253,7 +397,7 @@ _init_env_worker_interactive() {
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
     log "  NPU_EXPORTER_HOST = ${val}"
 
-    _set_monitor_nodes_json "$env_file" "[]"
+    _set_worker_nodes_json "$env_file" "[]"
 }
 
 need_root() {
@@ -298,7 +442,11 @@ init_env() {
         read -rp "节点角色 (master/worker) [master]: " role_val
         INSTALL_ROLE="${role_val:-master}"
     else
-        INSTALL_ROLE="${AGENTOS_NODE_ROLE:-master}"
+        INSTALL_ROLE="${INSTALL_ROLE_CLI:-master}"
+        case "$INSTALL_ROLE" in
+            master|worker) ;;
+            *) fail "--role 必须是 master 或 worker" ;;
+        esac
     fi
     sed -i "s/^AGENTOS_NODE_ROLE=.*/AGENTOS_NODE_ROLE=$(sed_escape "$INSTALL_ROLE")/" "$env_file"
 
@@ -359,7 +507,9 @@ _init_env_noninteractive() {
     if [ -n "$register_url" ]; then
         sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$register_url")|" "$env_file"
     fi
-    _set_monitor_nodes_json "$env_file" "${MONITOR_NODES:-[]}"
+    local worker_json
+    worker_json=$(_resolve_worker_nodes_for_master "$ne_host")
+    _set_worker_nodes_json "$env_file" "$worker_json"
 
     log "  非交互模式："
     log "  POSTGRES_USER      = ${pg_user}"
@@ -372,6 +522,7 @@ _init_env_noninteractive() {
     log "  NODE_EXPORTER_HOST = ${ne_host}"
     log "  NPU_EXPORTER_HOST  = ${npu_host}"
     log "  AGENT_REGISTER_URL = ${register_url:-（已禁用）}"
+    log "  WORKER_NODES       = ${worker_json}"
 }
 
 # 交互式：逐项询问用户
@@ -444,10 +595,10 @@ _init_env_interactive() {
     echo ""
     read -rp "启用多机监控? (y/N): " val
     if [ "$val" = "y" ] || [ "$val" = "Y" ]; then
-        _prompt_monitor_nodes "$env_file"
+        _prompt_worker_nodes "$env_file"
     else
-        _set_monitor_nodes_json "$env_file" "[]"
-        log "  MONITOR_NODES = []"
+        _set_worker_nodes_json "$env_file" "[]"
+        log "  WORKER_NODES = []"
     fi
 }
 
@@ -830,16 +981,17 @@ update_exporter_configs() {
 # ── up ──────────────────────────────────────────────────────────────────────
 
 generate_hardware_metrics_json() {
-    load_env
     local json_file="${DEPLOY_DIR}/victoriametrics/hardware-metrics.json"
-    local ne_host ne_port npu_port monitor_json
+    local ne_host ne_port npu_port worker_json
 
-    ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
+    ne_host=$(resolve_master_exporter_host)
+    load_env
     ne_port=$(env_default NODE_EXPORTER_PORT 8091)
     npu_port=$(env_default NPU_EXPORTER_PORT 8092)
-    monitor_json=$(read_monitor_nodes_json)
+    worker_json=$(read_worker_nodes_json)
+    worker_json=$(sanitize_worker_nodes_json "$ne_host" "$worker_json")
 
-    NE_HOST="$ne_host" NE_PORT="$ne_port" NPU_PORT="$npu_port" MONITOR_NODES_JSON="$monitor_json" \
+    NE_HOST="$ne_host" NE_PORT="$ne_port" NPU_PORT="$npu_port" WORKER_NODES_JSON="$worker_json" \
         python3 <<'PY' > "$json_file"
 import json
 import os
@@ -847,8 +999,9 @@ import os
 ne_host = os.environ["NE_HOST"]
 ne_port = os.environ["NE_PORT"]
 npu_port = os.environ["NPU_PORT"]
-raw_nodes = os.environ.get("MONITOR_NODES_JSON", "[]") or "[]"
-nodes = json.loads(raw_nodes)
+unique_hosts = json.loads(os.environ.get("WORKER_NODES_JSON", "[]") or "[]")
+if not isinstance(unique_hosts, list):
+    unique_hosts = []
 
 targets = [
     {
@@ -861,12 +1014,7 @@ targets = [
     },
 ]
 
-for index, item in enumerate(nodes, start=1):
-    if not isinstance(item, str):
-        continue
-    host = item.strip()
-    if not host:
-        continue
+for index, host in enumerate(unique_hosts, start=1):
     worker_id = f"worker-{index}"
 
     targets.append(
@@ -922,6 +1070,7 @@ do_up() {
 
     log "[4/5] 生成 hardware-metrics.json"
     if is_master; then
+        sync_worker_nodes_env
         generate_hardware_metrics_json
     else
         log "  跳过：worker 节点无需生成"
@@ -980,21 +1129,23 @@ do_restart() {
 # ── status ──────────────────────────────────────────────────────────────────
 
 _check_remote_workers() {
-    local json ne_port
-    json=$(read_monitor_nodes_json)
+    local json ne_port ne_host
+    json=$(read_worker_nodes_json)
     ne_port=$(env_default NODE_EXPORTER_PORT 8091)
+    ne_host=$(resolve_master_exporter_host)
+    json=$(sanitize_worker_nodes_json "$ne_host" "$json")
     [ "$json" = "[]" ] && return
     [ -z "$json" ] && return
 
     echo ""
     log "--- 远程从节点 exporter ---"
 
-    MONITOR_NODES_JSON="$json" NE_PORT="$ne_port" python3 <<'PY'
+    WORKER_NODES_JSON="$json" NE_PORT="$ne_port" python3 <<'PY'
 import json
 import os
 import subprocess
 
-nodes = json.loads(os.environ.get("MONITOR_NODES_JSON", "[]") or "[]")
+nodes = json.loads(os.environ.get("WORKER_NODES_JSON", "[]") or "[]")
 ne_port = os.environ.get("NE_PORT", "8091")
 for node in nodes:
     if not isinstance(node, str):
@@ -1096,17 +1247,91 @@ do_status() {
 
 # ── 入口 ────────────────────────────────────────────────────────────────────
 
+validate_install_cli() {
+    if [ "$INTERACTIVE" -eq 1 ]; then
+        if [ -n "$INSTALL_ROLE_CLI" ] || [ -n "$INSTALL_MODE" ] || [ -n "$INSTALL_WORKERS" ]; then
+            fail "交互模式 (-i) 与 --role / --mode / --workers 不能同时使用"
+        fi
+        return
+    fi
+
+    if [ -n "$INSTALL_ROLE_CLI" ]; then
+        case "$INSTALL_ROLE_CLI" in
+            master|worker) ;;
+            *) fail "--role 必须是 master 或 worker" ;;
+        esac
+    fi
+
+    if [ -n "$INSTALL_MODE" ]; then
+        case "$INSTALL_MODE" in
+            single|multi) ;;
+            *) fail "--mode 必须是 single 或 multi" ;;
+        esac
+    fi
+
+    local role="${INSTALL_ROLE_CLI:-master}"
+    if [ "$role" = "worker" ] && { [ -n "$INSTALL_MODE" ] || [ -n "$INSTALL_WORKERS" ]; }; then
+        fail "worker 节点不支持 --mode 或 --workers"
+    fi
+
+    if [ -n "$INSTALL_WORKERS" ] && [ -z "$INSTALL_MODE" ]; then
+        INSTALL_MODE=multi
+    fi
+
+    if [ "${INSTALL_MODE:-single}" = "multi" ] && [ -z "$INSTALL_WORKERS" ]; then
+        fail "多机部署 (--mode multi) 必须通过 --workers 指定 worker IP 列表"
+    fi
+
+    if [ "${INSTALL_MODE:-single}" = "single" ] && [ -n "$INSTALL_WORKERS" ]; then
+        fail "单机部署 (--mode single) 不能指定 --workers"
+    fi
+}
+
 ACTION="${1:-help}"
+if [ $# -gt 0 ]; then
+    shift
+fi
+
 INTERACTIVE=0
 CLEAN=0
+INSTALL_ROLE_CLI=""
+INSTALL_MODE=""
+INSTALL_WORKERS=""
 
-# 扫描所有参数
-for arg in "$@"; do
-    case "$arg" in
-        --interactive|-i) INTERACTIVE=1 ;;
-        --clean)          CLEAN=1 ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --interactive|-i)
+            INTERACTIVE=1
+            shift
+            ;;
+        --clean)
+            CLEAN=1
+            shift
+            ;;
+        --role)
+            [ -n "${2:-}" ] || fail "--role 需要参数: master 或 worker"
+            INSTALL_ROLE_CLI="$2"
+            shift 2
+            ;;
+        --mode)
+            [ -n "${2:-}" ] || fail "--mode 需要参数: single 或 multi"
+            INSTALL_MODE="$2"
+            shift 2
+            ;;
+        --workers)
+            [ -n "${2:-}" ] || fail "--workers 需要逗号分隔的 IP 列表"
+            INSTALL_WORKERS="$2"
+            shift 2
+            ;;
+        *)
+            fail "未知参数: $1"
+            ;;
     esac
 done
+
+if [ "$ACTION" = "install" ]; then
+    validate_install_cli
+fi
 
 # install 时：若不在目标目录则拷贝过去再执行
 if [ "$ACTION" = "install" ] && [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
@@ -1142,11 +1367,19 @@ case "$ACTION" in
         echo "注意: up/down/restart/status/uninstall 需在安装目录 ~/.agentos/.agent-manager 下执行"
         echo ""
         echo "选项:"
-        echo "  --interactive, -i  交互式安装（可选 master/worker、多机监控；多机/worker 场景推荐）"
+        echo "  --interactive, -i  交互式安装（可选 master/worker、多机监控；与下方拓扑参数互斥）"
         echo "  --clean            uninstall 时删除数据卷、.env 和安装目录"
         echo ""
-        echo "install 环境变量（非交互）:"
-        echo "  AGENTOS_NODE_ROLE=worker  从节点安装（仅 exporter，跳过 Docker）"
+        echo "install 拓扑参数（非交互，与 -i 互斥）:"
+        echo "  --role master|worker   节点角色，默认 master"
+        echo "  --mode single|multi    仅 master；默认 single；仅传 --workers 时自动设为 multi"
+        echo "  --workers ip1,ip2,...  master 多机 worker IPv4；可单独传参，或 --mode multi 时必填"
+        echo ""
+        echo "install 示例:"
+        echo "  sudo bash $0 install                                          # 单机 master"
+        echo "  sudo bash $0 install --workers 192.168.1.11,192.168.1.12"
+        echo "  sudo bash $0 install --mode multi --workers 192.168.1.11,192.168.1.12"
+        echo "  sudo bash $0 install --role worker"
         exit 1
         ;;
 esac

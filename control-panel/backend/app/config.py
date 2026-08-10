@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     NPU_EXPORTER_PORT: int = 8092
     NODE_EXPORTER_HOST: str = "host.docker.internal"
     NODE_EXPORTER_PORT: int = 8091
-    MONITOR_NODES: str = ""
+    WORKER_NODES: str = ""
     VICTORIAMETRICS_URL: str = ""
 
     @property
@@ -91,8 +91,8 @@ class Settings(BaseSettings):
         return f"http://{self.NODE_EXPORTER_HOST}:{self.NODE_EXPORTER_PORT}"
 
     @property
-    def monitor_nodes(self) -> list[MonitorNodeConfig]:
-        raw = self.MONITOR_NODES.strip()
+    def worker_nodes(self) -> list[MonitorNodeConfig]:
+        raw = self.WORKER_NODES.strip()
         if not raw:
             return []
         try:
@@ -102,12 +102,17 @@ class Settings(BaseSettings):
         if not isinstance(data, list):
             return []
         nodes: list[MonitorNodeConfig] = []
+        seen: set[str] = set()
+        master_host = self.NODE_EXPORTER_HOST.strip()
         for item in data:
             if not isinstance(item, str):
                 continue
             host = item.strip()
-            if not host:
+            if not host or host in seen:
                 continue
+            if master_host and host == master_host:
+                continue
+            seen.add(host)
             nodes.append(MonitorNodeConfig(host=host))
         return nodes
 
@@ -121,7 +126,7 @@ class Settings(BaseSettings):
                 vm_label=MASTER_NODE_ID,
             )
         ]
-        for index, worker in enumerate(self.monitor_nodes, start=1):
+        for index, worker in enumerate(self.worker_nodes, start=1):
             nodes.append(
                 ConfiguredHardwareNode(
                     id=f"worker-{index}",
@@ -156,9 +161,9 @@ class Settings(BaseSettings):
             )
         return None
 
-    @field_validator("MONITOR_NODES", mode="before")
+    @field_validator("WORKER_NODES", mode="before")
     @classmethod
-    def _coerce_monitor_nodes(cls, value: object) -> str:
+    def _coerce_worker_nodes(cls, value: object) -> str:
         if value is None:
             return ""
         return str(value)

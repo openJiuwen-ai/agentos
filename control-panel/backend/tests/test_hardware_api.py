@@ -237,3 +237,33 @@ async def _get_admin_token(client, test_data):
         json={"username": admin["username"], "password": admin["password"]},
     )
     return resp.json()["data"]["access_token"]
+
+
+def test_worker_nodes_deduplicates_duplicate_hosts():
+    from app.config import Settings
+
+    settings = Settings(
+        WORKER_NODES='["192.168.1.11","192.168.1.11","192.168.1.12"]'
+    )
+    hosts = [node.host for node in settings.worker_nodes]
+    assert hosts == ["192.168.1.11", "192.168.1.12"]
+    assert [node.id for node in settings.configured_hardware_nodes] == [
+        "master",
+        "worker-1",
+        "worker-2",
+    ]
+
+
+def test_worker_nodes_excludes_master_host():
+    from app.config import Settings
+
+    settings = Settings(
+        NODE_EXPORTER_HOST="192.168.1.10",
+        WORKER_NODES='["192.168.1.10","192.168.1.11","192.168.1.11"]',
+    )
+    hosts = [node.host for node in settings.worker_nodes]
+    assert hosts == ["192.168.1.11"]
+    assert [node.id for node in settings.configured_hardware_nodes] == [
+        "master",
+        "worker-1",
+    ]
