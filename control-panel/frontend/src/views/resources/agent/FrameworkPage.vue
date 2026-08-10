@@ -421,4 +421,364 @@ onMounted(loadFrameworks);
   color: var(--text-primary);
 }
 
+/* ── Toolbar ── */
+.framework-page__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.framework-page__search {
+  width: 296px;
+}
+
+.framework-page__toggle {
+  display: flex;
+  background: rgba(25, 25, 25, 0.05);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 0;
+}
+
+.framework-page__toggle-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+.framework-page__toggle-btn--active {
+  background: #ffffff;
+  box-shadow: 0px 1px 6px 0px rgba(0, 0, 0, 0.08);
+}
+
+.framework-page__toggle-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  object-fit: contain;
+}
+
+/* ── Card area ── */
+.framework-page__cards--grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.framework-page__cards--list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.framework-page__empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 48px 0;
+  font-size: 14px;
+}
+
+/* ── Pagination ── */
+.framework-page__pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+/* ── Shared dialog styles ── */
+:deep(.el-dialog) {
+  border-radius: 8px;
+  box-shadow: 0px 16px 48px 0px rgba(0, 0, 0, 0.16);
+}
+
+:deep(.el-dialog__header) {
+  padding: 0;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+:deep(.el-dialog__body) {
+  padding: 0;
+}
+
+:deep(.el-dialog__footer) {
+  padding: 0;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 20px 24px 0 24px;
+}
+
+.dialog-title {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 28px;
+}
+
+.dialog-close {
+  width: 14px;
+  height: 14px;
+  margin-top: 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-close img {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.dialog-body {
+  padding: 8px 24px 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dialog-body--center {
+  align-items: center;
+}
+
+.dialog-desc {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 22px;
+  margin: 0;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 24px 24px 20px 24px;
+}
+
+.btn-cancel {
+  width: 88px;
+  height: 32px;
+  background: #ffffff;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.btn-primary {
+  width: 88px;
+  height: 32px;
+  background: var(--color-primary);
+  border-radius: 4px;
+  border: none;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* ── Upload dialog ── */
+.upload-zone {
+  background: rgba(25, 25, 25, 0.05);
+  border-radius: 4px;
+  border: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 0;
+  cursor: pointer;
+  position: relative;
+}
+
+.upload-zone__icon {
+  width: 22px;
+  height: 20px;
+  display: block;
+}
+
+.upload-zone__text {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 22px;
+}
+
+.upload-zone__hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 20px;
+}
+
+.upload-zone__input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.upload-zone__trigger {
+  position: absolute;
+  inset: 0;
+}
+
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upload-progress__text {
+  color: #909399;
+  font-size: 13px;
+}
+
+/* ── Parsing dialog ── */
+.parsing-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 0 32px 0;
+}
+
+.parsing-icon {
+  width: 48px;
+  height: 48px;
+  display: block;
+  animation: spin 1.5s linear infinite;
+}
+
+.parsing-text {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-placeholder);
+  line-height: 22px;
+}
+
+/* ── Confirm dialog ── */
+.confirm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.confirm-form__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.confirm-form__label {
+  width: 80px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 22px;
+  margin-top: 9px;
+  flex-shrink: 0;
+}
+
+.confirm-form__input {
+  width: 324px;
+  height: 40px;
+  background: #ffffff;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 22px;
+  font-family: inherit;
+}
+
+.confirm-form__input--disabled {
+  background: #f5f5f5;
+  color: var(--text-primary);
+}
+
+/* ── Create dialog ── */
+.create-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0 8px 0;
+  width: 100%;
+}
+
+.create-text {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-placeholder);
+  line-height: 22px;
+}
+
+.create-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.create-result__success {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 22px;
+}
+
+.create-result__error {
+  font-size: 14px;
+  font-weight: 500;
+  color: #f56c6c;
+  line-height: 22px;
+}
+
+.create-result__image {
+  font-size: 13px;
+  color: #606266;
+}
+
+.create-result__detail {
+  font-size: 13px;
+  color: #f56c6c;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 </style>

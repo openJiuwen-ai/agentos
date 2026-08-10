@@ -1,5 +1,6 @@
-"""Unit tests for thirdparty_agent_service — upload, remote build, poll sync."""
+"""Unit tests for thirdparty_agent_service — upload, build, query."""
 
+import asyncio
 import io
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -55,7 +56,7 @@ class TestUpload:
 
     @staticmethod
     async def test_duplicate_upload_raises():
-        """TC-03：重复上传相同 agent_name + version → 400."""
+        """TC-03：重复上传相同 installer_path → 400."""
         from fastapi import UploadFile
         from app.services.thirdparty_agent_service import (
             AgentAlreadyExistsError, ThirdpartyAgentService)
@@ -63,10 +64,10 @@ class TestUpload:
         content = _tgz_bytes({"name": "opencode-linux-x64", "version": "1.0.0"})
         pkg = UploadFile(filename="opencode.tgz", file=io.BytesIO(content))
 
-        with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_model, \
+        with patch("app.services.thirdparty_agent_service.AgentRegistration") as mock_model, \
              patch("app.thirdparty_agent.package.PackageMeta.validate_platform",
                    return_value=None):
-            mock_model.exists = AsyncMock(return_value=True)
+            mock_model.exists_by_path = AsyncMock(return_value=True)
             svc = ThirdpartyAgentService()
             with patch.object(svc, "check_disk_space", return_value=None):
                 with pytest.raises(AgentAlreadyExistsError) as exc:
@@ -87,6 +88,34 @@ class TestUpload:
         with patch.object(svc, "check_disk_space", return_value=None):
             with pytest.raises(MissingFieldError):
                 await svc.upload(AsyncMock(), "admin", pkg)
+
+    @staticmethod
+    async def test_upload_rejects_existing_registration(tmp_path, monkeypatch):
+        """Upload should raise AgentAlreadyExistsError when installer_path already registered."""
+        from fastapi import UploadFile
+        from app.config import settings
+        from app.services.thirdparty_agent_service import (
+            ThirdpartyAgentService, AgentAlreadyExistsError)
+        from app.thirdparty_agent.package import PackageMeta
+
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(tmp_path))
+
+        svc = ThirdpartyAgentService()
+        svc.check_disk_space = MagicMock()
+
+        meta = PackageMeta(
+            agent_name="opencode", version="1.0",
+            display_name="OpenCode", entrypoint="opencode",
+            os="linux", arch="x64", libc="gnu")
+        monkeypatch.setattr(
+            "app.services.thirdparty_agent_service.extract_package_meta",
+            lambda content: meta)
+
+        with patch("app.services.thirdparty_agent_service.AgentRegistration") as mock_reg:
+            mock_reg.exists_by_path = AsyncMock(return_value=True)
+            pkg = UploadFile(filename="test.tgz", file=io.BytesIO(b"dummy"))
+            with pytest.raises(AgentAlreadyExistsError):
+                await svc.upload(AsyncMock(), "testuser", pkg)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -125,7 +154,7 @@ class TestCheckDiskSpace:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Build task creation (remote image_process)
+# Build task creation
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -136,227 +165,98 @@ class TestCreateBuildTask:
     @staticmethod
     async def test_returns_existing_task_if_pending():
         from app.models.thirdparty_agent import BuildTask
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+        from app.services.thirdparty_agent_service import CreateBuildTaskParams, ThirdpartyAgentService
 
         existing = BuildTask(
-            task_id="build-existing", agent_name="opencode", version="1.0",
+            task_id="build-existing", installer_path="/home/admin/installers/opencode-1.0.tgz",
             status="pending", progress=0,
         )
-        with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent, \
+        with patch("os.path.isfile", return_value=True), \
              patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client:
-            mock_agent.get = AsyncMock(return_value=MagicMock())
+             patch("app.services.thirdparty_agent_service.asyncio.create_task") as mock_create:
             mock_bt.try_insert = AsyncMock(return_value=(existing, False))
-            mock_client.submit_build = AsyncMock()
 
             result = await ThirdpartyAgentService().create_build_task(
                 AsyncMock(),
-                agent_name="opencode", version="1.0",
-                display_name="OpenCode", entrypoint="opencode")
+                CreateBuildTaskParams(agent_name="opencode", version="1.0",
+                                      display_name="OpenCode", entrypoint="opencode",
+                                      uploaded_by="admin"))
 
         assert result.task_id == "build-existing"
         assert result.status == "pending"
-        mock_client.submit_build.assert_not_called()
+        mock_create.assert_not_called()
 
     @staticmethod
     async def test_agent_not_found_raises():
-        from app.services.thirdparty_agent_service import AgentNotFoundError, ThirdpartyAgentService
+        """Should raise AgentNotFoundError when tgz file doesn't exist."""
+        from app.services.thirdparty_agent_service import (
+            AgentNotFoundError, CreateBuildTaskParams, ThirdpartyAgentService)
 
-        with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent:
-            mock_agent.get = AsyncMock(return_value=None)
+        with patch("os.path.isfile",
+                   return_value=False):
             with pytest.raises(AgentNotFoundError) as exc:
                 await ThirdpartyAgentService().create_build_task(
                     AsyncMock(),
-                    agent_name="nobody", version="1.0",
-                    display_name="Nobody", entrypoint="nobody")
+                    CreateBuildTaskParams(agent_name="nobody", version="1.0",
+                                          display_name="Nobody", entrypoint="nobody",
+                                          uploaded_by="admin"))
             assert exc.value.agent_name == "nobody"
 
     @staticmethod
-    async def test_normal_build_submits_to_image_process():
-        """TC-01：下发成功 → status=pending，调用 image_process."""
+    async def test_normal_build_creates_task_and_launches_background():
+        """TC-01：create_build_task returns pending task and spawns _run_build."""
         from app.models.thirdparty_agent import BuildTask
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+        from app.services.thirdparty_agent_service import CreateBuildTaskParams, ThirdpartyAgentService
 
-        installer = MagicMock(
-            agent_name="opencode", version="1.1.0",
-            installer_path="/home/agentos/users/admin/installers/opencode-1.1.0.tgz",
-            uploaded_by="admin",
-        )
-        with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent, \
+        with patch("os.path.isfile", return_value=True), \
              patch("app.services.thirdparty_agent_service.BuildTask", wraps=BuildTask) as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client, \
+             patch("app.services.thirdparty_agent_service.asyncio.create_task") as mock_create, \
              patch("uuid.uuid4") as mock_uuid:
-            mock_agent.get = AsyncMock(return_value=installer)
-            mock_agent.update = AsyncMock()
             mock_uuid.return_value.hex = "abc123def456"
 
             async def _try_insert(session, task, *, max_concurrent):
                 return (task, True)
 
             mock_bt.try_insert = AsyncMock(side_effect=_try_insert)
-            mock_client.submit_build = AsyncMock()
 
             result = await ThirdpartyAgentService().create_build_task(
                 AsyncMock(),
-                agent_name="opencode", version="1.1.0",
-                display_name="OpenCode v2", entrypoint="opencode")
+                CreateBuildTaskParams(agent_name="opencode", version="1.1.0",
+                                      display_name="OpenCode v2", entrypoint="opencode",
+                                      uploaded_by="admin"))
 
         assert result.task_id == "build-abc123def456"
         assert result.status == "pending"
-        mock_client.submit_build.assert_awaited_once()
-        kwargs = mock_client.submit_build.await_args.kwargs
-        assert kwargs["task_id"] == "build-abc123def456"
-        assert kwargs["agent_name"] == "opencode"
+        mock_create.assert_called_once()
 
     @staticmethod
-    async def test_image_process_unreachable_marks_failed():
-        """TC-03：image-process 不可达 → 任务 failed."""
+    async def test_create_build_task_when_insert_blocked():
+        """When try_insert returns existing task, create_task is not spawned."""
         from app.models.thirdparty_agent import BuildTask
-        from app.services.image_process_client import ImageProcessError
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+        from app.services.thirdparty_agent_service import CreateBuildTaskParams, ThirdpartyAgentService
 
-        installer = MagicMock(
-            agent_name="opencode", version="1.0",
-            installer_path="/x.tgz", uploaded_by="admin",
+        existing = BuildTask(
+            task_id="build-existing", installer_path="/home/admin/installers/opencode-1.0.tgz",
+            status="building", progress=50,
         )
-        with patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent, \
-             patch("app.services.thirdparty_agent_service.BuildTask", wraps=BuildTask) as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client, \
-             patch("uuid.uuid4") as mock_uuid:
-            mock_agent.get = AsyncMock(return_value=installer)
-            mock_agent.update = AsyncMock()
-            mock_uuid.return_value.hex = "deadbeef0001"
-            mock_bt.try_insert = AsyncMock(side_effect=lambda s, t, max_concurrent=5: (t, True))
-            mock_bt.mark_failed = AsyncMock()
-            mock_client.submit_build = AsyncMock(
-                side_effect=ImageProcessError("image_process unreachable"))
+        with patch("os.path.isfile", return_value=True), \
+             patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
+             patch("app.services.thirdparty_agent_service.asyncio.create_task") as mock_create:
+            mock_bt.try_insert = AsyncMock(return_value=(existing, False))
 
             result = await ThirdpartyAgentService().create_build_task(
                 AsyncMock(),
-                agent_name="opencode", version="1.0",
-                display_name="OpenCode", entrypoint="opencode")
+                CreateBuildTaskParams(agent_name="opencode", version="1.0",
+                                      display_name="OpenCode", entrypoint="opencode",
+                                      uploaded_by="admin"))
 
-        assert result.status == "failed"
-        mock_bt.mark_failed.assert_awaited_once()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Poll sync from image_process
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.asyncio
-@_skip_sql
-class TestPollSync:
-
-    @staticmethod
-    async def test_building_updates_progress():
-        """active task → fetch building → mark_building + progress."""
-        from app.models.thirdparty_agent import BuildTask
-        from app.services.image_process_client import RemoteBuildStatus
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
-
-        task = BuildTask(
-            task_id="build-cb1", agent_name="opencode", version="1.0",
-            status="pending", progress=0,
-        )
-        refreshed = BuildTask(
-            task_id="build-cb1", agent_name="opencode", version="1.0",
-            status="building", progress=40,
-        )
-        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client:
-            mock_bt.get_by_id = AsyncMock(side_effect=[task, refreshed])
-            mock_bt.mark_building = AsyncMock()
-            mock_bt.update_progress = AsyncMock()
-            mock_client.fetch_build = AsyncMock(
-                return_value=RemoteBuildStatus(status="building", progress=40))
-
-            result = await ThirdpartyAgentService().get_build_task(AsyncMock(), "build-cb1")
-
-        mock_bt.mark_building.assert_awaited_once()
-        mock_bt.update_progress.assert_awaited_once()
-        assert result is not None
+        assert result.task_id == "build-existing"
         assert result.status == "building"
-        assert result.progress == 40
-
-    @staticmethod
-    async def test_failed_remote_marks_failed():
-        """fetch failed → DB failed + error_message."""
-        from app.models.thirdparty_agent import BuildTask
-        from app.services.image_process_client import RemoteBuildStatus
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
-
-        task = BuildTask(
-            task_id="build-cb2", agent_name="opencode", version="1.0",
-            status="building", progress=50,
-        )
-        refreshed = BuildTask(
-            task_id="build-cb2", agent_name="opencode", version="1.0",
-            status="failed", progress=50, error_message="docker boom",
-        )
-        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client:
-            mock_bt.get_by_id = AsyncMock(side_effect=[task, refreshed])
-            mock_bt.mark_failed = AsyncMock()
-            mock_client.fetch_build = AsyncMock(
-                return_value=RemoteBuildStatus(
-                    status="failed", progress=50, error_message="docker boom"))
-
-            result = await ThirdpartyAgentService().get_build_task(AsyncMock(), "build-cb2")
-
-        mock_bt.mark_failed.assert_awaited_once()
-        assert "docker boom" in mock_bt.mark_failed.await_args.kwargs["error_message"]
-        assert result is not None
-        assert result.status == "failed"
-
-    @staticmethod
-    async def test_done_remote_marks_done_and_registers():
-        """fetch done → mark_done；registry 失败不阻断."""
-        from app.models.thirdparty_agent import BuildTask
-        from app.services.image_process_client import RemoteBuildStatus
-        from app.services.thirdparty_agent_service import ThirdpartyAgentService
-
-        task = BuildTask(
-            task_id="build-cb3", agent_name="opencode", version="1.0",
-            status="building", progress=90,
-        )
-        refreshed = BuildTask(
-            task_id="build-cb3", agent_name="opencode", version="1.0",
-            status="done", progress=100,
-            image="opencode:1.0", image_digest="sha256:abc",
-        )
-        installer = MagicMock(agent_name="opencode", version="1.0", uploaded_by="admin")
-        svc = ThirdpartyAgentService()
-        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.AgentInstaller") as mock_agent, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client, \
-             patch.object(
-                 ThirdpartyAgentService, "_register_image",
-                 new_callable=AsyncMock,
-                 side_effect=RuntimeError("down"),
-             ) as mock_reg:
-            mock_bt.get_by_id = AsyncMock(side_effect=[task, refreshed])
-            mock_bt.mark_done = AsyncMock()
-            mock_agent.get = AsyncMock(return_value=installer)
-            mock_agent.update = AsyncMock()
-            mock_client.fetch_build = AsyncMock(
-                return_value=RemoteBuildStatus(
-                    status="done", progress=100,
-                    image="opencode:1.0", image_digest="sha256:abc",
-                    image_path="/images/opencode-1.0.tar",
-                ))
-
-            result = await svc.get_build_task(AsyncMock(), "build-cb3")
-
-        mock_bt.mark_done.assert_awaited_once()
-        mock_reg.assert_awaited_once()
-        assert result is not None
-        assert result.status == "done"
+        mock_create.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Build status query
+# Build status query (DB snapshot only — no polling)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -375,19 +275,18 @@ class TestGetBuildTask:
 
     @staticmethod
     async def test_done_task():
-        """TC-07：构建完成 → GET /build_tasks/{id} 返回 done（不再拉取）."""
+        """TC-07：构建完成 → GET /build_tasks/{id} 返回 done."""
         from app.models.thirdparty_agent import BuildTask
         from app.services.thirdparty_agent_service import ThirdpartyAgentService
 
         task = BuildTask(
-            task_id="build-done", agent_name="opencode", version="1.0",
+            task_id="build-done", installer_path="/home/admin/installers/opencode-1.0.tgz",
             status="done", progress=100,
             image="opencode:1.0", image_digest="sha256:abc",
             started_at=datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
             finished_at=datetime(2026, 7, 15, 12, 5, tzinfo=timezone.utc),
         )
-        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client:
+        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt:
             mock_bt.get_by_id = AsyncMock(return_value=task)
             result = await ThirdpartyAgentService().get_build_task(AsyncMock(), "build-done")
 
@@ -396,26 +295,43 @@ class TestGetBuildTask:
         assert result.progress == 100
         assert result.registered is True
         assert result.image == "opencode:1.0"
-        mock_client.fetch_build.assert_not_called()
 
     @staticmethod
-    async def test_building_task_keeps_db_when_remote_missing():
-        """TC-06：远端暂不可达 → 返回 DB 快照."""
+    async def test_building_task_returns_db_snapshot():
+        """Building task returns current DB state (no remote polling)."""
         from app.models.thirdparty_agent import BuildTask
         from app.services.thirdparty_agent_service import ThirdpartyAgentService
 
         task = BuildTask(
-            task_id="build-progress", agent_name="opencode", version="1.0",
+            task_id="build-progress", installer_path="/home/admin/installers/opencode-1.0.tgz",
             status="building", progress=45,
             started_at=datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
         )
-        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt, \
-             patch("app.services.thirdparty_agent_service.image_process_client") as mock_client:
+        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt:
             mock_bt.get_by_id = AsyncMock(return_value=task)
-            mock_client.fetch_build = AsyncMock(return_value=None)
             result = await ThirdpartyAgentService().get_build_task(AsyncMock(), "build-progress")
 
         assert result is not None
         assert result.status == "building"
         assert result.progress == 45
         assert result.registered is False
+
+    @staticmethod
+    async def test_failed_task():
+        """Failed task returns error info from DB."""
+        from app.models.thirdparty_agent import BuildTask
+        from app.services.thirdparty_agent_service import ThirdpartyAgentService
+
+        task = BuildTask(
+            task_id="build-fail", installer_path="/home/admin/installers/opencode-1.0.tgz",
+            status="failed", progress=50, error_message="build error",
+            started_at=datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 7, 15, 12, 3, tzinfo=timezone.utc),
+        )
+        with patch("app.services.thirdparty_agent_service.BuildTask") as mock_bt:
+            mock_bt.get_by_id = AsyncMock(return_value=task)
+            result = await ThirdpartyAgentService().get_build_task(AsyncMock(), "build-fail")
+
+        assert result is not None
+        assert result.status == "failed"
+        assert result.error_message == "build error"
