@@ -38,6 +38,29 @@ class BuildParams:
 # Path to the Dockerfile template at image_process/ root (sibling of app/).
 _DOCKERFILE_PATH = Path(__file__).resolve().parent.parent / "agent.Dockerfile"
 _BASE_IMAGE = "agent-base:1.0"
+_IMAGE_MODULE_VERSION = "1.0"
+
+
+async def _read_runtime_spec(base_image: str) -> dict:
+    """docker inspect base_image → extract agentos.runtime_spec LABEL as dict."""
+    import json
+
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "inspect", "--format={{json .Config.Labels}}", base_image,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise BuildError(
+            f"docker inspect {base_image!r} labels failed: "
+            f"{stderr.decode(errors='replace').strip()}"
+        )
+
+    labels_raw = stdout.decode(errors="replace").strip()
+    labels = json.loads(labels_raw) if labels_raw else {}
+    raw = labels.get("agentos.runtime_spec", "{}")
+    return json.loads(raw) if isinstance(raw, str) else raw
+
 
 # ── Exceptions ──────────────────────────────────────────────────────────
 
@@ -51,6 +74,8 @@ class BuildResult(NamedTuple):
     image_digest: str
     image_path: str
     base_image: str
+    runtime_spec: dict
+    image_module_version: str
 
 
 # ── Backend interface ───────────────────────────────────────────────────
@@ -77,6 +102,10 @@ class AbstractBuilder(ABC):
     async def check_available(self) -> bool:
         ...
 
+    @abstractmethod
+    async def get_sandbox_type(self) -> str:
+        """Return sandbox type for registry registration (e.g. 'docker')."""
+
 
 # ── Docker backend ──────────────────────────────────────────────────────
 
@@ -91,6 +120,9 @@ class DockerBuilder(AbstractBuilder):
         )
         await proc.wait()
         return proc.returncode == 0
+
+    async def get_sandbox_type(self) -> str:
+        return "docker"
 
     async def build_image(
         self, work_dir: Path, image_name: str, build_args: dict[str, str],
@@ -191,6 +223,9 @@ async def build(params: BuildParams) -> BuildResult:
     }
 
     try:
+        runtime_spec = await _read_runtime_spec(_BASE_IMAGE)
+        runtime_spec["sandbox_type"] = await _builder.get_sandbox_type()
+
         await _report(params.on_progress, 10)
         await _builder.build_image(work_dir, image_name, build_args)
         await _report(params.on_progress, 50)
@@ -204,9 +239,14 @@ async def build(params: BuildParams) -> BuildResult:
             raise BuildError(f"tarball not found after save: {tarball}")
         shutil.move(str(tarball), str(params.output_dir / tarball_name))
 
-        return BuildResult(image=image_name, image_digest=digest,
-                           image_path=str(params.output_dir / tarball_name),
-                           base_image=_BASE_IMAGE)
+        return BuildResult(
+            image=image_name,
+            image_digest=digest,
+            image_path=str(params.output_dir / tarball_name),
+            base_image=_BASE_IMAGE,
+            runtime_spec=runtime_spec,
+            image_module_version=_IMAGE_MODULE_VERSION,
+        )
     except BuildError:
         raise
     except Exception as e:

@@ -26,6 +26,8 @@ class RemoteBuildStatus:
     image_digest: str | None = None
     image_path: str | None = None
     base_image: str | None = None
+    runtime_spec: dict | None = None
+    image_module_version: str | None = None
     error_message: str | None = None
 
 
@@ -109,5 +111,7 @@ async def fetch_build(task_id: str) -> RemoteBuildStatus | None:
         image_digest=body.get("image_digest"),
         image_path=body.get("image_path"),
         base_image=body.get("base_image"),
+        runtime_spec=body.get("runtime_spec", {}),
+        image_module_version=body.get("image_module_version"),
         error_message=body.get("error_message"),
     )

@@ -501,7 +501,8 @@ for svc in data.get('services', {}).values():
     if docker image inspect "agent-base:1.0" &>/dev/null; then
         log "  agent-base:1.0 — 本地已存在"
     else
-        log "  WARNING: 缺少 agent-base:1.0，请先 docker load 到本机"
+        log "  WARNING: agent-base:1.0 不存在，请先本地构建:"
+        log "    cd control-panel/image_process && docker build -f base.Dockerfile -t agent-base:1.0 ."
     fi
 
     if [ ${#missing[@]} -eq 0 ]; then

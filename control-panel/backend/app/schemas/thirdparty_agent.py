@@ -2,21 +2,22 @@
 
 from datetime import datetime
 
+from fastapi import Query
 from pydantic import BaseModel
 
 
-class AgentInstallerUploadResult(BaseModel):
-    """POST /installers response."""
+class InstallerListItem(BaseModel):
+    """Single installer in a list response (GET) or upload result (POST)."""
     agent_name: str
     version: str
     display_name: str
     entrypoint: str
 
 
-class InstallerListItem(AgentInstallerUploadResult):
-    """GET /installers list item — extends upload result with build info."""
-    build_status: str | None = None
-    build_task_id: str | None = None
+class InstallerListResponse(BaseModel):
+    """Paginated list response for GET /installers."""
+    items: list[InstallerListItem]
+    total: int
 
 
 class BuildTaskRequest(BaseModel):
@@ -30,6 +31,14 @@ class BuildTaskResponse(BaseModel):
     task_id: str
     status: str
     created_at: datetime | None = None
+
+
+class InstallerListQuery(BaseModel):
+    """Query parameters for GET /installers — pagination + framework filter."""
+
+    framework: str = Query("")
+    size: int = Query(20)
+    page: int = Query(1, ge=1)
 
 
 class BuildStatusResponse(BaseModel):

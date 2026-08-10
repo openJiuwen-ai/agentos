@@ -28,6 +28,8 @@ class BuildStatusResponse(BaseModel):
     image_digest: str | None = None
     image_path: str | None = None
     base_image: str | None = None
+    runtime_spec: dict | None = None
+    image_module_version: str | None = None
     error_message: str | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None

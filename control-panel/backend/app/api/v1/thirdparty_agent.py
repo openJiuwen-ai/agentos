@@ -14,11 +14,12 @@ from app.iam.deps import require_admin
 from app.iam.tokens import TokenData
 from app.schemas.litellm import ApiResponse
 from app.schemas.thirdparty_agent import (
-    AgentInstallerUploadResult,
     BuildStatusResponse,
     BuildTaskRequest,
     BuildTaskResponse,
     InstallerListItem,
+    InstallerListQuery,
+    InstallerListResponse,
 )
 
 from app.thirdparty_agent.exceptions import ThirdpartyAgentError
@@ -30,6 +31,8 @@ from app.services.thirdparty_agent_service import (
     InsufficientDiskSpaceError,
     ThirdpartyAgentService,
     PackageTooLargeError,
+    ListInstallersParams,
+    CreateBuildTaskParams,
 )
 
 _svc = ThirdpartyAgentService()
@@ -62,22 +65,31 @@ def _to_http(exc: ThirdpartyAgentError) -> HTTPException:
 # ── Routes ──────────────────────────────────────────────────────────────
 
 
-@router.get("/installers", response_model=ApiResponse[list[InstallerListItem]])
+@router.get("/installers", response_model=ApiResponse[InstallerListResponse])
 async def installer_list(
+    query: InstallerListQuery = Depends(),
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[list[AgentInstallerUploadResult]]:
-    """List all uploaded agent installers."""
-    result = await _svc.list_installers(session)
+) -> ApiResponse[InstallerListResponse]:
+    """List agent installers with optional framework filter and pagination."""
+    result = await _svc.list_installers(
+        session,
+        ListInstallersParams(
+            uploaded_by=_admin.username,
+            framework=query.framework,
+            size=query.size,
+            page=query.page,
+        ),
+    )
     return ApiResponse(data=result)
 
 
-@router.post("/installers", response_model=ApiResponse[AgentInstallerUploadResult])
+@router.post("/installers", response_model=ApiResponse[InstallerListItem])
 async def installer_upload(
     package: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[AgentInstallerUploadResult]:
+) -> ApiResponse[InstallerListItem]:
     """Upload an Agent offline package (.tgz)."""
     try:
         result = await _svc.upload(session, _admin.username, package)
@@ -101,10 +113,13 @@ async def build_task_create(
     try:
         task = await _svc.create_build_task(
             session,
-            body.agent_name,
-            body.version,
-            body.display_name,
-            body.entrypoint,
+            CreateBuildTaskParams(
+                agent_name=body.agent_name,
+                version=body.version,
+                display_name=body.display_name,
+                entrypoint=body.entrypoint,
+                uploaded_by=_admin.username,
+            ),
         )
     except ThirdpartyAgentError as e:
         logger.warning("build failed: %s", e)

@@ -12,6 +12,19 @@ export interface FrameworkItem {
   build_task_id?: string;
 }
 
+/** listFrameworks 查询参数 */
+export interface ListFrameworksParams {
+  framework?: string;
+  size?: number;
+  page?: number;
+}
+
+/** listFrameworks 分页响应 */
+export interface ListFrameworksResponse {
+  items: FrameworkItem[];
+  total: number;
+}
+
 /** 构建任务状态 */
 export interface BuildTaskStatus {
   task_id: string;
@@ -31,12 +44,17 @@ export function uploadPackage(file: File) {
   fd.append('package', file);
   return post<FrameworkItem>(`${BASE}/installers`, fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60 * 60 * 1000,  // 1 hour
   });
 }
 
-/** GET /installers — 获取已上传框架列表 */
-export function listFrameworks() {
-  return get<FrameworkItem[]>(`${BASE}/installers`);
+/** GET /installers — 获取已上传框架列表（支持 framework 搜索 + 分页） */
+export function listFrameworks(params: ListFrameworksParams = {}) {
+  return get<ListFrameworksResponse>(`${BASE}/installers`, {
+    framework: params.framework || '',
+    size: params.size ?? 20,
+    page: params.page ?? 1,
+  });
 }
 
 /** POST /build_tasks — 触发构建 */

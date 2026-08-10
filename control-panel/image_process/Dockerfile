@@ -5,14 +5,9 @@ FROM ${BASE_OS_IMAGE}
 # Bundle Docker CLI; talk to host daemon via mounted /run/docker.sock.
 # Do not bind-mount host /usr/bin/docker (Docker Desktop often mounts it as an empty dir).
 ARG DOCKER_CLI_VERSION=27.5.1
-# BuildKit sets TARGETARCH (amd64/arm64). Override with --build-arg DOCKER_CLI_ARCH=...
-ARG TARGETARCH
-ARG DOCKER_CLI_ARCH=
 
 RUN set -eux; \
-    arch="${DOCKER_CLI_ARCH}"; \
-    if [ -z "${arch}" ]; then arch="${TARGETARCH}"; fi; \
-    if [ -z "${arch}" ]; then arch="$(uname -m)"; fi; \
+    arch="$(uname -m)"; \
     case "${arch}" in \
       amd64|x86_64) docker_arch=x86_64 ;; \
       arm64|aarch64) docker_arch=aarch64 ;; \

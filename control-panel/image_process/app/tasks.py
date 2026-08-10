@@ -26,6 +26,8 @@ class TaskRecord:
     image_digest: str | None = None
     image_path: str | None = None
     base_image: str | None = None
+    runtime_spec: dict | None = None
+    image_module_version: str | None = None
     error_message: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
@@ -78,6 +80,8 @@ def list_task_status(task_id: str) -> BuildStatusResponse | None:
         image_digest=rec.image_digest,
         image_path=rec.image_path,
         base_image=rec.base_image,
+        runtime_spec=rec.runtime_spec,
+        image_module_version=rec.image_module_version,
         error_message=rec.error_message,
         created_at=rec.created_at,
         started_at=rec.started_at,
@@ -130,6 +134,8 @@ async def _run_build(req: BuildCreateRequest) -> None:
         rec.image_digest = result.image_digest
         rec.image_path = result.image_path
         rec.base_image = result.base_image
+        rec.runtime_spec = result.runtime_spec
+        rec.image_module_version = result.image_module_version
         rec.finished_at = datetime.now(timezone.utc)
         logger.info("build done task=%s image=%s", req.task_id, result.image)
     except BuildError as e:

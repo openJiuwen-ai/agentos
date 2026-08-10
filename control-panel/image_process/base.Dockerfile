@@ -1,15 +1,8 @@
 ARG BASE_OS_IMAGE=openeuler/openeuler:24.03-lts
 FROM ${BASE_OS_IMAGE}
 
-ARG TARGETARCH
 ARG NODE_VERSION=24.18.0
-ARG YUANRONG_VERSION=9.9.9
-# Empty = resolve latest openeuler Build Number from OBS daily index (same as build/build.sh).
-ARG YR_SCHEDULE_TIME=
-# Override when needed; empty values are derived from TARGETARCH / uname.
-ARG ARCH=
-ARG ARCH_LONG=
-ARG SDK_BASE_URL=
+ARG YR_SDK_URL=
 
 RUN sed -i 's|https://repo.openeuler.org|https://repo.huaweicloud.com/openeuler/|g' /etc/yum.repos.d/openEuler.repo \
     && sed -i '/^meta/d' /etc/yum.repos.d/openEuler.repo
@@ -21,13 +14,11 @@ RUN yum install -y \
 
 # Node.js (Huawei Cloud mirror); Node uses linux-x64 / linux-arm64 naming
 RUN set -eux; \
-    arch="${ARCH}"; \
-    if [ -z "${arch}" ]; then arch="${TARGETARCH}"; fi; \
-    if [ -z "${arch}" ]; then arch="$(uname -m)"; fi; \
-    case "${arch}" in \
+    node_arch="$(uname -m)"; \
+    case "${node_arch}" in \
       amd64|x86_64) node_arch=x64 ;; \
       arm64|aarch64) node_arch=arm64 ;; \
-      *) echo "unsupported arch: ${arch}" >&2; exit 1 ;; \
+      *) echo "unsupported arch: ${node_arch}" >&2; exit 1 ;; \
     esac; \
     curl -fsSL "https://mirrors.huaweicloud.com/nodejs/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz" \
         -o /tmp/node.tar.gz \
@@ -37,55 +28,51 @@ ENV PATH="/usr/local/bin:${PATH}"
 
 # agentos user + ssh dir
 RUN useradd -m agentos \
-    && mkdir -p /opt/agent-ssh /run/openyuanrong/ssh \
-    && chown -R agentos:agentos /opt/agent-ssh /run/openyuanrong/ssh
+    && mkdir -p /usr/local/bin /opt/agent-ssh /run/openyuanrong/ssh \
+    && chown -R agentos:agentos /usr/local/bin /opt/agent-ssh /run/openyuanrong/ssh
 ENV HOME_DIR=/home/agentos
 
 # entrypoint — start sshd in background, then exec user command
 RUN echo '#!/bin/sh' > /entrypoint.sh \
     && echo 'mkdir -p /home/agentos/logs' >> /entrypoint.sh \
-    && echo '/usr/sbin/sshd -f /opt/agent-ssh/sshd_config -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
+    && echo 'SSHD_IP=$(python3 -c "import socket; print(socket.gethostbyname(socket.gethostname()))")' >> /entrypoint.sh \
+    && echo '/usr/sbin/sshd -D -f /opt/agent-ssh/sshd_config -o "ListenAddress ${SSHD_IP}" -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
     && echo 'exec "$@"' >> /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
 # OpenYuanrong SDK (root install); OBS daily URL aligned with build/build.sh
 RUN set -eux; \
-    arch="${ARCH}"; \
-    arch_long="${ARCH_LONG}"; \
-    if [ -z "${arch}" ]; then arch="${TARGETARCH}"; fi; \
-    if [ -z "${arch}" ]; then arch="$(uname -m)"; fi; \
-    case "${arch}" in \
-      amd64|x86_64) arch=amd64; : "${arch_long:=x86_64}" ;; \
-      arm64|aarch64) arch=arm64; : "${arch_long:=aarch64}" ;; \
-      *) echo "unsupported arch: ${arch}" >&2; exit 1 ;; \
+    py_arch="$(uname -m)"; \
+    case "${py_arch}" in \
+      amd64|x86_64) py_arch=x86_64 ;; \
+      arm64|aarch64) py_arch=aarch64 ;; \
+      *) echo "unsupported arch: ${py_arch}" >&2; exit 1 ;; \
     esac; \
-    sdk_base="${SDK_BASE_URL}"; \
-    yr_schedule="${YR_SCHEDULE_TIME}"; \
-    if [ -z "${sdk_base}" ]; then \
+    if [ -z "${YR_SDK_URL}" ]; then \
+      html="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 60 \
+        https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html)"; \
+      yr_schedule="$(printf '%s\n' "${html}" \
+        | sed -n '/<h2>openeuler<\/h2>/,/<hr class="os-divider">/p' \
+        | sed -n 's/.*<tr><td>\([0-9][0-9]*\)<\/td>.*/\1/p' \
+        | head -1)"; \
       if [ -z "${yr_schedule}" ]; then \
-        html="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 60 \
-          https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html)"; \
         yr_schedule="$(printf '%s\n' "${html}" \
-          | sed -n '/<h2>openeuler<\/h2>/,/<hr class="os-divider">/p' \
-          | sed -n 's/.*<tr><td>\([0-9][0-9]*\)<\/td>.*/\1/p' \
-          | head -1)"; \
-        if [ -z "${yr_schedule}" ]; then \
-          yr_schedule="$(printf '%s\n' "${html}" \
-            | grep -oE 'daily_build/[0-9]+/openeuler' \
-            | head -1 \
-            | sed -E 's|daily_build/([0-9]+)/openeuler|\1|')"; \
-        fi; \
-        if [ -z "${yr_schedule}" ]; then \
-          echo "failed to resolve latest yuanrong daily build from OBS index" >&2; \
-          exit 1; \
-        fi; \
-        echo "resolved yuanrong daily build: ${yr_schedule}"; \
+          | grep -oE 'daily_build/[0-9]+/openeuler' \
+          | head -1 \
+          | sed -E 's|daily_build/([0-9]+)/openeuler|\1|')"; \
       fi; \
-      sdk_base="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/${yr_schedule}/openeuler/${arch_long}"; \
+      if [ -z "${yr_schedule}" ]; then \
+        echo "failed to resolve latest yuanrong daily build from OBS index" >&2; \
+        exit 1; \
+      fi; \
+      sdk_base="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/${yr_schedule}/openeuler/${py_arch}"; \
+      PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')"); \
+      SDK_WHEEL="openyuanrong_sdk-9.9.9-cp${PYVER}-cp${PYVER}-manylinux_2_34_${py_arch}.whl"; \
+    else \
+      sdk_base=${YR_SDK_URL%/*}; \
+      SDK_WHEEL=${YR_SDK_URL##*/}; \
     fi; \
     sdk_base="${sdk_base%/}"; \
-    PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')"); \
-    SDK_WHEEL="openyuanrong_sdk-${YUANRONG_VERSION}-cp${PYVER}-cp${PYVER}-manylinux_2_34_${arch_long}.whl"; \
     echo "installing ${SDK_WHEEL} from ${sdk_base}"; \
     curl -fsSL "${sdk_base}/${SDK_WHEEL}" -o "/tmp/${SDK_WHEEL}"; \
     pip3 install "/tmp/${SDK_WHEEL}" -i https://mirrors.huaweicloud.com/repository/pypi/simple; \
@@ -106,3 +93,5 @@ RUN mkdir -p /opt/agent-ssh \
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sleep", "infinity"]
+
+LABEL agentos.runtime_spec="{\"runtime\":\"python3.11\",\"rootfs\":{\"user\":\"agentos\",\"ports\":[\"tcp:2222\"]}}"
