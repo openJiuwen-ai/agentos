@@ -10,6 +10,11 @@ RQLITE_HTTP_PORT="${RQLITE_HTTP_PORT:-4001}"
 RQLITE_RAFT_PORT="${RQLITE_RAFT_PORT:-4002}"
 A2X_REGISTRY_PORT="${A2X_REGISTRY_PORT:-4003}"
 
+# ===== mTLS 证书路径（三者齐全=开双向 TLS，空=纯 http） =====
+A2X_REGISTRY_TLS_CERTFILE="${A2X_REGISTRY_TLS_CERTFILE:-}"
+A2X_REGISTRY_TLS_KEYFILE="${A2X_REGISTRY_TLS_KEYFILE:-}"
+A2X_REGISTRY_TLS_CA_CERTS="${A2X_REGISTRY_TLS_CA_CERTS:-}"
+
 # ===== 公共常量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 RQLITE_DATA_DIR="${RQLITE_DATA_DIR:-/var/lib/rqlite/data}"
@@ -38,6 +43,11 @@ REGISTRY_LOG="${AGENTGW_LOG_DIR}/agent-registry.log"
 # ===== 检测 systemd 是否可用 =====
 _agentgw_has_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+# ===== 检测是否配置了 mTLS（三者齐全才算开启） =====
+_agentregistry_tls_enabled() {
+    [ -n "${A2X_REGISTRY_TLS_CERTFILE}" ] && [ -n "${A2X_REGISTRY_TLS_KEYFILE}" ] && [ -n "${A2X_REGISTRY_TLS_CA_CERTS}" ]
 }
 
 # 监听地址：--hosts 首个 IP，否则本机网卡 IP
@@ -183,13 +193,25 @@ EOF
 
 # ===== up: 现算 BIND 设环境变量，起 rqlited + 注册中心，健康检查 =====
 agent-gateway_up() {
-    local bind port endpoint i
+    local bind port endpoint i scheme curl_tls
     bind=$(_agentregistry_bind)
     port="${A2X_REGISTRY_PORT}"
     endpoint="${A2X_REGISTRY_DB_ENDPOINT:-http://127.0.0.1:${RQLITE_HTTP_PORT}}"
     info "Starting agent-registry on ${bind}:${port} (db: ${endpoint})"
 
     command -v curl >/dev/null 2>&1 || error "curl not found (required for health check)"
+
+    # 部分配置证书视为错误，避免误以为开了 TLS 实则裸 http
+    if { [ -n "${A2X_REGISTRY_TLS_CERTFILE}" ] || [ -n "${A2X_REGISTRY_TLS_KEYFILE}" ] || [ -n "${A2X_REGISTRY_TLS_CA_CERTS}" ]; } \
+        && ! _agentregistry_tls_enabled; then
+        error "TLS certs partially set; provide all of A2X_REGISTRY_TLS_CERTFILE/KEYFILE/CA_CERTS or none"
+    fi
+    # mTLS 开启时：健康检查改 https，并复用服务端证书作客户端证书
+    scheme="http"; curl_tls=()
+    if _agentregistry_tls_enabled; then
+        scheme="https"
+        curl_tls=(--cacert "${A2X_REGISTRY_TLS_CA_CERTS}" --cert "${A2X_REGISTRY_TLS_CERTFILE}" --key "${A2X_REGISTRY_TLS_KEYFILE}")
+    fi
 
     if _agentgw_has_systemd; then
         if systemctl is-active --quiet "${AGENTREGISTRY_SVC}"; then
@@ -207,6 +229,13 @@ Environment=A2X_REGISTRY_MODE=appliance
 Environment=A2X_REGISTRY_DB_KIND=rqlite
 Environment=A2X_REGISTRY_DB_ENDPOINT=${endpoint}
 EOF
+        if _agentregistry_tls_enabled; then
+            cat >> "${AGENTREGISTRY_DROPIN}" <<EOF
+Environment=A2X_REGISTRY_TLS_CERTFILE=${A2X_REGISTRY_TLS_CERTFILE}
+Environment=A2X_REGISTRY_TLS_KEYFILE=${A2X_REGISTRY_TLS_KEYFILE}
+Environment=A2X_REGISTRY_TLS_CA_CERTS=${A2X_REGISTRY_TLS_CA_CERTS}
+EOF
+        fi
         systemctl daemon-reload
         # 先启动 rqlited，等其选主完成后再启动 agent-registry
         systemctl enable --now rqlited || error "Failed to start rqlited"
@@ -218,8 +247,8 @@ EOF
         systemctl enable --now "${AGENTREGISTRY_SVC}" || error "Failed to start ${AGENTREGISTRY_SVC}"
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
-            curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/images" \
-                && { success "agent-registry up on http://${bind}:${port}"; return 0; }
+            curl -sf --noproxy '*' "${curl_tls[@]}" -o /dev/null "${scheme}://${bind}:${port}/api/images" \
+                && { success "agent-registry up on ${scheme}://${bind}:${port}"; return 0; }
             sleep 1
         done
         error "agent-registry not healthy in 15s, see: journalctl -u ${AGENTREGISTRY_SVC}"
@@ -250,6 +279,9 @@ EOF
             sleep 1
         done
 
+        if _agentregistry_tls_enabled; then
+            export A2X_REGISTRY_TLS_CERTFILE A2X_REGISTRY_TLS_KEYFILE A2X_REGISTRY_TLS_CA_CERTS
+        fi
         PATH="${py_bindir}:${PATH}" \
         LD_LIBRARY_PATH="${py_libdir}:${LD_LIBRARY_PATH:-}" \
         A2X_REGISTRY_BIND="${bind}" \
@@ -261,8 +293,8 @@ EOF
                 "${py}" -m a2x_registry.backend
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
-            curl -sf --noproxy '*' -o /dev/null "http://${bind}:${port}/api/images" \
-                && { success "agent-registry up on http://${bind}:${port}"; return 0; }
+            curl -sf --noproxy '*' "${curl_tls[@]}" -o /dev/null "${scheme}://${bind}:${port}/api/images" \
+                && { success "agent-registry up on ${scheme}://${bind}:${port}"; return 0; }
             sleep 1
         done
         error "agent-registry not healthy in 15s, see: ${REGISTRY_LOG}"
