@@ -207,8 +207,8 @@ onMounted(loadFrameworks);
 <template>
   <section class="framework-page">
     <div class="framework-page__header">
-      <h1 class="framework-page__title">三方Agent管理</h1>
-      <ElButton type="primary" :icon="Plus" @click="openUpload">接入新框架</ElButton>
+      <h1 class="framework-page__title">三方智能体管理</h1>
+      <ElButton type="primary" :icon="Plus" @click="openUpload">接入新智能体</ElButton>
     </div>
 
     <!-- Toolbar: search + view toggle -->
@@ -248,7 +248,7 @@ onMounted(loadFrameworks);
           :mode="viewMode"
         />
       </template>
-      <div v-else class="framework-page__empty">暂无已接入框架</div>
+      <div v-else class="framework-page__empty">暂无已接入智能体</div>
     </div>
 
     <!-- Pagination -->
@@ -276,7 +276,7 @@ onMounted(loadFrameworks);
         </div>
       </template>
       <div class="dialog-body">
-        <p class="dialog-desc">上传第三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
+        <p class="dialog-desc">上传三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
         <div class="upload-zone">
           <img :src="uploadIcon" alt="上传" class="upload-zone__icon" />
           <span class="upload-zone__text">
@@ -319,7 +319,7 @@ onMounted(loadFrameworks);
         </div>
       </template>
       <div class="dialog-body dialog-body--center">
-        <p class="dialog-desc">上传第三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
+        <p class="dialog-desc">上传三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
         <div class="parsing-content">
           <img :src="parsingIcon" alt="解析中" class="parsing-icon" />
           <span class="parsing-text">解析文件中</span>
@@ -378,7 +378,7 @@ onMounted(loadFrameworks);
         <span class="dialog-title">创建智能体</span>
       </template>
       <div class="dialog-body dialog-body--center">
-        <p v-if="building" class="dialog-desc">正在配置第三方智能体并完成接入，请勿关闭当前页面。</p>
+        <p v-if="building" class="dialog-desc">正在配置三方智能体并完成接入，请勿关闭当前页面。</p>
         <div v-if="building" class="create-content">
           <ElProgress :percentage="buildStatus?.progress ?? 0" style="width: 60%" />
           <span class="create-text">正在创建智能体……</span>

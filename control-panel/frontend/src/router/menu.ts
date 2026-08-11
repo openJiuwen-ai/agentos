@@ -115,7 +115,7 @@ export const appRouteTree: AppRouteNode[] = [
           },
           {
             key: 'agent-framework',
-            label: '三方Agent管理',
+            label: '三方智能体管理',
             order: 2,
             path: '/resources/agent/framework',
             name: 'agent-framework',
