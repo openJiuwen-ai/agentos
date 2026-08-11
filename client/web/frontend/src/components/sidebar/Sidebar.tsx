@@ -3,12 +3,17 @@
  * 结构：Logo 头部 / 新建对话·定时任务·插件·更多 / 项目列表（可展开会话 + 更多操作）/ 对话列表 / 底部用户区
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import sidebarLogo from '../../assets/design/home/sidebar-logo.svg';
+import userAvatarImg from '../../assets/design/home/user-avatar.svg';
+import newChatIcon from '../../assets/design/home/new-chat.svg';
+import cronIcon from '../../assets/design/home/scheduled-task.svg';
+import pluginIcon from '../../assets/design/home/plugin.svg';
+import moreIcon from '../../assets/design/home/more.svg';
+import expandIcon from '../../assets/design/home/expand.svg';
+import searchIcon from '../../assets/design/home/search.svg';
+import userMoreIcon from '../../assets/design/home/sidebar-more.svg';
 import { useTranslation } from 'react-i18next';
-import {
-  SquarePen, Clock, LayoutGrid, MoreHorizontal, Search, PanelLeftClose, PanelLeftOpen,
-  Pin, Pencil, Trash2, Ellipsis, Settings, LogOut, Wrench, Loader2,
-  MessageSquare, ChevronRight,
-} from 'lucide-react';
+import { Pin, Pencil, Trash2, Ellipsis, Settings, LogOut, Wrench, Loader2, MessageSquare, ChevronRight } from 'lucide-react';
 import type { Session } from '../../types';
 import type { ProjectInfo } from '../../features/workspace/projectTypes';
 import { useChatStore, useSessionStore, useWorkspaceStore } from '../../stores';
@@ -17,11 +22,7 @@ import { useCreateProjectFlow } from '../../features/workspace/useCreateProjectF
 import { sortSessionsForSidebar, getSessionIndicator } from '../../multi-session/sidebar/sidebarModel';
 import { Popup } from '../common/Popup';
 import { CreateProjectDialog } from '../project/CreateProjectDialog';
-import {
-  NewProjectIcon,
-  ProjectChevronDownIcon,
-  ProjectSpaceIcon,
-} from '../project/projectIcons';
+import { NewProjectIcon, ProjectChevronDownIcon, ProjectSpaceIcon } from '../project/projectIcons';
 import { ProjectSectionHeader } from './ProjectSectionHeader';
 import './Sidebar.css';
 
@@ -45,11 +46,7 @@ export interface SidebarProps {
 function LogoMark() {
   return (
     <div className="sidebar-logo" aria-hidden="true">
-      <svg width="18" height="18" viewBox="0 0 34 34" fill="none">
-        <path d="M17 3L28.5 9.6v13.2L17 31 5.5 22.8V9.6L17 3Z" stroke="#fff" strokeWidth="2.4" strokeLinejoin="round" />
-        <circle cx="17" cy="14.5" r="3.2" fill="#fff" />
-        <path d="M9.5 24.5c2-3.6 4.7-5.4 7.5-5.4s5.5 1.8 7.5 5.4" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
-      </svg>
+      <img src={sidebarLogo} alt="" />
     </div>
   );
 }
@@ -57,7 +54,10 @@ function LogoMark() {
 function formatTime(timestamp?: number | string): string {
   let ms: number | null = null;
   if (typeof timestamp === 'number') ms = timestamp < 1e11 ? timestamp * 1000 : timestamp;
-  else if (typeof timestamp === 'string') { const p = Date.parse(timestamp); ms = Number.isNaN(p) ? null : p; }
+  else if (typeof timestamp === 'string') {
+    const p = Date.parse(timestamp);
+    ms = Number.isNaN(p) ? null : p;
+  }
   if (!ms) return '';
   const date = new Date(ms);
   const now = new Date();
@@ -69,26 +69,37 @@ function formatTime(timestamp?: number | string): string {
 }
 
 export function Sidebar({
-  username, activeSessionId, activeNav, collapsed, onToggleCollapse,
-  onNewChat, onOpenCron, onOpenPlugins, onOpenTools, onOpenSettings, onLogout,
-  onSelectSession, onRenameSession, onDeleteSession,
+  username,
+  activeSessionId,
+  activeNav,
+  collapsed,
+  onToggleCollapse,
+  onNewChat,
+  onOpenCron,
+  onOpenPlugins,
+  onOpenTools,
+  onOpenSettings,
+  onLogout,
+  onSelectSession,
+  onRenameSession,
+  onDeleteSession,
 }: SidebarProps) {
   const { t } = useTranslation();
-  const sessions = useSessionStore((s) => s.sessions);
-  const projects = useWorkspaceStore((s) => s.projects);
-  const projectSessions = useWorkspaceStore((s) => s.projectSessions);
-  const pinnedSessions = useWorkspaceStore((s) => s.pinnedSessions);
-  const loadProjectSessions = useWorkspaceStore((s) => s.loadProjectSessions);
-  const expandedProjectIds = useWorkspaceStore((s) => s.expandedProjectIds);
-  const toggleProjectExpanded = useWorkspaceStore((s) => s.toggleProjectExpanded);
-  const selectedProject = useWorkspaceStore((s) => s.selectedProject);
-  const setSelectedProject = useWorkspaceStore((s) => s.setSelectedProject);
-  const workMode = useWorkspaceStore((s) => s.workMode);
-  const pinSession = useWorkspaceStore((s) => s.pinSession);
-  const pinProject = useWorkspaceStore((s) => s.pinProject);
-  const renameProject = useWorkspaceStore((s) => s.renameProject);
-  const removeProject = useWorkspaceStore((s) => s.removeProject);
-  const chatRuntimes = useChatStore((s) => s.runtimes);
+  const sessions = useSessionStore(s => s.sessions);
+  const projects = useWorkspaceStore(s => s.projects);
+  const projectSessions = useWorkspaceStore(s => s.projectSessions);
+  const pinnedSessions = useWorkspaceStore(s => s.pinnedSessions);
+  const loadProjectSessions = useWorkspaceStore(s => s.loadProjectSessions);
+  const expandedProjectIds = useWorkspaceStore(s => s.expandedProjectIds);
+  const toggleProjectExpanded = useWorkspaceStore(s => s.toggleProjectExpanded);
+  const selectedProject = useWorkspaceStore(s => s.selectedProject);
+  const setSelectedProject = useWorkspaceStore(s => s.setSelectedProject);
+  const workMode = useWorkspaceStore(s => s.workMode);
+  const pinSession = useWorkspaceStore(s => s.pinSession);
+  const pinProject = useWorkspaceStore(s => s.pinProject);
+  const renameProject = useWorkspaceStore(s => s.renameProject);
+  const removeProject = useWorkspaceStore(s => s.removeProject);
+  const chatRuntimes = useChatStore(s => s.runtimes);
   const {
     open: createProjectOpen,
     submitting: createProjectSubmitting,
@@ -117,7 +128,7 @@ export function Sidebar({
   const moreMenuAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   const visibleProjects = useMemo(() => {
-    const list = projects.filter((p) => !p.hidden && (p.work_mode ?? workMode) === workMode);
+    const list = projects.filter(p => !p.hidden && (p.work_mode ?? workMode) === workMode);
     return [...list].sort((a, b) => {
       const pinDelta = Number(Boolean(b.pinned && !isDefaultProject(b))) - Number(Boolean(a.pinned && !isDefaultProject(a)));
       if (pinDelta !== 0) return pinDelta;
@@ -127,7 +138,7 @@ export function Sidebar({
 
   // 展开项目时加载其下会话（默认展开）
   useEffect(() => {
-    visibleProjects.forEach((project) => {
+    visibleProjects.forEach(project => {
       const expanded = expandedProjectIds[project.project_id] ?? true;
       if (expanded) void loadProjectSessions(project.project_id);
     });
@@ -135,10 +146,10 @@ export function Sidebar({
 
   const nestedSessionIds = useMemo(() => {
     const ids = new Set<string>();
-    visibleProjects.forEach((project) => {
+    visibleProjects.forEach(project => {
       const expanded = expandedProjectIds[project.project_id] ?? true;
       if (!expanded) return;
-      (projectSessions[project.project_id] ?? []).forEach((s) => ids.add(s.session_id));
+      (projectSessions[project.project_id] ?? []).forEach(s => ids.add(s.session_id));
     });
     return ids;
   }, [visibleProjects, expandedProjectIds, projectSessions]);
@@ -146,40 +157,44 @@ export function Sidebar({
   const conversations = useMemo(() => {
     // 合并：置顶 + 各项目会话 + 本地新建会话（去重）；已在展开项目下展示的会话不再重复出现在「对话」区
     const merged = new Map<string, Session>();
-    pinnedSessions.forEach((s) => merged.set(s.session_id, { ...s, pinned: true }));
-    Object.values(projectSessions).flat().forEach((s) => {
+    pinnedSessions.forEach(s => merged.set(s.session_id, { ...s, pinned: true }));
+    Object.values(projectSessions)
+      .flat()
+      .forEach(s => {
+        if (!merged.has(s.session_id)) merged.set(s.session_id, s);
+      });
+    sessions.forEach(s => {
       if (!merged.has(s.session_id)) merged.set(s.session_id, s);
     });
-    sessions.forEach((s) => {
-      if (!merged.has(s.session_id)) merged.set(s.session_id, s);
-    });
-    let list = [...merged.values()].filter((s) => {
+    let list = [...merged.values()].filter(s => {
       if (nestedSessionIds.has(s.session_id) && !s.pinned) return false;
       if (s.work_mode) return s.work_mode === workMode;
       return true;
     });
     if (searchText.trim()) {
       const keyword = searchText.trim().toLowerCase();
-      list = list.filter((s) => (s.display_title || s.title || '').toLowerCase().includes(keyword));
+      list = list.filter(s => (s.display_title || s.title || '').toLowerCase().includes(keyword));
     }
     return sortSessionsForSidebar(list);
   }, [sessions, pinnedSessions, projectSessions, nestedSessionIds, workMode, searchText]);
 
   const menuSession = sessionMenuId
-    ? sessions.find((s) => s.session_id === sessionMenuId)
-      ?? Object.values(projectSessions).flat().find((s) => s.session_id === sessionMenuId)
-      ?? pinnedSessions.find((s) => s.session_id === sessionMenuId)
-      ?? null
+    ? (sessions.find(s => s.session_id === sessionMenuId) ??
+      Object.values(projectSessions)
+        .flat()
+        .find(s => s.session_id === sessionMenuId) ??
+      pinnedSessions.find(s => s.session_id === sessionMenuId) ??
+      null)
     : null;
-  const menuProject = projectMenuId
-    ? visibleProjects.find((p) => p.project_id === projectMenuId) ?? null
-    : null;
+  const menuProject = projectMenuId ? (visibleProjects.find(p => p.project_id === projectMenuId) ?? null) : null;
 
   const handlePin = async (session: Session) => {
     setSessionMenuId(null);
     try {
       await pinSession(session.session_id, !session.pinned);
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   };
 
   const handleToggleProject = (project: ProjectInfo) => {
@@ -200,7 +215,9 @@ export function Sidebar({
     if (isDefaultProject(project)) return;
     try {
       await pinProject(project.project_id, !project.pinned);
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   };
 
   const openRenameProject = (project: ProjectInfo) => {
@@ -253,18 +270,18 @@ export function Sidebar({
 
   const deleteProjectDescription = deleteProjectTarget
     ? t('multiSession.project.deleteProjectDescription', {
-      projectName: getProjectDisplayName(deleteProjectTarget),
-    }).replace(/<\/?name>/g, '')
+        projectName: getProjectDisplayName(deleteProjectTarget),
+      }).replace(/<\/?name>/g, '')
     : '';
 
   if (collapsed) {
     return (
       <div className="sidebar sidebar--collapsed">
         <button className="icon-btn" onClick={onToggleCollapse} title="展开侧边栏">
-          <PanelLeftOpen size={18} />
+          <img src={expandIcon} alt="" style={{ width: 18, height: 18 }} />
         </button>
         <button className="icon-btn" onClick={onNewChat} title="新建对话">
-          <SquarePen size={18} />
+          <img src={newChatIcon} alt="" style={{ width: 18, height: 18 }} />
         </button>
         <div className="sidebar-collapsed-spacer" />
         <div className="sidebar-avatar sidebar-avatar--sm" title={username}>
@@ -284,61 +301,70 @@ export function Sidebar({
           <button
             className="icon-btn icon-btn--sm"
             title="搜索对话"
-            onClick={() => { setSearchOpen((v) => !v); setSearchText(''); }}
+            onClick={() => {
+              setSearchOpen(v => !v);
+              setSearchText('');
+            }}
           >
-            <Search size={16} />
+            <img src={searchIcon} alt="" style={{ width: 16, height: 16 }} />
           </button>
           <button className="icon-btn icon-btn--sm" title="收起侧边栏" onClick={onToggleCollapse}>
-            <PanelLeftClose size={16} />
+            <img src={expandIcon} alt="" style={{ width: 16, height: 16 }} />
           </button>
         </div>
       </div>
 
       {searchOpen ? (
         <div className="sidebar-search">
-          <input
-            autoFocus
-            className="sidebar-search-input"
-            placeholder="搜索对话…"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-          />
+          <input autoFocus className="sidebar-search-input" placeholder="搜索对话…" value={searchText} onChange={e => setSearchText(e.target.value)} />
         </div>
       ) : null}
 
       {/* 主导航 */}
       <nav className="sidebar-nav">
         <button className={`sidebar-nav-item ${activeNav === 'chat' ? 'is-active' : ''}`} onClick={onNewChat}>
-          <SquarePen size={16} className="sidebar-nav-icon" />
+          <img src={newChatIcon} alt="" className="sidebar-nav-icon" style={{ width: 16, height: 16 }} />
           <span>新建对话</span>
         </button>
         <button className={`sidebar-nav-item ${activeNav === 'cron' ? 'is-active' : ''}`} onClick={onOpenCron}>
-          <Clock size={16} className="sidebar-nav-icon" />
+          <img src={cronIcon} alt="" className="sidebar-nav-icon" style={{ width: 16, height: 16 }} />
           <span>定时任务</span>
         </button>
         <button className="sidebar-nav-item" onClick={onOpenPlugins}>
-          <LayoutGrid size={16} className="sidebar-nav-icon" />
+          <img src={pluginIcon} alt="" className="sidebar-nav-icon" style={{ width: 16, height: 16 }} />
           <span>插件</span>
         </button>
-        <button
-          ref={moreMenuAnchorRef}
-          className={`sidebar-nav-item ${moreMenuOpen ? 'is-active' : ''}`}
-          onClick={() => setMoreMenuOpen((v) => !v)}
-        >
-          <MoreHorizontal size={16} className="sidebar-nav-icon" />
+        <button ref={moreMenuAnchorRef} className={`sidebar-nav-item ${moreMenuOpen ? 'is-active' : ''}`} onClick={() => setMoreMenuOpen(v => !v)}>
+          <img src={moreIcon} alt="" className="sidebar-nav-icon" style={{ width: 16, height: 16 }} />
           <span>更多</span>
         </button>
       </nav>
 
       <Popup open={moreMenuOpen} anchorRef={moreMenuAnchorRef} onClose={() => setMoreMenuOpen(false)}>
         <div className="menu-pop">
-          <button className="menu-item" onClick={() => { setMoreMenuOpen(false); onOpenTools(); }}>
-            <span className="menu-item-icon"><Wrench size={15} /></span>
+          <button
+            className="menu-item"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              onOpenTools();
+            }}
+          >
+            <span className="menu-item-icon">
+              <Wrench size={15} />
+            </span>
             <span className="menu-item-label">工具面板</span>
             <span className="menu-item-extra">文件 / 记忆 / 产出</span>
           </button>
-          <button className="menu-item" onClick={() => { setMoreMenuOpen(false); onOpenSettings(); }}>
-            <span className="menu-item-icon"><Settings size={15} /></span>
+          <button
+            className="menu-item"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              onOpenSettings();
+            }}
+          >
+            <span className="menu-item-icon">
+              <Settings size={15} />
+            </span>
             <span className="menu-item-label">设置</span>
             <span className="menu-item-extra">主题 / 语言 / 权限</span>
           </button>
@@ -351,112 +377,110 @@ export function Sidebar({
         <div className="sidebar-list">
           {visibleProjects.length === 0 ? (
             <div className="sidebar-empty">暂无项目，点击 + 新建</div>
-          ) : visibleProjects.map((project) => {
-            const expanded = expandedProjectIds[project.project_id] ?? true;
-            const isActive = selectedProject?.project_id === project.project_id;
-            const hideActions = isDefaultProject(project);
-            const nestedSessions = sortSessionsForSidebar(projectSessions[project.project_id] ?? []);
-            const displayName = getProjectDisplayName(project);
-            return (
-              <div key={project.project_id} className="sidebar-project-group">
-                <div
-                  className={`sidebar-list-item sidebar-project-item ${isActive ? 'is-active' : ''} ${projectMenuId === project.project_id ? 'is-menu-open' : ''}`}
-                  title={project.project_dir || displayName}
-                >
-                  <button
-                    type="button"
-                    className="sidebar-project-main"
-                    onClick={() => handleToggleProject(project)}
+          ) : (
+            visibleProjects.map(project => {
+              const expanded = expandedProjectIds[project.project_id] ?? true;
+              const isActive = selectedProject?.project_id === project.project_id;
+              const hideActions = isDefaultProject(project);
+              const nestedSessions = sortSessionsForSidebar(projectSessions[project.project_id] ?? []);
+              const displayName = getProjectDisplayName(project);
+              return (
+                <div key={project.project_id} className="sidebar-project-group">
+                  <div
+                    className={`sidebar-list-item sidebar-project-item ${isActive ? 'is-active' : ''} ${projectMenuId === project.project_id ? 'is-menu-open' : ''}`}
+                    title={project.project_dir || displayName}
                   >
-                    <span className="sidebar-project-chevron" aria-hidden>
-                      {expanded ? <ProjectChevronDownIcon size={10} /> : <ChevronRight size={14} />}
-                    </span>
-                    <ProjectSpaceIcon size={15} className="sidebar-list-icon" />
-                    <span className="sidebar-list-text">{displayName}</span>
-                    {project.pinned && !hideActions ? (
-                      <Pin size={12} className="sidebar-pin-icon" aria-hidden />
-                    ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn icon-btn--xs sidebar-project-action"
-                    title={t('multiSession.project.startConversation', { projectName: displayName })}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleNewInProject(project);
-                    }}
-                  >
-                    <NewProjectIcon size={14} />
-                  </button>
-                  {hideActions ? null : (
+                    <button type="button" className="sidebar-project-main" onClick={() => handleToggleProject(project)}>
+                      <span className="sidebar-project-chevron" aria-hidden>
+                        {expanded ? <ProjectChevronDownIcon size={10} /> : <ChevronRight size={14} />}
+                      </span>
+                      <ProjectSpaceIcon size={15} className="sidebar-list-icon" />
+                      <span className="sidebar-list-text">{displayName}</span>
+                      {project.pinned && !hideActions ? <Pin size={12} className="sidebar-pin-icon" aria-hidden /> : null}
+                    </button>
                     <button
-                      ref={projectMenuId === project.project_id ? projectMenuAnchorRef : undefined}
                       type="button"
-                      className="icon-btn icon-btn--xs sidebar-project-action sidebar-project-menu-btn"
-                      title={t('multiSession.moreActions')}
-                      aria-label={t('multiSession.moreActions')}
-                      onClick={(e) => {
+                      className="icon-btn icon-btn--xs sidebar-project-action"
+                      title={t('multiSession.project.startConversation', { projectName: displayName })}
+                      onClick={e => {
                         e.stopPropagation();
-                        setProjectMenuId(projectMenuId === project.project_id ? null : project.project_id);
+                        handleNewInProject(project);
                       }}
                     >
-                      <Ellipsis size={14} />
+                      <NewProjectIcon size={14} />
                     </button>
-                  )}
-                </div>
-
-                {expanded ? (
-                  <div className="sidebar-project-sessions">
-                    {nestedSessions.length === 0 ? (
-                      <div className="sidebar-empty sidebar-empty--nested">
-                        {t('multiSession.project.noConversations')}
-                      </div>
-                    ) : nestedSessions.map((session) => {
-                      const runtime = chatRuntimes[session.session_id];
-                      const indicator = getSessionIndicator(runtime, false, session.is_processing, Boolean(runtime?.error));
-                      const isSessionActive = activeSessionId === session.session_id;
-                      const title = session.display_title || session.title || '新对话';
-                      return (
-                        <div
-                          key={session.session_id}
-                          className={`sidebar-list-item sidebar-conv-item sidebar-conv-item--nested ${isSessionActive ? 'is-active' : ''}`}
-                          onClick={() => {
-                            setSelectedProject(project);
-                            onSelectSession(session.session_id);
-                          }}
-                        >
-                          <span className="sidebar-list-text" title={title}>{title}</span>
-                          <span className="sidebar-conv-right">
-                            {indicator === 'processing' ? (
-                              <Loader2 size={13} className="spin sidebar-conv-spinner" />
-                            ) : indicator === 'waiting' ? (
-                              <span className="sidebar-conv-waiting" title="等待回答" />
-                            ) : indicator === 'error' ? (
-                              <span className="sidebar-conv-error" title="出错了" />
-                            ) : (
-                              <span className="sidebar-conv-time">
-                                {formatTime(session.last_user_message_at ?? session.last_message_at ?? session.updated_at)}
-                              </span>
-                            )}
-                          </span>
-                          <button
-                            ref={sessionMenuId === session.session_id ? sessionMenuAnchorRef : undefined}
-                            className="icon-btn icon-btn--xs sidebar-conv-menu-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSessionMenuId(sessionMenuId === session.session_id ? null : session.session_id);
-                            }}
-                          >
-                            <Ellipsis size={14} />
-                          </button>
-                        </div>
-                      );
-                    })}
+                    {hideActions ? null : (
+                      <button
+                        ref={projectMenuId === project.project_id ? projectMenuAnchorRef : undefined}
+                        type="button"
+                        className="icon-btn icon-btn--xs sidebar-project-action sidebar-project-menu-btn"
+                        title={t('multiSession.moreActions')}
+                        aria-label={t('multiSession.moreActions')}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setProjectMenuId(projectMenuId === project.project_id ? null : project.project_id);
+                        }}
+                      >
+                        <Ellipsis size={14} />
+                      </button>
+                    )}
                   </div>
-                ) : null}
-              </div>
-            );
-          })}
+
+                  {expanded ? (
+                    <div className="sidebar-project-sessions">
+                      {nestedSessions.length === 0 ? (
+                        <div className="sidebar-empty sidebar-empty--nested">{t('multiSession.project.noConversations')}</div>
+                      ) : (
+                        nestedSessions.map(session => {
+                          const runtime = chatRuntimes[session.session_id];
+                          const indicator = getSessionIndicator(runtime, false, session.is_processing, Boolean(runtime?.error));
+                          const isSessionActive = activeSessionId === session.session_id;
+                          const title = session.display_title || session.title || '新对话';
+                          return (
+                            <div
+                              key={session.session_id}
+                              className={`sidebar-list-item sidebar-conv-item sidebar-conv-item--nested ${isSessionActive ? 'is-active' : ''}`}
+                              onClick={() => {
+                                setSelectedProject(project);
+                                onSelectSession(session.session_id);
+                              }}
+                            >
+                              <span className="sidebar-list-text" title={title}>
+                                {title}
+                              </span>
+                              <span className="sidebar-conv-right">
+                                {indicator === 'processing' ? (
+                                  <Loader2 size={13} className="spin sidebar-conv-spinner" />
+                                ) : indicator === 'waiting' ? (
+                                  <span className="sidebar-conv-waiting" title="等待回答" />
+                                ) : indicator === 'error' ? (
+                                  <span className="sidebar-conv-error" title="出错了" />
+                                ) : (
+                                  <span className="sidebar-conv-time">
+                                    {formatTime(session.last_user_message_at ?? session.last_message_at ?? session.updated_at)}
+                                  </span>
+                                )}
+                              </span>
+                              <button
+                                ref={sessionMenuId === session.session_id ? sessionMenuAnchorRef : undefined}
+                                className="icon-btn icon-btn--xs sidebar-conv-menu-btn"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setSessionMenuId(sessionMenuId === session.session_id ? null : session.session_id);
+                                }}
+                              >
+                                <Ellipsis size={14} />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* 对话（未在展开项目下展示的会话 / 置顶会话） */}
@@ -464,47 +488,51 @@ export function Sidebar({
         <div className="sidebar-list">
           {conversations.length === 0 ? (
             <div className="sidebar-empty">暂无对话</div>
-          ) : conversations.map((session) => {
-            const runtime = chatRuntimes[session.session_id];
-            const indicator = getSessionIndicator(runtime, false, session.is_processing, Boolean(runtime?.error));
-            const isActive = activeSessionId === session.session_id;
-            const title = session.display_title || session.title || '新对话';
-            return (
-              <div
-                key={session.session_id}
-                className={`sidebar-list-item sidebar-conv-item ${isActive ? 'is-active' : ''}`}
-                onClick={() => onSelectSession(session.session_id)}
-              >
-                {session.pinned
-                  ? <Pin size={13} className="sidebar-list-icon sidebar-pin-icon" />
-                  : <MessageSquare size={14} className="sidebar-list-icon" />}
-                <span className="sidebar-list-text" title={title}>{title}</span>
-                <span className="sidebar-conv-right">
-                  {indicator === 'processing' ? (
-                    <Loader2 size={13} className="spin sidebar-conv-spinner" />
-                  ) : indicator === 'waiting' ? (
-                    <span className="sidebar-conv-waiting" title="等待回答" />
-                  ) : indicator === 'error' ? (
-                    <span className="sidebar-conv-error" title="出错了" />
-                  ) : (
-                    <span className="sidebar-conv-time">
-                      {formatTime(session.last_user_message_at ?? session.last_message_at ?? session.updated_at)}
-                    </span>
-                  )}
-                </span>
-                <button
-                  ref={sessionMenuId === session.session_id ? sessionMenuAnchorRef : undefined}
-                  className="icon-btn icon-btn--xs sidebar-conv-menu-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSessionMenuId(sessionMenuId === session.session_id ? null : session.session_id);
-                  }}
+          ) : (
+            conversations.map(session => {
+              const runtime = chatRuntimes[session.session_id];
+              const indicator = getSessionIndicator(runtime, false, session.is_processing, Boolean(runtime?.error));
+              const isActive = activeSessionId === session.session_id;
+              const title = session.display_title || session.title || '新对话';
+              return (
+                <div
+                  key={session.session_id}
+                  className={`sidebar-list-item sidebar-conv-item ${isActive ? 'is-active' : ''}`}
+                  onClick={() => onSelectSession(session.session_id)}
                 >
-                  <Ellipsis size={14} />
-                </button>
-              </div>
-            );
-          })}
+                  {session.pinned ? (
+                    <Pin size={13} className="sidebar-list-icon sidebar-pin-icon" />
+                  ) : (
+                    <MessageSquare size={14} className="sidebar-list-icon" />
+                  )}
+                  <span className="sidebar-list-text" title={title}>
+                    {title}
+                  </span>
+                  <span className="sidebar-conv-right">
+                    {indicator === 'processing' ? (
+                      <Loader2 size={13} className="spin sidebar-conv-spinner" />
+                    ) : indicator === 'waiting' ? (
+                      <span className="sidebar-conv-waiting" title="等待回答" />
+                    ) : indicator === 'error' ? (
+                      <span className="sidebar-conv-error" title="出错了" />
+                    ) : (
+                      <span className="sidebar-conv-time">{formatTime(session.last_user_message_at ?? session.last_message_at ?? session.updated_at)}</span>
+                    )}
+                  </span>
+                  <button
+                    ref={sessionMenuId === session.session_id ? sessionMenuAnchorRef : undefined}
+                    className="icon-btn icon-btn--xs sidebar-conv-menu-btn"
+                    onClick={e => {
+                      e.stopPropagation();
+                      setSessionMenuId(sessionMenuId === session.session_id ? null : session.session_id);
+                    }}
+                  >
+                    <Ellipsis size={14} />
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -513,20 +541,22 @@ export function Sidebar({
         {menuProject ? (
           <div className="menu-pop">
             <button className="menu-item" onClick={() => void handlePinProject(menuProject)}>
-              <span className="menu-item-icon"><Pin size={14} /></span>
-              <span className="menu-item-label">
-                {menuProject.pinned
-                  ? t('multiSession.project.unpinProject')
-                  : t('multiSession.project.pinProject')}
+              <span className="menu-item-icon">
+                <Pin size={14} />
               </span>
+              <span className="menu-item-label">{menuProject.pinned ? t('multiSession.project.unpinProject') : t('multiSession.project.pinProject')}</span>
             </button>
             <button className="menu-item" onClick={() => openRenameProject(menuProject)}>
-              <span className="menu-item-icon"><Pencil size={14} /></span>
+              <span className="menu-item-icon">
+                <Pencil size={14} />
+              </span>
               <span className="menu-item-label">{t('multiSession.project.rename')}</span>
             </button>
             <div className="menu-sep" />
             <button className="menu-item menu-item-danger" onClick={() => openDeleteProject(menuProject)}>
-              <span className="menu-item-icon"><Trash2 size={14} /></span>
+              <span className="menu-item-icon">
+                <Trash2 size={14} />
+              </span>
               <span className="menu-item-label">{t('multiSession.project.deleteProject')}</span>
             </button>
           </div>
@@ -538,22 +568,34 @@ export function Sidebar({
         {menuSession ? (
           <div className="menu-pop">
             <button className="menu-item" onClick={() => void handlePin(menuSession)}>
-              <span className="menu-item-icon"><Pin size={14} /></span>
+              <span className="menu-item-icon">
+                <Pin size={14} />
+              </span>
               <span className="menu-item-label">{menuSession.pinned ? '取消置顶' : '置顶'}</span>
             </button>
             <button
               className="menu-item"
-              onClick={() => { setSessionMenuId(null); onRenameSession(menuSession); }}
+              onClick={() => {
+                setSessionMenuId(null);
+                onRenameSession(menuSession);
+              }}
             >
-              <span className="menu-item-icon"><Pencil size={14} /></span>
+              <span className="menu-item-icon">
+                <Pencil size={14} />
+              </span>
               <span className="menu-item-label">重命名</span>
             </button>
             <div className="menu-sep" />
             <button
               className="menu-item menu-item-danger"
-              onClick={() => { setSessionMenuId(null); onDeleteSession(menuSession); }}
+              onClick={() => {
+                setSessionMenuId(null);
+                onDeleteSession(menuSession);
+              }}
             >
-              <span className="menu-item-icon"><Trash2 size={14} /></span>
+              <span className="menu-item-icon">
+                <Trash2 size={14} />
+              </span>
               <span className="menu-item-label">删除</span>
             </button>
           </div>
@@ -562,25 +604,41 @@ export function Sidebar({
 
       {/* 底部用户区 */}
       <div className="sidebar-user">
-        <div className="sidebar-avatar">{(username || 'U').slice(0, 1).toUpperCase()}</div>
-        <span className="sidebar-user-name" title={username}>{username}</span>
-        <button
-          ref={userMenuAnchorRef}
-          className="icon-btn icon-btn--sm"
-          onClick={() => setUserMenuOpen((v) => !v)}
-        >
-          <Ellipsis size={16} />
+        <div className="sidebar-avatar">
+          <img src={userAvatarImg} alt="" />
+        </div>
+        <span className="sidebar-user-name" title={username}>
+          {username}
+        </span>
+        <button ref={userMenuAnchorRef} className="icon-btn icon-btn--sm" onClick={() => setUserMenuOpen(v => !v)}>
+          <img src={userMoreIcon} alt="" style={{ width: 16, height: 16 }} />
         </button>
       </div>
       <Popup open={userMenuOpen} anchorRef={userMenuAnchorRef} placement="top-end" onClose={() => setUserMenuOpen(false)}>
         <div className="menu-pop">
-          <button className="menu-item" onClick={() => { setUserMenuOpen(false); onOpenSettings(); }}>
-            <span className="menu-item-icon"><Settings size={15} /></span>
+          <button
+            className="menu-item"
+            onClick={() => {
+              setUserMenuOpen(false);
+              onOpenSettings();
+            }}
+          >
+            <span className="menu-item-icon">
+              <Settings size={15} />
+            </span>
             <span className="menu-item-label">设置</span>
           </button>
           <div className="menu-sep" />
-          <button className="menu-item menu-item-danger" onClick={() => { setUserMenuOpen(false); onLogout(); }}>
-            <span className="menu-item-icon"><LogOut size={15} /></span>
+          <button
+            className="menu-item menu-item-danger"
+            onClick={() => {
+              setUserMenuOpen(false);
+              onLogout();
+            }}
+          >
+            <span className="menu-item-icon">
+              <LogOut size={15} />
+            </span>
             <span className="menu-item-label">退出登录</span>
           </button>
         </div>
@@ -596,7 +654,7 @@ export function Sidebar({
 
       {renameProjectTarget ? (
         <div className="modal-mask" onClick={() => !renameProjectBusy && setRenameProjectTarget(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <div className="modal-title">{t('multiSession.project.rename')}</div>
             </div>
@@ -605,8 +663,10 @@ export function Sidebar({
                 autoFocus
                 className="form-input"
                 value={renameProjectValue}
-                onChange={(e) => setRenameProjectValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProjectSubmit(); }}
+                onChange={e => setRenameProjectValue(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') void handleRenameProjectSubmit();
+                }}
                 placeholder={t('multiSession.project.renamePlaceholder')}
                 disabled={renameProjectBusy}
               />
@@ -616,11 +676,7 @@ export function Sidebar({
               <button className="btn btn-ghost" disabled={renameProjectBusy} onClick={() => setRenameProjectTarget(null)}>
                 {t('multiSession.project.cancel')}
               </button>
-              <button
-                className="btn btn-primary"
-                disabled={renameProjectBusy || !renameProjectValue.trim()}
-                onClick={() => void handleRenameProjectSubmit()}
-              >
+              <button className="btn btn-primary" disabled={renameProjectBusy || !renameProjectValue.trim()} onClick={() => void handleRenameProjectSubmit()}>
                 {t('multiSession.project.confirm')}
               </button>
             </div>
@@ -630,7 +686,7 @@ export function Sidebar({
 
       {deleteProjectTarget ? (
         <div className="modal-mask" onClick={() => !deleteProjectBusy && setDeleteProjectTarget(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <div className="modal-title">{t('multiSession.project.deleteProject')}</div>
             </div>
@@ -642,11 +698,7 @@ export function Sidebar({
               <button className="btn btn-ghost" disabled={deleteProjectBusy} onClick={() => setDeleteProjectTarget(null)}>
                 {t('multiSession.project.cancel')}
               </button>
-              <button
-                className="btn btn-dark"
-                disabled={deleteProjectBusy}
-                onClick={() => void handleDeleteProjectSubmit()}
-              >
+              <button className="btn btn-dark" disabled={deleteProjectBusy} onClick={() => void handleDeleteProjectSubmit()}>
                 {deleteProjectBusy ? '删除中…' : t('multiSession.delete')}
               </button>
             </div>

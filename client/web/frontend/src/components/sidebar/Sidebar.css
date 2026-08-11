@@ -31,12 +31,16 @@
 .sidebar-logo {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: #191919;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.sidebar-logo img {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 
 .sidebar-title {

@@ -1,24 +1,15 @@
 import type { SVGProps } from 'react';
-import ChevronDownSvg from '../../assets/icons/chevron-down.svg?react';
-import NewProjectSvg from '../../assets/icons/new-project.svg?react';
-import ProjectSpaceSvg from '../../assets/icons/project-space.svg?react';
+import ChevronDownSvg from '../../assets/design/home/chevron-down.svg?react';
+import NewProjectSvg from '../../assets/design/home/new-project.svg?react';
+import ProjectSpaceSvg from '../../assets/design/home/select-project-space.svg?react';
 import SelectProjectPathSvg from '../../assets/icons/select-project-path.svg?react';
 
 type IconProps = SVGProps<SVGSVGElement> & {
   size?: number | string;
 };
 
-function withSize(
-  Icon: typeof ChevronDownSvg,
-  { size = 16, width, height, ...rest }: IconProps,
-) {
-  return (
-    <Icon
-      width={width ?? size}
-      height={height ?? size}
-      {...rest}
-    />
-  );
+function withSize(Icon: typeof ChevronDownSvg, { size = 16, width, height, ...rest }: IconProps) {
+  return <Icon width={width ?? size} height={height ?? size} {...rest} />;
 }
 
 /** 下拉 — 创建项目-新版/图标/下拉.svg */

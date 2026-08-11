@@ -5,29 +5,33 @@
 /* ---------- 首页变体 ---------- */
 .composer-home-wrap { width: 100%; }
 
+/* DSL 对话框 outer: bg #f1f3f5, border-radius 16px, padding 4px all sides, gap 8px */
 .composer-outer {
-  background: var(--bg-input-outer);
+  background: #f1f3f5;
   border-radius: 16px;
-  padding: 4px 4px 8px;
+  padding: 4px 4px 4px; /* DSL: padding 4px 4px 4px 4px */
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 8px; /* DSL */
 }
 
+/* DSL chat-无边框 inner: bg #fff, border-radius 14px, box-shadow, padding 12px 8px 8px 8px, gap 69px */
 .composer-inner {
   background: #fff;
   border-radius: 14px;
-  box-shadow: var(--sh-card);
-  padding: 12px 16px 8px;
+  box-shadow: 0px 2px 12px 0px rgba(0, 0, 0, 0.06); /* DSL exact */
+  padding: 12px 8px 8px; /* DSL: padding 12px 8px 8px 8px */
   display: flex;
   flex-direction: column;
 }
 
+/* DSL offset row: width 204px, padding 0 0 0 8px, justify-content space-between, align-items flex-start */
 .composer-home-selectors {
+  width: 204px; /* DSL: 仅占对话框左侧，非全宽 */
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 8px;
+  align-items: flex-start; /* DSL */
+  justify-content: space-between;
+  padding: 0 0 0 8px; /* DSL: left padding only */
 }
 
 /* ---------- 对话变体 ---------- */
@@ -72,6 +76,11 @@
   min-height: 24px;
   max-height: 220px;
   padding: 2px 0;
+}
+
+/* DSL placeholder: color rgba(0,0,0,0.4) */
+.composer-textarea::placeholder {
+  color: rgba(0, 0, 0, 0.4);
 }
 
 .composer-bottom {
@@ -132,6 +141,13 @@
 
 .composer-model:hover { background: var(--bg-hover); }
 .composer-model-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* DSL inner container for model dropdown: wraps text + chevron */
+.composer-model-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
 
 .composer-send {
   width: 32px;
@@ -229,6 +245,81 @@
   justify-content: center;
 }
 
+/* ---------- 首页变体 chip 精确覆盖（DSL: padding 4px 8px, justify-content space-between） ---------- */
+
+/* DSL dropdown button: border-radius 100px, padding 4px 8px, justify-content space-between, 无固定高度 */
+.composer-home-wrap .composer-chip {
+  height: auto;
+  padding: 4px 8px;
+  gap: 0;
+  justify-content: space-between;
+  font-size: 12px;
+  line-height: 16px; /* DSL */
+  color: rgba(0, 0, 0, 0.9); /* DSL */
+}
+
+/* DSL mode chip: width:120px (单Agent模式 dropdown button) */
+.composer-home-wrap .composer-mode-chip {
+  width: 120px; /* DSL */
+}
+
+/* DSL inner container: width:84px, space-between, text + chevron */
+.composer-home-wrap .composer-mode-label {
+  width: 84px; /* DSL */
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start; /* DSL */
+}
+
+.composer-home-wrap .composer-chip img {
+  flex-shrink: 0;
+}
+
+/* DSL: 底部操作区 margin-top 2px on dropdowns; plus button 无 margin */
+.composer-home-wrap .composer-bottom-left .composer-chip,
+.composer-home-wrap .composer-bottom-right .composer-model {
+  margin-top: 2px;
+}
+
+/* DSL chat-无边框 inner total height 140px in empty state:
+   12(pad-top) + textarea + 8(margin) + 32(bar) + 8(pad-bottom) = 140 → textarea = 80px */
+/* DSL 文字 frame: padding 0/8/0/8 → 文字区 736px (= 752 - 8 - 8) */
+.composer-home-wrap .composer-textarea {
+  min-height: 80px; /* DSL: 空态时内框总高 140px */
+  padding: 2px 8px; /* DSL: 文字 frame 水平 padding 8px, 使文字区 = 736px */
+}
+
+/* DSL 左侧容器: width:156px, justify-content:space-between, align-items:flex-start, NO gap */
+.composer-home-wrap .composer-bottom-left {
+  width: 156px; /* DSL */
+  gap: 0; /* DSL: 无 gap, 由 space-between 分配 4px */
+  justify-content: space-between;
+  align-items: flex-start; /* DSL */
+}
+
+/* DSL 右侧容器: width:113px, justify-content:space-between, align-items:flex-start, NO gap */
+.composer-home-wrap .composer-bottom-right {
+  width: 113px; /* DSL */
+  gap: 0; /* DSL: 无 gap, 由 space-between 分配 */
+  justify-content: space-between;
+  align-items: flex-start; /* DSL */
+}
+.composer-home-wrap .composer-model {
+  width: 77px; /* DSL */
+  height: auto;
+  padding: 4px 8px;
+  gap: 0;
+  justify-content: space-between;
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+/* DSL model label inner container: width:41px (home variant) */
+.composer-home-wrap .composer-model-label {
+  width: 41px; /* DSL */
+}
+
 /* ---------- 弹出菜单细节 ---------- */
 .plus-menu { min-width: 230px; }
 
@@ -278,3 +369,4 @@
 }
 .project-create-pick { align-self: flex-start; }
 .project-create-error { color: var(--danger); font-size: 12px; }
+

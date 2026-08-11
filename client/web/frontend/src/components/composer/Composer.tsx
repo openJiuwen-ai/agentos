@@ -4,13 +4,16 @@
  * 对话变体：白底圆角卡片 + 技能/模式/权限 chips + 发送/停止按钮
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Box, ListOrdered, Bot } from 'lucide-react';
+import { Box, ListOrdered } from 'lucide-react';
 import type { AgentMode, MediaItem, Permission } from '../../types';
 import { useChatStore, useGoalStore, useSessionStore } from '../../stores';
 import { PlusMenu, ModelSelector, PermissionSelector, SkillSelector, ProjectSelector } from './popups';
-import sendDefaultIcon from '../../assets/design/send-default.png';
-import sendActiveIcon from '../../assets/design/send-active.png';
-import stopCircleIcon from '../../assets/design/stop-circle.png';
+import sendDefaultIcon from '../../assets/design/home/send-inactive.svg';
+import sendActiveIcon from '../../assets/design/home/send-active.svg';
+import stopCircleIcon from '../../assets/design/home/generating.svg';
+import agentModeIcon from '../../assets/design/home/single-agent-mode.svg';
+import modeChevronIcon from '../../assets/design/home/chevron-down.svg';
+import closeIcon from '../../assets/design/home/close.svg';
 import './Composer.css';
 
 const PLACEHOLDER = '需要帮你做些什么？输入“/”快速引用技能及指令';
@@ -58,17 +61,27 @@ function fileToMediaItem(file: File): Promise<MediaItem> {
 }
 
 export function Composer({
-  sessionId, variant, isProcessing, disabled, permission, onChangePermission,
-  onSend, onCancel, onSchedule, mode, onSwitchMode, focusKey,
+  sessionId,
+  variant,
+  isProcessing,
+  disabled,
+  permission,
+  onChangePermission,
+  onSend,
+  onCancel,
+  onSchedule,
+  mode,
+  onSwitchMode,
+  focusKey,
 }: ComposerProps) {
-  const inputValue = useChatStore((s) => s.runtimes[sessionId]?.inputValue ?? '');
-  const setInputValue = useChatStore((s) => s.setInputValue);
-  const taskQueue = useChatStore((s) => s.runtimes[sessionId]?.taskQueue ?? []);
-  const clearTaskQueue = useChatStore((s) => s.clearTaskQueue);
-  const selectedSkills = useSessionStore((s) => s.runtimes[sessionId]?.selectedSkills ?? []);
-  const removeSelectedSkill = useSessionStore((s) => s.removeSelectedSkill);
-  const goalArmed = useGoalStore((s) => s.runtimes[sessionId]?.armed ?? false);
-  const setGoalArmed = useGoalStore((s) => s.setArmed);
+  const inputValue = useChatStore(s => s.runtimes[sessionId]?.inputValue ?? '');
+  const setInputValue = useChatStore(s => s.setInputValue);
+  const taskQueue = useChatStore(s => s.runtimes[sessionId]?.taskQueue ?? []);
+  const clearTaskQueue = useChatStore(s => s.clearTaskQueue);
+  const selectedSkills = useSessionStore(s => s.runtimes[sessionId]?.selectedSkills ?? []);
+  const removeSelectedSkill = useSessionStore(s => s.removeSelectedSkill);
+  const goalArmed = useGoalStore(s => s.runtimes[sessionId]?.armed ?? false);
+  const setGoalArmed = useGoalStore(s => s.setArmed);
 
   const [attachments, setAttachments] = useState<MediaItem[]>([]);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
@@ -113,7 +126,7 @@ export function Composer({
     if (list.length === 0) return;
     try {
       const items = await Promise.all(list.map(fileToMediaItem));
-      setAttachments((prev) => [...prev, ...items]);
+      setAttachments(prev => [...prev, ...items]);
     } catch {
       /* 读取失败忽略 */
     }
@@ -135,19 +148,12 @@ export function Composer({
           {attachments.map((item, index) => (
             <div key={`${item.filename}-${index}`} className="composer-attachment">
               {item.type === 'image' && item.base64Data ? (
-                <img
-                  src={`data:${item.mimeType};base64,${item.base64Data}`}
-                  alt={item.filename}
-                  className="composer-attachment-img"
-                />
+                <img src={`data:${item.mimeType};base64,${item.base64Data}`} alt={item.filename} className="composer-attachment-img" />
               ) : (
                 <span className="composer-attachment-name">{item.filename}</span>
               )}
-              <button
-                className="composer-attachment-remove"
-                onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== index))}
-              >
-                <X size={11} />
+              <button className="composer-attachment-remove" onClick={() => setAttachments(prev => prev.filter((_, i) => i !== index))}>
+                <img src={closeIcon} alt="" style={{ width: 11, height: 11 }} />
               </button>
             </div>
           ))}
@@ -157,11 +163,13 @@ export function Composer({
       {/* 已选技能 chips */}
       {selectedSkills.length > 0 ? (
         <div className="composer-skills">
-          {selectedSkills.map((skill) => (
+          {selectedSkills.map(skill => (
             <span key={skill} className="skill-chip">
               <Box size={12} />
               <span>{skill}</span>
-              <button onClick={() => removeSelectedSkill(sessionId, skill)}><X size={11} /></button>
+              <button onClick={() => removeSelectedSkill(sessionId, skill)}>
+                <img src={closeIcon} alt="" style={{ width: 11, height: 11 }} />
+              </button>
             </span>
           ))}
         </div>
@@ -172,7 +180,9 @@ export function Composer({
         <div className="composer-skills">
           <span className="skill-chip skill-chip--goal">
             <span>将设为持续目标</span>
-            <button onClick={() => setGoalArmed(sessionId, false)}><X size={11} /></button>
+            <button onClick={() => setGoalArmed(sessionId, false)}>
+              <img src={closeIcon} alt="" style={{ width: 11, height: 11 }} />
+            </button>
           </span>
         </div>
       ) : null}
@@ -183,7 +193,7 @@ export function Composer({
         placeholder={PLACEHOLDER}
         value={inputValue}
         rows={variant === 'home' ? 3 : 2}
-        onChange={(e) => setInputValue(sessionId, e.target.value)}
+        onChange={e => setInputValue(sessionId, e.target.value)}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
       />
@@ -198,22 +208,19 @@ export function Composer({
             onToggleGoal={() => setGoalArmed(sessionId, !goalArmed)}
             onOpenSkills={() => setSkillMenuOpen(true)}
           />
+          {/* 单Agent模式 / 团队模式 —— 首页 + 对话页都显示 */}
+          <button className="composer-chip composer-mode-chip" title="切换模式" onClick={() => onSwitchMode(mode === 'team' ? 'agent' : 'team')}>
+            <img src={agentModeIcon} alt="" style={{ width: 15.35, height: 12.79 }} />
+            {/* DSL: container(84px) wraps text + chevron with space-between */}
+            <span className="composer-mode-label">
+              <span>{mode === 'team' ? '团队模式' : '单Agent模式'}</span>
+              <img src={modeChevronIcon} alt="" style={{ width: 10, height: 10, marginTop: 3 }} />
+            </span>
+          </button>
           {variant === 'chat' ? (
             <>
-              <button
-                className="composer-chip"
-                title="切换模式"
-                onClick={() => onSwitchMode(mode === 'team' ? 'agent' : 'team')}
-              >
-                <Bot size={14} />
-                <span>{mode === 'team' ? '团队模式' : '单Agent模式'}</span>
-              </button>
               <PermissionSelector permission={permission} onChange={onChangePermission} />
-              <button
-                ref={skillMenuAnchorRef}
-                className="composer-chip"
-                onClick={() => setSkillMenuOpen(true)}
-              >
+              <button ref={skillMenuAnchorRef} className="composer-chip" onClick={() => setSkillMenuOpen(true)}>
                 <Box size={14} />
                 <span>技能</span>
               </button>
@@ -227,12 +234,7 @@ export function Composer({
               <img src={stopCircleIcon} alt="停止" />
             </button>
           ) : (
-            <button
-              className="composer-send"
-              title="发送"
-              disabled={!canSend}
-              onClick={handleSend}
-            >
+            <button className="composer-send" title="发送" disabled={!canSend} onClick={handleSend}>
               <img src={canSend ? sendActiveIcon : sendDefaultIcon} alt="发送" />
             </button>
           )}
@@ -244,17 +246,12 @@ export function Composer({
         type="file"
         multiple
         style={{ display: 'none' }}
-        onChange={(e) => {
+        onChange={e => {
           if (e.target.files) void handleFiles(e.target.files);
           e.target.value = '';
         }}
       />
-      <SkillSelector
-        sessionId={sessionId}
-        open={skillMenuOpen}
-        onClose={() => setSkillMenuOpen(false)}
-        anchorRef={skillMenuAnchorRef}
-      />
+      <SkillSelector sessionId={sessionId} open={skillMenuOpen} onClose={() => setSkillMenuOpen(false)} anchorRef={skillMenuAnchorRef} />
     </>
   );
 
@@ -264,8 +261,8 @@ export function Composer({
         <div className="composer-outer">
           <div className="composer-inner">{composerBody}</div>
           <div className="composer-home-selectors">
-            <ProjectSelector />
-            <PermissionSelector permission={permission} onChange={onChangePermission} />
+            <ProjectSelector variant="home" />
+            <PermissionSelector permission={permission} onChange={onChangePermission} variant="home" />
           </div>
         </div>
       </div>

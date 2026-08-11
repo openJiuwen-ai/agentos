@@ -1,106 +1,193 @@
-/* 对话首页 */
+/* 对话首页 —— 排版值取自 对话-首页/dsl.json + index.html 内联样式 */
 .home {
+  position: relative; /* 首页形象绝对定位的参照（全面板） */
   height: 100%;
   overflow-y: auto;
   display: flex;
   justify-content: center;
-  background: #fff;
+  background: #f1f3f5; /* 设计稿右侧内容区底色 #f1f3f5 */
 }
 
-.home-content {
+/* 输入框包裹层（首页形象定位参照） */
+.home-composer-wrap {
+  position: relative;
   width: 100%;
-  max-width: 800px;
-  padding: 0 24px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 100%;
-  gap: 28px;
 }
 
-.home-top { display: flex; flex-direction: column; gap: 24px; }
-
-/* 模式切换 */
-.home-mode-toggle {
-  display: inline-flex;
-  align-self: flex-start;
-  background: var(--bg-input-outer);
-  border-radius: 999px;
-  padding: 4px;
-  gap: 2px;
-}
-
-.home-mode-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 22px;
-  border-radius: 999px;
-  font-size: 14px;
-  color: var(--t2);
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.home-mode-btn.is-active {
-  background: #fff;
-  color: var(--t1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-/* slogan + 形象 */
-.home-hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.home-slogan {
-  font-size: 36px;
-  font-weight: 600;
-  color: var(--t1);
-  line-height: 1.35;
-  margin: 0;
-  letter-spacing: 1px;
-}
-
+/* 首页形象 —— DSL: 宽 167px，底边与输入框顶部重叠 25px（设计稿精确值） */
 .home-mascot {
-  width: 300px;
-  flex-shrink: 0;
-  margin-bottom: -10px;
+  position: absolute;
+  bottom: calc(100% - 25px); /* DSL: mascot 底边进入输入区 25px */
+  right: -10px; /* DSL: mascot 右边超出内容容器 10px（left:1033 vs 容器右边 1190 → 差 10px） */
+  width: 167px;
+  height: 167px;
+  z-index: 2;
+  pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
 }
 
-/* 推荐技能 */
-.home-skills {
+/* 内容容器：DSL width:776px, gap:110px, align-items:center（无水平 padding） */
+.home-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 776px; /* DSL: container width 776px, 无水平 padding */
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  gap: 110px; /* DSL: gap 110px */
 }
 
-.home-skill-chip {
-  display: inline-flex;
+/* hero: DSL 421×136, overflow:hidden, position:relative */
+.home-hero {
+  position: relative;
+  width: 421px;
+  height: 136px;
+  overflow: hidden;
+}
+
+/* slogan —— DSL: absolute left:0 top:-4px, 421×68, overflow 被 hero 裁切 */
+.home-slogan {
+  position: absolute;
+  left: 0;
+  top: -4px;
+  width: 421px;
+  height: 68px;
+  max-width: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 模式切换 —— DSL: absolute left:86.5px top:92px, 248px, bg rgba(0,0,0,.05), 圆角 20px, padding 4px, justify-content:space-between */
+.home-mode-toggle {
+  position: absolute;
+  left: 86.5px; /* (421-248)/2 居中 */
+  top: 92px;
+  width: 248px;
+  display: flex;
+  justify-content: space-between; /* DSL: space-between, 两按钮各 120px 恰好填满 */
   align-items: center;
-  gap: 7px;
-  padding: 8px 20px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 20px;
+  padding: 4px;
+}
+
+/* 模式按钮 —— DSL: width:120px, border-radius:999px, padding:7px 20px, justify-content:space-between */
+.home-mode-btn {
+  width: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* DSL: icon 左、text 右 */
+  padding: 7px 20px;
   border-radius: 999px;
-  border: 1px solid var(--bd-2);
+  font-size: 14px;
+  line-height: 19px; /* DSL */
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.6); /* DSL 未选中文字色 */
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.home-mode-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* DSL: text span width:56px, height:22px, display:flex, align-items:center, justify-content:center */
+.home-mode-btn span {
+  width: 56px;
+  height: 22px; /* DSL */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 选中态: DSL 仅 background-color:#ffffff, 无 box-shadow */
+.home-mode-btn.is-active {
+  background: #fff;
+  color: rgba(0, 0, 0, 0.9); /* DSL 选中文字色 */
+}
+
+/* input-area: DSL width:776px, gap:32px, align-items:center */
+.home-input-area {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px; /* DSL */
+  width: 100%;
+}
+
+/* 推荐技能 —— DSL 胶囊按钮: width:686px, justify-content:space-between, flex-wrap:nowrap */
+.home-skills {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 686px; /* DSL */
+}
+
+/* 各 chip 宽度取自 DSL 精确值（92/106/92/96/120/120px） */
+.home-skill-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* DSL: icon 左、text 右 */
+  padding: 7px 20px; /* DSL */
+  border-radius: 999px;
   background: #fff;
   font-size: 14px;
-  color: var(--t1);
-  transition: border-color 0.12s ease, background 0.12s ease, transform 0.1s ease;
+  line-height: 19px; /* DSL */
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.9); /* DSL */
+  transition: background 0.12s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+
+/* DSL: text span 均带 display:flex;align-items:center;justify-content:center */
+.home-skill-chip span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-skill-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .home-skill-chip:hover {
-  border-color: var(--brand);
-  color: var(--brand);
   background: var(--accent-subtle);
+  color: var(--accent-subtle-text);
 }
 
-.home-skill-chip:active { transform: scale(0.97); }
+.home-skill-chip:active {
+  transform: scale(0.97);
+}
+
+/* DSL 各 chip 精确宽度 */
+.home-skill-chip:nth-child(1) { width: 92px; }   /* 文档 */
+.home-skill-chip:nth-child(2) { width: 106px; }  /* 幻灯片 */
+.home-skill-chip:nth-child(3) { width: 92px; }   /* 表格 */
+.home-skill-chip:nth-child(4) { width: 96px; }   /* 邮件 */
+.home-skill-chip:nth-child(5) { width: 120px; }  /* 调研报告 */
+.home-skill-chip:nth-child(6) { width: 120px; }  /* 图片生成 */
+
+/* DSL 邮件 chip 使用 gap:8px + margin-left:2px 而非 space-between */
+.home-skill-chip:nth-child(4) {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.home-skill-chip:nth-child(4) .home-skill-icon {
+  margin-left: 2px;
+}
 
 @media (max-width: 900px) {
-  .home-mascot { width: 220px; }
-  .home-slogan { font-size: 30px; }
+  .home-mascot { width: 120px; height: 120px; }
+  .home-slogan { width: 300px; }
+  .home-content { gap: 60px; padding: 0 24px; }
 }
