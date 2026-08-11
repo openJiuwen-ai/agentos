@@ -3,6 +3,8 @@
 只测试纯解析逻辑（不测试实际 WS 连接，避免网络依赖）。
 """
 
+import json
+
 import pytest
 
 from agentos_tui_launcher import errors
@@ -76,6 +78,62 @@ class TestParseResponse:
         raw = '{"ok": true, "ssh_ip": "10.0.0.1", "ssh_port": -1}'
         with pytest.raises(errors.GatewayError, match="ssh_port"):
             WebSocketGatewayClient.parse_response(raw, request_id="test")
+
+
+class TestParseResponsePrivateKey:
+    """3rdagent.switch 返回值 ssh_private_key 字段的解析。"""
+
+    PRIVATE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nabcdef\n-----END OPENSSH PRIVATE KEY-----\n"
+
+    @staticmethod
+    def test_payload_with_private_key():
+        raw = json.dumps(
+            {
+                "ok": True,
+                "payload": {
+                    "ssh_ip": "10.0.0.1",
+                    "ssh_port": 2222,
+                    "ssh_private_key": TestParseResponsePrivateKey.PRIVATE_KEY,
+                },
+            }
+        )
+        endpoint = WebSocketGatewayClient.parse_response(raw, request_id="test")
+        assert endpoint == SshEndpoint(
+            ssh_ip="10.0.0.1",
+            ssh_port=2222,
+            ssh_private_key=TestParseResponsePrivateKey.PRIVATE_KEY,
+        )
+
+    @staticmethod
+    def test_top_level_private_key_legacy():
+        raw = json.dumps(
+            {
+                "ok": True,
+                "ssh_ip": "10.0.0.1",
+                "ssh_port": 2222,
+                "ssh_private_key": TestParseResponsePrivateKey.PRIVATE_KEY,
+            }
+        )
+        endpoint = WebSocketGatewayClient.parse_response(raw, request_id="test")
+        assert endpoint.ssh_private_key == TestParseResponsePrivateKey.PRIVATE_KEY
+
+    @staticmethod
+    def test_missing_private_key_is_none():
+        raw = '{"ok": true, "ssh_ip": "10.0.0.1", "ssh_port": 2222}'
+        endpoint = WebSocketGatewayClient.parse_response(raw, request_id="test")
+        assert endpoint.ssh_private_key is None
+
+    @staticmethod
+    def test_blank_private_key_is_none():
+        raw = '{"ok": true, "ssh_ip": "10.0.0.1", "ssh_port": 2222, "ssh_private_key": "   "}'
+        endpoint = WebSocketGatewayClient.parse_response(raw, request_id="test")
+        assert endpoint.ssh_private_key is None
+
+    @staticmethod
+    def test_non_string_private_key_is_none():
+        raw = '{"ok": true, "ssh_ip": "10.0.0.1", "ssh_port": 2222, "ssh_private_key": 123}'
+        endpoint = WebSocketGatewayClient.parse_response(raw, request_id="test")
+        assert endpoint.ssh_private_key is None
 
 
 class TestBuildHeaders:

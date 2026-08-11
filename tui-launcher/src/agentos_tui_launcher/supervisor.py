@@ -524,6 +524,8 @@ class SubprocessRunner:
 
     def _run_foreground_windows_legacy(self, spec: ProcessSpec) -> ProcessResult:
         """Windows 继承模式：子进程继承控制台句柄，无法捕获 stdout。"""
+        # 启用控制台 ANSI 处理，否则 TUI 输出的转义码会原样显示为乱码。
+        self._enable_win_vt_processing()
         try:
             proc = subprocess.Popen(
                 [spec.executable.absolute_path, *spec.argv],
@@ -859,7 +861,13 @@ class SubprocessRunner:
                 _logger.debug("ConPTY output reader stopped: %s", exc)
 
         def _input_forwarder() -> None:
-            """后台线程：从 stdin 读取并转发到 ConPTY 输入管道。"""
+            """后台线程：从 stdin 读取并转发到 ConPTY 输入管道。
+
+            Windows 控制台输入编码为活动代码页（如 936/GBK），
+            而 ConPTY 中的 TUI 期望 UTF-8，需做编码转换。
+            """
+            # 获取控制台输入代码页，用于解码输入字节
+            input_cp = kernel32.GetConsoleCP()
             try:
                 stdin_fd = msvcrt.open_osfhandle(
                     _winapi.GetStdHandle(_winapi.STD_INPUT_HANDLE), os.O_RDONLY
@@ -869,7 +877,12 @@ class SubprocessRunner:
                         data = os.read(stdin_fd, 1024)
                         if not data:
                             break
-                        os.write(input_write_fd, data)
+                        if input_cp != 65001:
+                            # 从代码页解码为 Unicode 再编码为 UTF-8
+                            text = data.decode(f"cp{input_cp}", errors="replace")
+                            os.write(input_write_fd, text.encode("utf-8"))
+                        else:
+                            os.write(input_write_fd, data)
                     except OSError:
                         break
             except Exception as exc:
@@ -877,6 +890,9 @@ class SubprocessRunner:
 
         output_thread = threading.Thread(target=_output_reader, daemon=True)
         input_thread = threading.Thread(target=_input_forwarder, daemon=True)
+
+        # 启用控制台输出句柄的 ANSI 处理，否则 ConPTY 输出的转义码会原样显示乱码。
+        self._enable_win_vt_processing()
 
         # 启动转发前把 launcher 控制台切到 raw 模式（逐键读取 VT 序列），
         # 结束后恢复。若 stdin 非控制台则静默跳过。
@@ -976,6 +992,28 @@ class SubprocessRunner:
                 new_mode = (mode.value & ~0x0002 & ~0x0004) | 0x0200
             else:
                 new_mode = mode.value | 0x0002 | 0x0004
+            kernel32.SetConsoleMode(handle, new_mode)
+        except (OSError, AttributeError):
+            pass
+
+    @staticmethod
+    def _enable_win_vt_processing() -> None:
+        """启用 Windows 控制台输出句柄的 ANSI/VT 转义序列处理。
+
+        不设置此标志时，WriteFile / WriteConsole 会将 ANSI 转义码
+        （如 ``[38;2;255;208;0m`` 设置颜色、``[H`` 移动光标等）
+        当作普通文本原样输出，导致 TUI 渲染乱码。
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        """
+        try:
+            import _winapi
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.GetStdHandle(_winapi.STD_OUTPUT_HANDLE)
+            mode = wintypes.DWORD()
+            if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                return
+            new_mode = mode.value | 0x0004
             kernel32.SetConsoleMode(handle, new_mode)
         except (OSError, AttributeError):
             pass

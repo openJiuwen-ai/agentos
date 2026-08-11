@@ -10,6 +10,7 @@
 
 launcher 自有参数：
     --api-url <url>        # IAM / User API 基础地址
+    --allow-insecure-http[=true|false]  # 允许 HTTP（非 HTTPS）连接；不加值默认为 true
     --no-save-login        # 仅本次会话登录，不写入安全凭据存储
     --                     # 分隔符；后续元素只属于 JiuwenSwarm
 
@@ -31,6 +32,7 @@ import os
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from . import errors
@@ -109,6 +111,40 @@ class LauncherCli:
     所有依赖在构造时注入，便于测试。
     """
 
+    _file_handler: logging.Handler | None = None
+
+    @classmethod
+    def _setup_file_logging(cls) -> None:
+        """初始化文件日志：~/.agentos-tui/logs/launcher.log，轮转 10MB×5。"""
+        from logging.handlers import RotatingFileHandler
+
+        if cls._file_handler is not None:
+            return
+
+        log_dir = Path.home() / ".agentos-tui" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "launcher.log"
+
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s.%(msecs)03d %(levelname)-5s [%(name)s] %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        cls._file_handler = handler
+
+        # 添加到 root logger，让 supervisor 等模块的日志自动落盘。
+        root = logging.getLogger()
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+
     def __init__(
         self,
         *,
@@ -121,6 +157,7 @@ class LauncherCli:
         self._stdout = stdout or sys.stdout
         self._stderr = stderr or sys.stderr
 
+        self._setup_file_logging()
         self._out_logger = self._build_cli_logger(self._stdout)
         self._err_logger = self._build_cli_logger(self._stderr)
 
@@ -132,6 +169,9 @@ class LauncherCli:
         handler = logging.StreamHandler(stream)
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
+        # CLI logger 有 propagate=False，显式添加文件 handler 确保落盘。
+        if LauncherCli._file_handler is not None:
+            logger.addHandler(LauncherCli._file_handler)
         logger.propagate = False
         return logger
 
@@ -376,6 +416,10 @@ class LauncherCli:
             "  -V, --version           Show version and exit.\n"
             "  --api-url <url>        IAM / User API base URL.\n"
             "  --gateway-url <url>    Gateway URL passed to JiuwenSwarm TUI as --url.\n"
+            "  --allow-insecure-http[=true|false]\n"
+            "                              Allow HTTP connections (non-HTTPS) for API.\n"
+            "                              Default: true (when flag present without value).\n"
+            "  --no-allow-insecure-http    Disallow HTTP connections (overrides --allow-insecure-http).\n"
             "  --no-save-login         Do not persist refresh token to secure storage.\n"
             "  --                      Separator; following args are passed to JiuwenSwarm TUI.\n"
             "\n"
@@ -404,6 +448,7 @@ class LauncherCli:
         api_url: Optional[str] = None
         gateway_url: Optional[str] = None
         no_save_login = False
+        allow_insecure_http: Optional[bool] = None
         tui_args: list[str] = []
         seen_separator = False
 
@@ -455,6 +500,44 @@ class LauncherCli:
                 i += 1
                 continue
 
+            if arg == "--allow-insecure-http":
+                # 支持 --allow-insecure-http（无值=true）和 --allow-insecure-http true/false
+                if i + 1 < n and argv[i + 1] in ("true", "false"):
+                    i += 1
+                    allow_insecure_http = argv[i] == "true"
+                else:
+                    allow_insecure_http = True
+                i += 1
+                continue
+
+            if arg.startswith("--allow-insecure-http="):
+                val = arg[len("--allow-insecure-http="):]
+                if val == "true":
+                    allow_insecure_http = True
+                elif val == "false":
+                    allow_insecure_http = False
+                else:
+                    raise errors.UsageError(
+                        "--allow-insecure-http value must be 'true' or 'false'."
+                    )
+                i += 1
+                continue
+
+            if arg == "--no-allow-insecure-http":
+                allow_insecure_http = False
+                i += 1
+                continue
+
+            # 遇到 launcher 不识别的 -- 参数，在 -- 分隔符之前报错提示。
+            # 只拦截以 --allow- / --api- / --gateway- / --no- 开头的参数，
+            # 这些明显是 launcher 级别的参数；其他 -- 参数（如 --url、--token）
+            # 归 JiuwenSwarm TUI。
+            if arg.startswith(("--allow-", "--api-", "--gateway-", "--no-")):
+                raise errors.UsageError(
+                    f"Unknown launcher option: {arg}\n"
+                    "Run 'agentos-tui --help' to see supported launcher options."
+                )
+
             # 其它参数归 JiuwenSwarm。
             tui_args.append(arg)
             i += 1
@@ -464,6 +547,7 @@ class LauncherCli:
                 api_url=api_url,
                 no_save_login=no_save_login,
                 gateway_url=gateway_url,
+                allow_insecure_http=allow_insecure_http,
             ),
             tuple(tui_args),
         )
@@ -498,6 +582,18 @@ class LauncherCli:
             )
             need_save = True
 
+        # 如果命令行提供了 --allow-insecure-http，覆盖配置中的值。
+        if opts.allow_insecure_http is not None:
+            cfg = ClientConfig(
+                api_url=cfg.api_url,
+                websocket_url=cfg.websocket_url,
+                last_user_id=cfg.last_user_id,
+                last_username=cfg.last_username,
+                allow_insecure_http=opts.allow_insecure_http,
+                gateway_url=cfg.gateway_url,
+            )
+            need_save = True
+
         if need_save:
             config_store.save(cfg)
 
@@ -509,6 +605,7 @@ class LauncherCli:
 
         cfg = config_store.load()
         self._out(f"Config: {config_store.config_path()}")
+
         auth_client = RequestsAuthClient(
             allow_insecure_http=cfg.allow_insecure_http
         )
@@ -593,6 +690,61 @@ class LauncherCli:
                 return tui_argv[i + 1]
             i += 1
         return None
+
+    # ==================================================================
+    # 内部辅助：临时私钥文件（/switch SSH 认证）
+    # ==================================================================
+
+    @staticmethod
+    def _normalize_private_key(private_key: str) -> str:
+        """规范化私钥：统一换行符、确保末尾换行、去除首尾空白。
+
+        Gateway 返回的 ``ssh_private_key`` 可能携带 Windows 换行符（\\r\\n）
+        或缺少尾随换行符，导致 paramiko 解析失败报 ``No authentication methods
+        available``。此方法做归一化处理。
+        """
+        text = private_key.strip().replace("\r\n", "\n").replace("\r", "\n")
+        if not text.endswith("\n"):
+            text += "\n"
+        return text
+
+    @staticmethod
+    def _write_private_key_tempfile(
+        private_key: Optional[str],
+    ) -> Optional[str]:
+        """把 3rdagent.switch 下发的临时私钥写入临时文件，返回文件路径。
+
+        私钥缺失或空白时返回 None（沿用无需密钥的旧行为）。
+        文件权限：POSIX 上收紧为 0600；Windows 上由临时目录 ACL 保护。
+        调用方必须在会话结束后用 `_cleanup_private_key_tempfile()` 删除。
+        """
+        if not private_key or not private_key.strip():
+            return None
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="agentos-switch-key-", suffix=".pem")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(LauncherCli._normalize_private_key(private_key))
+            if os.name != "nt":
+                os.chmod(path, 0o600)
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
+
+    @staticmethod
+    def _cleanup_private_key_tempfile(path: Optional[str]) -> None:
+        """删除临时私钥文件（会话结束后调用）。"""
+        if not path:
+            return
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
     # ==================================================================
     # 内部辅助：supervisor 运行循环
@@ -708,21 +860,20 @@ class LauncherCli:
                     )
                     return EXIT_CONFIG
 
-                # 3. 获取 user_id 用于 gateway WS 认证。
+                # 3. 获取 user_id 和 token 用于 gateway WS 认证。
                 #    gateway 校验逻辑：若提供 token，则校验 token 用户与 X-User-Id 一致；
                 #    若不提供 token，仅用 X-User-Id 标识用户。
-                #    当前 gateway 版本对 token 校验较严格（过期/格式问题会关闭连接），
-                #    暂不传 token，只用 X-User-Id，与 jiuwenswarm-tui 默认行为对齐。
                 ws_user_id = None
+                ws_token: Optional[str] = None
                 if mode == LaunchMode.MANAGED and current_context is not None:
                     ws_user_id = current_context.username
+                    ws_token = current_context.access_token
                 else:
                     ws_user_id = explicit_user_id
+                    ws_token = explicit_token
 
                 # 4. 调用 gateway WS 获取 SSH 端点。
                 #    生成 session_id（UUID），用于 gateway 会话追踪。
-                #    不传 token：当前 gateway 版本对 token 校验较严格，
-                #    仅用 X-User-Id 即可建立连接（与 jiuwenswarm-tui 默认行为一致）。
                 session_id = str(uuid.uuid4())
                 try:
                     if gateway_client is None:
@@ -731,7 +882,7 @@ class LauncherCli:
                         gateway_url=gateway_url,
                         agent_type=switch_target,
                         session_id=session_id,
-                        token=None,
+                        token=ws_token,
                         user_id=ws_user_id,
                     )
                 except errors.GatewayError as exc:
@@ -749,14 +900,20 @@ class LauncherCli:
                     return EXIT_NETWORK
 
                 # 5. 通过 SSH 隧道连接三方 Agentos 并发送内容。
-                if ssh_client is None:
-                    ssh_client = ParamikoSshTunnelClient()
+                #    3rdagent.switch 返回值中的 ssh_private_key 是临时私钥：
+                #    写入临时文件（等价于 `ssh -i <file>`），会话结束立即清理。
+                private_key_file = self._write_private_key_tempfile(
+                    endpoint.ssh_private_key
+                )
                 try:
+                    if ssh_client is None:
+                        ssh_client = ParamikoSshTunnelClient()
                     ssh_client.connect_and_send(
                         ssh_ip=endpoint.ssh_ip,
                         ssh_port=endpoint.ssh_port,
                         content=switch_target,
                         username=ws_user_id,
+                        private_key_file=private_key_file,
                     )
                 except errors.SshTunnelError as exc:
                     self._err(f"SSH tunnel error: {exc}")
@@ -769,6 +926,8 @@ class LauncherCli:
                     )
                     self._err(f"Traceback:\n{traceback.format_exc()}")
                     return EXIT_NETWORK
+                finally:
+                    self._cleanup_private_key_tempfile(private_key_file)
 
                 # SSH 会话结束；重启主 TUI，继续外层循环。
                 continue
@@ -912,7 +1071,7 @@ class LauncherCli:
 class _LauncherOpts:
     """launcher 自有参数解析结果。"""
 
-    __slots__ = ("api_url", "no_save_login", "gateway_url")
+    __slots__ = ("api_url", "no_save_login", "gateway_url", "allow_insecure_http")
 
     def __init__(
         self,
@@ -920,10 +1079,12 @@ class _LauncherOpts:
         api_url: Optional[str],
         no_save_login: bool,
         gateway_url: Optional[str] = None,
+        allow_insecure_http: Optional[bool] = None,
     ) -> None:
         self.api_url = api_url
         self.no_save_login = no_save_login
         self.gateway_url = gateway_url
+        self.allow_insecure_http = allow_insecure_http
 
 
 def _mask_user_id(user_id: str) -> str:

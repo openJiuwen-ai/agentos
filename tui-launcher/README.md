@@ -94,6 +94,16 @@ agentos-tui login --api-url http://<your-server>:8090 --gateway-url ws://<your-s
 
 `AGENTOS_TUI_CONFIG_DIR` 环境变量可覆盖默认路径。
 
+### 日志文件
+
+launcher 运行日志自动写入 `~/.agentos-tui/logs/launcher.log`，轮转策略：单文件最大 10MB，保留最近 5 个备份。
+
+| 平台 | 日志路径 |
+|------|---------|
+| Windows | `%USERPROFILE%\.agentos-tui\logs\launcher.log` |
+| Linux | `~/.agentos-tui/logs/launcher.log` |
+| macOS | `~/.agentos-tui/logs/launcher.log` |
+
 配置文件内容示例：
 
 ```json
@@ -109,8 +119,8 @@ agentos-tui login --api-url http://<your-server>:8090 --gateway-url ws://<your-s
 | `api_url` | 是 | IAM / User API 地址，对应管理面服务 |
 | `gateway_url` | 是 | Gateway WebSocket 地址，同时作为 TUI 的 `--url` |
 | `allow_insecure_http` | 是 | API 用 HTTP 时必须设为 `true` |
-| `last_user_id` | 否 | 自动写入，上次登录的用户 ID |
-| `last_username` | 否 | 自动写入，上次登录的用户名 |
+| `last_user_id` | 否 | 自动写入，最近使用的用户 ID，用于定位 refresh token 和登录提示 |
+| `last_username` | 否 | 自动写入，最近使用的用户名，用于定位 refresh token 和登录提示 |
 
 ---
 
@@ -143,6 +153,8 @@ agentos-tui --help                 # 帮助
 |------|------|
 | `--api-url <url>` | IAM API 地址（会写入配置） |
 | `--gateway-url <url>` | Gateway WebSocket 地址（会写入配置） |
+| `--allow-insecure-http[=true\|false]` | 允许 HTTP 连接；不加值等效于 `true` |
+| `--no-allow-insecure-http` | 禁止 HTTP 连接（覆盖 `--allow-insecure-http`） |
 | `--no-save-login` | 本次登录不保存 refresh token |
 
 ### 显式模式

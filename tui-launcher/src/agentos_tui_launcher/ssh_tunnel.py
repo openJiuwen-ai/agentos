@@ -4,10 +4,12 @@
 SSH 端点后，通过 SSH 隧道连接三方 Agentos：
 
 1. 使用返回的 SSH IP 和 Port 连接
-2. SSH 连接成功后，发送 content 并回车（通过 invoke_shell 交互式 shell 执行，
+2. 若 3rdagent.switch 返回了 ssh_private_key，launcher 先临时写入文件，
+   再以等价 `ssh -i <file>` 的方式（paramiko key_filename）使用该私钥认证
+3. SSH 连接成功后，发送 content 并回车（通过 invoke_shell 交互式 shell 执行，
    等价于 `ssh -t user@host claude`，远端 sandbox 要求交互式 shell 通道）
-3. 进入交互模式，用户与三方 Agentos 交互
-4. 三方 Agentos 退出后返回退出码
+4. 进入交互模式，用户与三方 Agentos 交互
+5. 三方 Agentos 退出后返回退出码
 
 本模块使用 `paramiko` 库实现 SSH 通信。paramiko 为可选依赖，
 缺失时在运行时抛出 SshTunnelError。
@@ -36,6 +38,7 @@ class SshTunnelClient(Protocol):
         ssh_port: int,
         content: str,
         username: Optional[str] = None,
+        private_key_file: Optional[str] = None,
     ) -> int:
         ...
 
@@ -44,6 +47,8 @@ class ParamikoSshTunnelClient:
     """基于 paramiko 库的 SshTunnelClient 实现。
 
     - 连接到指定 SSH 端点
+    - 若提供 private_key_file，以等价 `ssh -i <file>` 的方式（paramiko
+      key_filename）使用该私钥认证；否则沿用默认凭据探测行为
     - 打开交互式 shell，发送 content 并回车（等价于 `ssh -t user@host <content>`）
     - 进入交互模式转发
     - 返回退出码
@@ -55,8 +60,17 @@ class ParamikoSshTunnelClient:
         ssh_port: int,
         content: str,
         username: Optional[str] = None,
+        private_key_file: Optional[str] = None,
     ) -> int:
         """连接 SSH 端点，发送 content，进入交互模式。
+
+        Args:
+            ssh_ip: SSH 主机地址。
+            ssh_port: SSH 端口。
+            content: 发送给远端 Agentos 的内容（如 "claude"）。
+            username: SSH 登录用户名；默认当前系统用户。
+            private_key_file: 私钥文件路径（等价于 `ssh -i <file>`）；
+                提供时使用该私钥认证，并停止探测 ssh-agent 与默认密钥。
 
         Raises:
             SshTunnelError: SSH 连接失败、paramiko 未安装或交互异常。
@@ -76,14 +90,18 @@ class ParamikoSshTunnelClient:
         # 自动添加主机密钥（gateway 中转，信任 gateway）。
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+        # 指定私钥时只使用该私钥认证；未指定时保留 agent / 默认密钥探测。
+        use_key = private_key_file is not None
+
         try:
             client.connect(
                 hostname=ssh_ip,
                 port=ssh_port,
                 username=username,
                 timeout=15,
-                allow_agent=True,
-                look_for_keys=True,
+                allow_agent=not use_key,
+                look_for_keys=not use_key,
+                key_filename=private_key_file,
                 disabled_algorithms={"pubkeys": ["ssh-dss"]},
             )
         except TypeError:
@@ -93,8 +111,9 @@ class ParamikoSshTunnelClient:
                     port=ssh_port,
                     username=username,
                     timeout=15,
-                    allow_agent=True,
-                    look_for_keys=True,
+                    allow_agent=not use_key,
+                    look_for_keys=not use_key,
+                    key_filename=private_key_file,
                 )
             except Exception as exc:
                 raise errors.SshTunnelError(

@@ -28,8 +28,15 @@ WS 消息格式（launcher <-> gateway），见 tui-switch-cc-launcher-interface
         "type": "res",
         "id": "<同请求id>",
         "ok": true,
-        "payload": {"ssh_ip": "192.168.x.x", "ssh_port": 22}
+        "payload": {
+            "ssh_ip": "192.168.x.x",
+            "ssh_port": 22,
+            "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----..."
+        }
     }
+
+    ssh_private_key 为可选字段：三方 Agentos 的临时登录私钥，
+    launcher 临时写入文件后等价于 `ssh -i <file>` 认证；缺失时无需密钥登录。
 
 失败响应（gateway -> launcher）：
     {
@@ -53,10 +60,16 @@ from . import errors
 
 @dataclass(frozen=True)
 class SshEndpoint:
-    """gateway 返回的 SSH 连接端点。"""
+    """gateway 返回的 SSH 连接端点。
+
+    `ssh_private_key` 为 3rdagent.switch 返回值 `ssh_private_key` 字段下发的
+    临时私钥（PEM 文本），launcher 将其临时写入文件后等价于 `ssh -i <file>`
+    传递给 SSH 客户端；缺失时表示无需密钥登录（沿用旧行为）。
+    """
 
     ssh_ip: str
     ssh_port: int
+    ssh_private_key: Optional[str] = None
 
 
 class GatewayClient(Protocol):
@@ -341,15 +354,17 @@ class WebSocketGatewayClient:
                 )
             raise errors.GatewayError(f"gateway 拒绝切换请求: {error_msg}")
 
-        # 新格式：ssh_ip/ssh_port 在 payload 对象里。
+        # 新格式：ssh_ip/ssh_port/ssh_private_key 在 payload 对象里。
         payload = data.get("payload")
         if isinstance(payload, dict):
             ssh_ip = payload.get("ssh_ip")
             ssh_port = payload.get("ssh_port")
+            ssh_private_key = payload.get("ssh_private_key")
         else:
             # 兼容旧格式（顶层 ssh_ip/ssh_port）。
             ssh_ip = data.get("ssh_ip")
             ssh_port = data.get("ssh_port")
+            ssh_private_key = data.get("ssh_private_key")
 
         if not isinstance(ssh_ip, str) or not ssh_ip:
             # 显示实际 payload 帮助调试契约差异
@@ -364,5 +379,14 @@ class WebSocketGatewayClient:
                 f"gateway 返回的 ssh_port 缺失或无效。"
                 f"实际 payload: {payload_str}"
             )
+        # 私钥可选；非字符串或空白视为未提供，避免把非法值当密钥文件写入临时文件。
+        if ssh_private_key is not None and (
+            not isinstance(ssh_private_key, str) or not ssh_private_key.strip()
+        ):
+            ssh_private_key = None
 
-        return SshEndpoint(ssh_ip=ssh_ip, ssh_port=ssh_port)
+        return SshEndpoint(
+            ssh_ip=ssh_ip,
+            ssh_port=ssh_port,
+            ssh_private_key=ssh_private_key,
+        )
