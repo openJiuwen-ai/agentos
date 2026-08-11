@@ -55,7 +55,7 @@ async function handleLogin() {
 <template>
   <div class="login-page">
     <div class="login-dialog">
-      <h1 class="login-dialog__title">AgentOS登录</h1>
+      <h1 class="login-dialog__title">华为智能体一体机 管理面登录</h1>
 
       <ElForm
         ref="loginFormRef"

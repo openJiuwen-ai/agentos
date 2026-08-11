@@ -11,25 +11,22 @@ import helpIcon from '@/assets/images/help.svg';
 import rightArrow from '@/assets/images/right-arrow.svg';
 import arrowDownLine from '@/assets/images/arrow-down-line.svg';
 import logoutIcon from '@/assets/images/logout.svg';
-import logoImg from '@/assets/images/logo.png';
+import logoImg from '@/assets/images/logo.svg';
 import profileAvatarImg from '@/assets/images/avatar.svg';
 
 const route = useRoute();
 const router = useRouter();
-const { isAdmin, username, userId, role, clearAuth } = useAuth();
+const { isAdmin, effectiveIsAdmin, workspace, setWorkspace, username, userId, role, clearAuth } = useAuth();
 
 const activeTopMenu = computed(() => (route.meta.topMenu as string | undefined) ?? '');
 
-const workspace = ref<'admin' | 'user'>(localStorage.getItem('workspace') === 'user' ? 'user' : 'admin');
-
-const visibleTopMenus = computed(() => (isAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly)));
+const visibleTopMenus = computed(() => (effectiveIsAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly)));
 
 const workspaceLabel = computed(() => (workspace.value === 'admin' ? '管理工作台' : '个人工作台'));
 
 function switchWorkspace(mode: 'admin' | 'user') {
-  workspace.value = mode;
-  localStorage.setItem('workspace', mode);
-  router.push({ name: findDefaultLandingRouteName(isAdmin.value) });
+  setWorkspace(mode);
+  router.push({ name: findDefaultLandingRouteName(effectiveIsAdmin.value) });
 }
 
 function goToProfile() {
@@ -52,7 +49,7 @@ function handleTopMenuSelect(key: string) {
 
   if (menu.defaultRouteName) {
     let target = menu.defaultRouteName;
-    if (!isAdmin.value && adminOnlyRouteNames.has(target)) {
+    if (!effectiveIsAdmin.value && adminOnlyRouteNames.has(target)) {
       target = findFirstAccessibleSideMenuRoute(menu.sideMenus, false) ?? target;
     }
     router.push({ name: target });
@@ -74,8 +71,8 @@ function handleProfileCommand(command: string | number | object) {
 <template>
   <header class="top-nav">
     <div class="top-nav__left">
-      <img :src="logoImg" alt="AgentOS" class="top-nav__logo" />
-      <span class="top-nav__brand">AgentOS</span>
+      <img :src="logoImg" alt="华为智能体一体机" class="top-nav__logo" />
+      <span class="top-nav__brand">华为智能体一体机</span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleWorkspaceCommand">
         <ElButton class="workspace-btn">
           <span>{{ workspaceLabel }}</span>

@@ -25,15 +25,17 @@ router.beforeEach((to) => {
   const role = localStorage.getItem('role');
   const isLoggedIn = !!accessToken;
   const isAdmin = role === 'admin';
+  const wsIsUser = localStorage.getItem('workspace') === 'user';
+  const effectiveIsAdmin = isAdmin && !wsIsUser;
 
   // guest-only pages (login): redirect to default landing if already logged in
   if (to.meta.guest && isLoggedIn) {
-    return { name: findDefaultLandingRouteName(isAdmin) };
+    return { name: findDefaultLandingRouteName(effectiveIsAdmin) };
   }
 
   // overview temporarily disabled
   if (!overviewEnabled && to.name === 'overview') {
-    return { name: findDefaultLandingRouteName(isAdmin) };
+    return { name: findDefaultLandingRouteName(effectiveIsAdmin) };
   }
 
   // shell pages (have topMenu) require auth — redirect to login
@@ -41,12 +43,12 @@ router.beforeEach((to) => {
     return { name: 'login' };
   }
 
-  // admin-only routes (by route name): redirect to 403
+  // admin-only routes (by route name): redirect to 403 (based on real role, not workspace)
   if (to.name && adminOnlyNames.has(to.name as string) && isLoggedIn && !isAdmin) {
     return { name: 'forbidden' };
   }
 
-  // admin-only routes (by meta): redirect to 403
+  // admin-only routes (by meta): redirect to 403 (based on real role, not workspace)
   if (to.meta.admin && isLoggedIn && !isAdmin) {
     return { name: 'forbidden' };
   }

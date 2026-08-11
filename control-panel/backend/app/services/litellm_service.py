@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import uuid
 import base64
 
 import logging
@@ -269,14 +270,48 @@ async def _sync_metrics_on_create(
 
 
 async def _sync_metrics_on_update(
+    db: AsyncSession,
     model_name: str,
     local: LitellmModelParams | None,
     instance_url: str | None,
     inference_engine: str | None = None,
 ) -> dict[str, str] | None:
+    # None = 未修改该字段，沿用旧值；空串 = 用户清空了监控URL
     effective_url = instance_url
     if effective_url is None and local:
         effective_url = local.instance_url
+
+    # 用户清空了监控URL → 删除旧 job（此模型不再需要监控）
+    if effective_url is not None and not effective_url.strip():
+        old_extra = _metrics_extra_from_local(local)
+        old_job = old_extra.get(METRICS_JOB_KEY)
+        if old_job and local:
+            # 检查 job 是否被其他模型引用，被引用则跳过删除
+            count = await LitellmModelParams.count_by_grafana_job(
+                db, old_job, exclude_id=local.id,
+            )
+            if count > 0:
+                logger.info(
+                    "job '%s' 仍被其他模型引用，跳过 agent-metrics 清理 (model='%s')",
+                    old_job, model_name,
+                )
+            else:
+                try:
+                    await asyncio.to_thread(
+                        agent_metrics_config.remove_entry,
+                        old_job,
+                        local.instance_url,
+                        local.inference_engine,
+                    )
+                except (agent_metrics_config.AgentMetricsConfigError, OSError) as e:
+                    logger.warning(
+                        "Failed to clean agent-metrics.json for model '%s' "
+                        "after URL cleared: %s. Manual cleanup may be required.",
+                        model_name, e,
+                    )
+        # 返回空值清除本地 extra_params 里的 grafana_job_name
+        return {METRICS_JOB_KEY: ""}
+
     if not effective_url:
         return None
 
@@ -350,7 +385,7 @@ def _merge_extra_params(
     metrics_extra: dict[str, str] | None,
 ) -> dict | None:
     if metrics_extra is None:
-        return None
+        return local.extra_params if local and local.extra_params else None
     merged = dict(local.extra_params) if local and local.extra_params else {}
     merged.update(metrics_extra)
     return merged
@@ -715,6 +750,7 @@ class LitellmService:
 
         try:
             metrics_extra = await _sync_metrics_on_update(
+                db,
                 new_model_name,
                 local,
                 extras.instance_url,
@@ -1225,6 +1261,18 @@ class LitellmService:
             }
             for row in rows
         ]
+
+        # 补充 username
+        from app.services import get_user_backend
+        user_backend = get_user_backend()
+        for item in items:
+            try:
+                uid = uuid.UUID(item["user_id"])
+                user = await user_backend.get_user_by_id(uid)
+                if user:
+                    item["username"] = user.username
+            except (ValueError, AttributeError):
+                pass
 
         return {"items": items}
 

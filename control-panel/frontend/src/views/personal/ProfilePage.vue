@@ -23,7 +23,7 @@ import profileAvatarImg from '@/assets/images/avatar.svg';
 
 const route = useRoute();
 const router = useRouter();
-const { clearAuth } = useAuth();
+const { clearAuth, isAdmin } = useAuth();
 
 type TabKey = 'profile' | 'cloud-account' | 'preferences';
 
@@ -245,7 +245,7 @@ async function handleLogout() {
           </section>
         </ElTabPane>
 
-        <ElTabPane label="云账户管理" name="cloud-account">
+        <ElTabPane v-if="isAdmin" label="云账户管理" name="cloud-account">
           <section class="profile-card">
             <ElEmpty description="功能开发中" />
           </section>

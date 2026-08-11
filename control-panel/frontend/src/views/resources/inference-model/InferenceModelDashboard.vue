@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   ElInput,
@@ -16,6 +16,7 @@ import { Search } from '@element-plus/icons-vue';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
+import ModelUsageGuide from './ModelUsageGuide.vue';
 import {
   fetchModelList,
   fetchModelDetail,
@@ -25,6 +26,7 @@ import {
   restartModel,
   fetchUsageOverview,
   fetchUserUsage,
+  fetchGatewayConfig,
 } from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
 import { useAuth } from '@/composables/useAuth';
@@ -37,7 +39,7 @@ import {
 } from './utils/usage';
 
 const router = useRouter();
-const { isAdmin, userId } = useAuth();
+const { effectiveIsAdmin: isAdmin, userId } = useAuth();
 const loading = ref(false);
 const listError = ref('');
 
@@ -56,6 +58,9 @@ interface ModelCardData {
 }
 
 const models = ref<ModelCardData[]>([]);
+const gatewayUrl = ref<string>('');
+const exampleModelName = computed(() => models.value[0]?.name ?? '');
+const exampleContextWindow = computed(() => models.value[0]?.contextWindow ?? null);
 const activeFilter = ref('all');
 const searchQuery = ref('');
 const showAddModal = ref(false);
@@ -202,15 +207,12 @@ async function handleRestartModel(id: string) {
 
 async function handleAddModel(formData: {
   name: string;
-  type: string;
   contextLength: number | null;
   deployName: string;
   deployFramework: string;
   serviceUrl: string;
   metricsUrl: string;
   apiKey?: string;
-  paramSize?: string;
-  tags?: string;
   description?: string;
 }) {
   // 必填项验证
@@ -242,7 +244,10 @@ async function handleAddModel(formData: {
         api_base: formData.serviceUrl,
         api_key: formData.apiKey || 'sk-1234',
       },
-      model_info: formData.contextLength ? { context_window: formData.contextLength } : undefined,
+      model_info: {
+        ...(formData.description ? { description: formData.description } : {}),
+        ...(formData.contextLength ? { context_window: formData.contextLength } : {}),
+      },
       instance_url: formData.metricsUrl || undefined,
       inference_engine: formData.deployFramework || undefined,
     });
@@ -257,9 +262,19 @@ async function handleAddModel(formData: {
 watch([activeFilter, searchQuery], () => {
   loadModels();
 });
+async function loadGatewayConfig() {
+  try {
+    const data = await fetchGatewayConfig();
+    gatewayUrl.value = data?.gateway_url ?? '';
+  } catch (e) {
+    console.error('获取 Gateway 配置失败:', e);
+  }
+}
+
 onMounted(() => {
   loadModels();
   loadOverviewData();
+  loadGatewayConfig();
 });
 </script>
 
@@ -333,7 +348,7 @@ onMounted(() => {
     <div class="card model-list-card">
       <div class="model-section__header">
         <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary)">可用推理模型</h2>
-        <ElButton type="primary" @click="showAddModal = true">添加模型</ElButton>
+        <ElButton v-if="isAdmin" type="primary" @click="showAddModal = true">添加模型</ElButton>
       </div>
       <div class="model-section__toolbar">
         <ElRadioGroup v-model="activeFilter">
@@ -368,6 +383,12 @@ onMounted(() => {
         />
       </div>
     </div>
+
+    <ModelUsageGuide
+      :gateway-url="gatewayUrl"
+      :example-model-name="exampleModelName"
+      :example-context-window="exampleContextWindow"
+    />
 
     <AddModelModal :visible="showAddModal" @close="showAddModal = false" @save="handleAddModel" />
     <ModelInfoDrawer

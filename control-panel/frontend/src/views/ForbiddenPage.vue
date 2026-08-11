@@ -5,7 +5,7 @@ import { findDefaultLandingRouteName } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
-const { isAdmin } = useAuth();
+const { effectiveIsAdmin: isAdmin } = useAuth();
 
 function goHome() {
   router.push({ name: findDefaultLandingRouteName(isAdmin.value) });

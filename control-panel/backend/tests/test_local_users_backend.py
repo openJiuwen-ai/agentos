@@ -6,6 +6,7 @@
 """
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -285,6 +286,49 @@ async def test_home_directory_removed_on_user_delete(backend, test_data):
     assert os.path.isdir(home)
     await backend.delete_user(uuid.UUID(record.user_id))
     assert not os.path.isdir(home)
+
+
+@pytest.mark.asyncio
+async def test_jwswarm_config_copied_on_user_create(backend, test_data):
+    """创建用户 → 自动复制 .jiuwenswarm 目录及内容。"""
+    username = test_data["users"]["auto_password"][6]
+    await backend.create_user(username)
+    jwswarm_dir = os.path.join(settings.AGENTOS_HOME_BASE, username, ".jiuwenswarm")
+    assert os.path.isdir(jwswarm_dir)
+    assert os.path.isfile(os.path.join(jwswarm_dir, "config", "config.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_create_user_home_already_exists(backend, test_data):
+    """家目录已存在（如重装后重建同名用户）→ 仍然成功，.jiuwenswarm 被覆盖写入。"""
+    username = test_data["users"]["auto_password"][7]
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    os.makedirs(home, exist_ok=True)
+    # 模拟已有 .jiuwenswarm
+    old_jwswarm = os.path.join(home, ".jiuwenswarm")
+    os.makedirs(os.path.join(old_jwswarm, "config"), exist_ok=True)
+    Path(old_jwswarm, "config", "config.yaml").write_text("old: true", encoding="utf-8")
+
+    await backend.create_user(username)
+
+    # .jiuwenswarm 应该已更新为模板内容
+    new_content = Path(old_jwswarm, "config", "config.yaml").read_text(encoding="utf-8")
+    assert "models:" in new_content
+    assert "defaults" in new_content
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_swarm_template(backend, test_data, tmp_path):
+    """swarm 模板目录不存在 → 跳过复制，用户创建仍然成功。"""
+    import app.database as _db
+    settings.AGENTOS_SWARM_TEMPLATE_DIR = str(tmp_path / "nonexistent")
+    username = test_data["users"]["auto_password"][8]
+    record, _ = await backend.create_user(username)
+    assert record is not None
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    assert os.path.isdir(home)
+    # .jiuwenswarm 不应该存在
+    assert not os.path.isdir(os.path.join(home, ".jiuwenswarm"))
 
 
 # ── 引擎访问 ────────────────────────────────────────────────────────

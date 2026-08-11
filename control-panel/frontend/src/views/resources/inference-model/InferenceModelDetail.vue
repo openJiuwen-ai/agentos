@@ -7,6 +7,9 @@ import ModelInfoDrawer from './ModelInfoDrawer.vue';
 import { fetchModelDetail, updateModel } from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
 import PerformanceMonitor from './PerformanceMonitor.vue';
+import { useAuth } from '@/composables/useAuth';
+
+const { effectiveIsAdmin: isAdmin } = useAuth();
 
 const router = useRouter();
 const route = useRoute();
@@ -20,17 +23,23 @@ const drawerMode = ref<'view' | 'edit'>('view');
 const metadata = computed(() => {
   if (!modelData.value) return [];
   const d = modelData.value;
-  return [
+  const items = [
     { label: '模型名称', value: d.model_name || '--', isTag: false },
     { label: '模型类型', value: d.litellm_params?.model || '--', isTag: false },
     { label: 'API Base', value: d.litellm_params?.api_base || '--', isTag: false },
-    { label: '部署框架', value: d.inference_engine || '--', isTag: false },
-    { label: '模型描述', value: d.model_info?.description || '--', isTag: false },
-    { label: '模型监控URL', value: d.instance_url || '--', isTag: false },
     { label: '创建时间', value: formatDateTime(d.created_at), isTag: false },
     { label: '更新时间', value: formatDateTime(d.updated_at), isTag: false },
   ];
+  if (isAdmin.value) {
+    items.splice(3, 0,
+      { label: '部署框架', value: d.inference_engine || '--', isTag: false },
+      { label: '模型监控URL', value: d.instance_url || '--', isTag: false },
+    );
+  }
+  return items;
 });
+
+const descriptionText = computed(() => modelData.value?.model_info?.description || '--');
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '--';
@@ -106,7 +115,7 @@ onMounted(() => {
             >模型类型 {{ modelData.litellm_params?.model || '--' }}</span
           >
         </div>
-        <ElButton class="detail-link" link type="primary" @click="openDrawer('view')">模型详情</ElButton>
+        <ElButton v-if="isAdmin" class="detail-link" link type="primary" @click="openDrawer('edit')">编辑信息</ElButton>
       </div>
 
       <div class="metadata-bar">
@@ -116,7 +125,14 @@ onMounted(() => {
           <span v-else class="metadata-item__value">{{ item.value }}</span>
         </div>
       </div>
+
+      <div class="detail-section">
+        <h3 class="detail-section__title">模型描述</h3>
+        <p class="detail-section__desc">{{ descriptionText }}</p>
+      </div>
+
       <PerformanceMonitor
+        v-if="isAdmin"
         :inference-engine="modelData.inference_engine"
         :grafana-job-name="modelData.grafana_job_name"
       />
@@ -224,6 +240,24 @@ onMounted(() => {
 .metadata-item__value {
   font-size: 14px;
   color: var(--text-primary);
+}
+.detail-section {
+  padding: 16px 32px 24px;
+}
+.detail-section__title {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+  color: var(--text-primary);
+}
+.detail-section__desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 .performance-header {
   display: flex;

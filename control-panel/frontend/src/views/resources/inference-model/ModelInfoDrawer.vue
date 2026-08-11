@@ -14,6 +14,9 @@ import {
 import { ArrowDown, CopyDocument, Monitor } from '@element-plus/icons-vue';
 import ModelInfoRow from './ModelInfoRow.vue';
 import type { ModelDetail } from '@/api/inference';
+import { useAuth } from '@/composables/useAuth';
+
+const { effectiveIsAdmin: isAdmin } = useAuth();
 
 const props = defineProps<{
   visible: boolean;
@@ -176,14 +179,14 @@ function handleSave() {
           <ModelInfoRow label="模型名称" :value="model.model_name" />
           <ModelInfoRow label="模型类型" :value="model.litellm_params?.model" />
           <ModelInfoRow label="API Base" :value="model.litellm_params?.api_base" />
-          <ModelInfoRow label="模型描述" :value="model.model_info?.description" />
+          <ModelInfoRow v-if="isAdmin" label="部署框架" :value="model.inference_engine" />
         </div>
       </div>
 
       <div class="info-section">
         <h3 class="info-section__title">服务信息</h3>
         <div class="info-grid">
-          <ModelInfoRow label="模型监控URL" :value="model.instance_url" />
+          <ModelInfoRow v-if="isAdmin" label="模型监控URL" :value="model.instance_url" span="full" />
           <ModelInfoRow label="创建时间" :value="formatDateTime(model.created_at)" />
           <ModelInfoRow label="更新时间" :value="formatDateTime(model.updated_at)" />
         </div>
@@ -235,6 +238,8 @@ function handleSave() {
               type="textarea"
               :rows="4"
               resize="vertical"
+              maxlength="500"
+              show-word-limit
               placeholder="简要描述该模型的用途和特点..."
             />
           </ElFormItem>

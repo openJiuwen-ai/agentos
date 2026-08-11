@@ -18,6 +18,8 @@ from app.config import settings
 
 # 临时 home 目录，避免污染真实路径
 TEST_HOME = "/tmp/agentos_test_home"
+# 临时 swarm 模板目录
+TEST_SWARM_TEMPLATE = "/tmp/agentos_test_swarm_template"
 
 # 测试数据文件路径
 TEST_DATA_PATH = Path(__file__).parent / "test_data.json"
@@ -34,15 +36,22 @@ def _configure_for_test(data: dict) -> None:
     settings.AGENTOS_DATABASE_URL = "sqlite+aiosqlite://"
     settings.USER_SYSTEM_BACKEND = "local-users"
     settings.AGENTOS_HOME_BASE = TEST_HOME
+    settings.AGENTOS_SWARM_TEMPLATE_DIR = TEST_SWARM_TEMPLATE
     settings.AGENTOS_ADMIN_USERNAME = data["admin"]["username"]
     settings.AGENTOS_ADMIN_PASSWORD = data["admin"]["password"]
     settings.AGENTOS_JWT_SECRET_KEY = "test-secret-key"
+    settings.LITELLM_ADMIN_URL = "http://localhost:4000"
+    settings.LITELLM_MASTER_KEY = "test-master-key"
+    settings.LITELLM_KEY_ENCRYPTION_KEY = "0" * 64
+    settings.LITELLM_DATABASE_URL = "sqlite+aiosqlite://"
 
 
 def _cleanup_test_home() -> None:
-    """清理测试 home 目录。"""
+    """清理测试 home 目录和模板目录。"""
     if os.path.isdir(TEST_HOME):
         shutil.rmtree(TEST_HOME, ignore_errors=True)
+    if os.path.isdir(TEST_SWARM_TEMPLATE):
+        shutil.rmtree(TEST_SWARM_TEMPLATE, ignore_errors=True)
 
 
 # ── 后端 fixture（直接测试 backend 接口） ─────────────────────────────
@@ -57,6 +66,10 @@ async def backend():
     data = load_test_data()
     _configure_for_test(data)
     _cleanup_test_home()
+
+    # 创建 swarm 模板目录及示例文件
+    os.makedirs(os.path.join(TEST_SWARM_TEMPLATE, "config"), exist_ok=True)
+    Path(TEST_SWARM_TEMPLATE, "config", "config.yaml").write_text("models:\n  defaults: []\n", encoding="utf-8")
 
     # 初始化共享数据库引擎
     init_engine()
@@ -103,6 +116,10 @@ async def client():
     data = load_test_data()
     _configure_for_test(data)
     _cleanup_test_home()
+
+    # 创建 swarm 模板目录及示例文件
+    os.makedirs(os.path.join(TEST_SWARM_TEMPLATE, "config"), exist_ok=True)
+    Path(TEST_SWARM_TEMPLATE, "config", "config.yaml").write_text("models:\n  defaults: []\n", encoding="utf-8")
 
     # 清理上一个测试可能残留的引擎
     import app.database as _db

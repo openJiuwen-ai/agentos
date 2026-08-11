@@ -48,7 +48,6 @@ const selectedRows = ref<UserItem[]>([]);
 const sortKey = ref('created_at');
 const sortOrder = ref<'asc' | 'desc'>('desc');
 const roleFilter = ref('');
-const isActiveFilter = ref<string | null>(null); // null=all, 'true'=online, 'false'=offline
 const showBatchModal = ref(false);
 const batchResults = ref<BatchCreateResult[]>([]);
 const batchLoading = ref(false);
@@ -181,7 +180,6 @@ async function loadUsers() {
       sort: sortKey.value,
       order: sortOrder.value,
       role: roleFilter.value || undefined,
-      is_active: isActiveFilter.value,
     });
     users.value = data.items;
     total.value = data.total;
@@ -211,11 +209,6 @@ function handleSearch() {
 }
 
 function handleRoleFilter() {
-  page.value = 1;
-  loadUsers();
-}
-
-function handleActiveFilter() {
   page.value = 1;
   loadUsers();
 }
@@ -308,7 +301,7 @@ function handleUploadChange(uploadFile: UploadFile) {
 }
 
 function downloadTemplate() {
-  const csv = '用户名,\nexample_user,\n';
+  const csv = '﻿用户名,\nexample_user,\n';
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -507,53 +500,6 @@ function formatDate(iso: string | null) {
                 {{ roleLabel(row.role) }}
               </span>
             </template>
-          </ElTableColumn>
-          <ElTableColumn min-width="140">
-            <template #header>
-              <div class="role-header">
-                <span>登录状态</span>
-                <ElPopover placement="bottom" :width="120" trigger="click">
-                  <template #reference>
-                    <ElIcon :size="14" :class="{ 'role-filter-icon--active': isActiveFilter !== null }" class="role-filter-icon"><Filter /></ElIcon>
-                  </template>
-                  <div class="role-filter-popover">
-                    <ElButton
-                      text
-                      class="role-filter-option"
-                      :class="{ 'role-filter-option--active': isActiveFilter === null }"
-                      @click="isActiveFilter = null; handleActiveFilter()"
-                    >
-                      全部
-                    </ElButton>
-                    <ElButton
-                      text
-                      class="role-filter-option"
-                      :class="{ 'role-filter-option--active': isActiveFilter === 'true' }"
-                      @click="isActiveFilter = 'true'; handleActiveFilter()"
-                    >
-                      在线
-                    </ElButton>
-                    <ElButton
-                      text
-                      class="role-filter-option"
-                      :class="{ 'role-filter-option--active': isActiveFilter === 'false' }"
-                      @click="isActiveFilter = 'false'; handleActiveFilter()"
-                    >
-                      离线
-                    </ElButton>
-                  </div>
-                </ElPopover>
-              </div>
-            </template>
-            <template #default="{ row }">
-              <span class="login-status" :class="row.is_active ? 'login-status--online' : 'login-status--offline'">
-                <span class="login-status__dot" />
-                {{ row.is_active ? '在线' : '离线' }}
-              </span>
-            </template>
-          </ElTableColumn>
-          <ElTableColumn label="最近活跃时间" min-width="180">
-            <template #default>—</template>
           </ElTableColumn>
           <ElTableColumn label="创建时间" min-width="180" prop="created_at" sortable="custom">
             <template #default="{ row }">

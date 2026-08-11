@@ -19,7 +19,7 @@ import tokenIcon from '@/assets/images/token.svg';
 import personIcon from '@/assets/images/person.svg';
 import apiCallIcon from '@/assets/images/api_call.svg';
 
-const { isAdmin, userId } = useAuth();
+const { effectiveIsAdmin: isAdmin, userId } = useAuth();
 const loading = ref(false);
 const error = ref('');
 
@@ -648,7 +648,11 @@ onUnmounted(() => {
             <h3 class="call-analysis__card-title">用户用量排名Top10</h3>
             <ElTable :data="userRankRows" empty-text="暂无数据" stripe>
               <ElTableColumn prop="rank" label="排名" width="88" />
-              <ElTableColumn prop="user_id" label="用户" />
+              <ElTableColumn label="用户">
+                <template #default="{ row }">
+                  {{ row.username || row.user_id }}
+                </template>
+              </ElTableColumn>
               <ElTableColumn prop="tokensText" label="Token数" />
               <ElTableColumn prop="requestsText" label="请求数" />
               <template #empty>

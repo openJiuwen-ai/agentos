@@ -4,7 +4,7 @@
     "password": "admin123"
   },
   "users": {
-    "auto_password": ["alice", "eve", "frank", "grace", "homeuser", "delhome"],
+    "auto_password": ["alice", "eve", "frank", "grace", "homeuser", "delhome", "jwcuser", "rehome", "nomold"],
     "with_password": {
       "bob": "mypassword123",
       "chpwd": "oldpass123",

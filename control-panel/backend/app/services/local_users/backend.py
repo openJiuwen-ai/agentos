@@ -1,6 +1,7 @@
 """LocalUsersBackend — implements AbstractUserBackend with pure SQLAlchemy."""
 
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -43,11 +44,34 @@ def _home_path(username: str) -> Path:
     return Path(settings.AGENTOS_HOME_BASE) / username
 
 
-def _create_home(username: str) -> None:
+def _ensure_home(username: str) -> None:
+    """创建用户家目录；已存在则跳过。"""
     path = _home_path(username)
-    if path.exists():
-        raise ValueError("HOME_ALREADY_EXISTS")
-    path.mkdir(parents=True, mode=0o700)
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+
+
+def _create_jwswarm_config(username: str) -> None:
+    """从模板目录复制 .jiuwenswarm 到用户家目录；失败则清理 .jiuwenswarm。"""
+    src = Path(settings.AGENTOS_SWARM_TEMPLATE_DIR)
+    if not src.is_dir():
+        logger.warning("swarm 模板目录 %s 不存在，跳过复制", src)
+        return
+    dst = _home_path(username) / ".jiuwenswarm"
+    try:
+        shutil.copytree(str(src), str(dst), symlinks=False, dirs_exist_ok=True)
+    except Exception:
+        logger.exception("复制 .jiuwenswarm 模板到用户 %s 失败", username)
+        shutil.rmtree(str(dst), ignore_errors=True)
+        raise
+
+
+def _chown_home(username: str) -> None:
+    """递归地将用户家目录的所有权设为 uid=1000, gid=1000。"""
+    path = _home_path(username)
+    for dirpath, _, filenames in os.walk(str(path)):
+        os.chown(dirpath, 1000, 1000)
+        for fn in filenames:
+            os.chown(os.path.join(dirpath, fn), 1000, 1000)
 
 
 def _remove_home(username: str) -> None:
@@ -148,9 +172,10 @@ class LocalUsersBackend(AbstractUserBackend):
             session.add(admin)
             await session.commit()
             try:
-                _create_home(settings.AGENTOS_ADMIN_USERNAME)
-            except ValueError as e:
-                logger.warning("Failed to create home directory for admin user: %s", e)
+                _ensure_home(settings.AGENTOS_ADMIN_USERNAME)
+                _chown_home(settings.AGENTOS_ADMIN_USERNAME)
+            except OSError:
+                logger.warning("Failed to create home directory for admin user", exc_info=True)
 
     # ── Authentication ──────────────────────────────────────────────
 
@@ -221,11 +246,14 @@ class LocalUsersBackend(AbstractUserBackend):
             if existing:
                 raise ValueError("USERNAME_ALREADY_EXISTS")
             try:
-                _create_home(username)
-            except ValueError as e:
-                if "HOME_ALREADY_EXISTS" in str(e):
-                    raise ValueError("HOME_ALREADY_EXISTS") from e
-                raise
+                _ensure_home(username)
+            except OSError as e:
+                raise ValueError("HOME_CREATE_FAILED") from e
+            try:
+                _create_jwswarm_config(username)
+            except Exception as e:
+                raise ValueError("SWARM_CONFIG_FAILED") from e
+            _chown_home(username)
 
             generated = None
             if password is None:

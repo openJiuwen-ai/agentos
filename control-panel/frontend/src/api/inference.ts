@@ -93,6 +93,11 @@ export interface CreateApiKeyResponse {
 
 // ==================== API 函数 ====================
 
+/** 获取 Gateway 配置 */
+export async function fetchGatewayConfig() {
+  return get<{ gateway_url: string }>('/api/v1/maas/config');
+}
+
 /** 获取模型列表 */
 export async function fetchModelList(params?: { status?: string; keyword?: string }) {
   return get<ModelListResponse>('/api/v1/litellm/model', params);
@@ -221,6 +226,7 @@ export async function fetchUsageByModel(params: {
 export interface UserUsageRankResponse {
   items: Array<{
     user_id: string;
+    username?: string | null;
     tokens: number;
     requests: number;
     cost: number;

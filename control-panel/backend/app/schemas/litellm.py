@@ -237,6 +237,7 @@ class UserUsageItem(BaseModel):
     """用户用量项"""
 
     user_id: str
+    username: str | None = None
     tokens: int = 0
     requests: int = 0
     cost: float = 0.0

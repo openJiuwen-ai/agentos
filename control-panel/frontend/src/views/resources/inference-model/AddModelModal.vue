@@ -15,10 +15,7 @@ import { ArrowDown } from '@element-plus/icons-vue';
 
 interface ModelFormData {
   name: string;
-  type: string;
   contextLength: number | null;
-  paramSize: string;
-  tags: string;
   description: string;
   deployName: string;
   deployFramework: string;
@@ -38,10 +35,7 @@ const emit = defineEmits<{
 
 const defaultFormData: ModelFormData = {
   name: '',
-  type: 'chat',
   contextLength: null,
-  paramSize: '',
-  tags: '',
   description: '',
   deployName: '',
   deployFramework: 'vLLM',
@@ -89,12 +83,6 @@ function handleSave() {
         <ElFormItem label="模型名称" required class="form-grid__item">
           <ElInput v-model="formData.name" placeholder="请输入模型名称" />
         </ElFormItem>
-        <ElFormItem label="模型类型" class="form-grid__item">
-          <ElSelect v-model="formData.type" placeholder="请选择模型类型">
-            <ElOption label="chat" value="chat" />
-            <ElOption label="completion" value="completion" />
-          </ElSelect>
-        </ElFormItem>
         <ElFormItem label="上下文长度" class="form-grid__item">
           <ElInputNumber
             v-model="formData.contextLength"
@@ -107,19 +95,14 @@ function handleSave() {
             class="form-field"
           />
         </ElFormItem>
-        <ElFormItem label="模型参数量" class="form-grid__item">
-          <ElInput v-model="formData.paramSize" placeholder="例如 72B" />
-        </ElFormItem>
-        <ElFormItem label="分类标签" class="form-grid__item form-grid__item--full">
-          <ElInput v-model="formData.tags" placeholder="W8A8" />
-          <span class="form-hint">多个标签用逗号分割</span>
-        </ElFormItem>
         <ElFormItem label="模型描述" class="form-grid__item form-grid__item--full">
           <ElInput
             v-model="formData.description"
             type="textarea"
             :rows="4"
             resize="vertical"
+            maxlength="500"
+            show-word-limit
             placeholder="简要描述该模型的用途和特点..."
           />
         </ElFormItem>
@@ -162,7 +145,8 @@ function handleSave() {
           <span class="form-hint">OpenAI 兼容推理引擎通常为 http://IP:端口/v1</span>
         </ElFormItem>
         <ElFormItem label="模型监控 URL" class="form-grid__item form-grid__item--full">
-          <ElInput v-model="formData.metricsUrl" placeholder="请输入模型监控 URL" />
+          <ElInput v-model="formData.metricsUrl" placeholder="例如: http://192.168.1.10:8000" />
+          <span class="form-hint">推理引擎的访问地址（含端口），用于 VictoriaMetrics 抓取监控指标</span>
         </ElFormItem>
       </ElForm>
     </div>

@@ -28,7 +28,7 @@ def _mock_agent_metrics_sync(monkeypatch: pytest.MonkeyPatch):
         }
 
     async def fake_update(
-        model_name, local, instance_url, inference_engine=None,
+        db, model_name, local, instance_url, inference_engine=None,
     ):
         effective_url = instance_url or (local.instance_url if local else None)
         if not effective_url:

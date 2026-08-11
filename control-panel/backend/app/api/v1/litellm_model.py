@@ -9,8 +9,10 @@ import logging
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_session
 from app.litellm_deps import get_litellm_svc
 from app.iam.deps import get_current_user, require_admin, TokenData
@@ -38,6 +40,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/litellm/model", tags=["模型管理"])
 
 
+def _mask_model_for_user(data: dict | None, is_admin: bool) -> dict | None:
+    """非管理员脱敏：用 LiteLLM 网关地址替换真实 api_base，移除 api_key。"""
+    if data is None or is_admin:
+        return data
+    masked = dict(data)
+    params = dict(masked.get("litellm_params") or {})
+    params["api_base"] = settings.LITELLM_ADMIN_URL or ""
+    params.pop("api_key", None)
+    masked["litellm_params"] = params
+    return masked
+
+
 @dataclass
 class ListModelsQuery:
     """模型列表查询参数。"""
@@ -61,7 +75,7 @@ async def list_models(
     query: ListModelsQuery = Depends(),
     db: AsyncSession = Depends(get_session),
     svc: LitellmService = Depends(get_litellm_svc),
-    _current_user: TokenData = Depends(get_current_user),
+    current_user: TokenData = Depends(get_current_user),
 ):
     try:
         data = await svc.list_models(
@@ -74,6 +88,8 @@ async def list_models(
         raise HTTPException(status_code=502, detail=str(e)) from e
     except LitellmUpstreamError as e:
         raise HTTPException(status_code=502, detail=e.detail) from e
+    is_admin = current_user.role == "admin"
+    data["items"] = [_mask_model_for_user(it, is_admin) for it in data.get("items", [])]
     return ApiResponse(data=data)
 
 
@@ -87,7 +103,7 @@ async def get_model(
     model_id: str,
     db: AsyncSession = Depends(get_session),
     svc: LitellmService = Depends(get_litellm_svc),
-    _current_user: TokenData = Depends(get_current_user),
+    current_user: TokenData = Depends(get_current_user),
 ):
     try:
         data = await svc.get_model(db, model_id)
@@ -97,7 +113,7 @@ async def get_model(
         raise HTTPException(status_code=502, detail=e.detail) from e
     if data is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    return ApiResponse(data=data)
+    return ApiResponse(data=_mask_model_for_user(data, current_user.role == "admin"))
 
 
 @router.post(
@@ -194,3 +210,24 @@ async def delete_model(
         raise HTTPException(status_code=502, detail=str(e)) from e
     except LitellmUpstreamError as e:
         raise HTTPException(status_code=502, detail=e.detail) from e
+
+
+config_router = APIRouter(prefix="/api/v1/maas", tags=["MaaS 配置"])
+
+
+class GatewayConfig(BaseModel):
+    gateway_url: str
+
+
+@config_router.get(
+    "/config",
+    response_model=ApiResponse[GatewayConfig],
+    summary="获取 Gateway 配置",
+    description="返回 MASS Gateway 访问地址，用于用户推理请求接口，所有登录用户申请API-Key后可访问。",
+)
+async def get_config(
+    _current_user: TokenData = Depends(get_current_user),
+):
+    return ApiResponse(data=GatewayConfig(
+        gateway_url=settings.LITELLM_ADMIN_URL,
+    ))

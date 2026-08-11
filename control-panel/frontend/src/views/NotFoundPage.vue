@@ -5,7 +5,7 @@ import { findDefaultLandingRouteName } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
-const { isAdmin, isLoggedIn } = useAuth();
+const { effectiveIsAdmin: isAdmin, isLoggedIn } = useAuth();
 
 function goHome() {
   if (isLoggedIn.value) {

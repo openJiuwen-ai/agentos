@@ -11,10 +11,10 @@ const props = defineProps<{
 
 const route = useRoute();
 const router = useRouter();
-const { isAdmin } = useAuth();
+const { effectiveIsAdmin } = useAuth();
 
 const visibleMenus = computed(() =>
-  isAdmin.value
+  effectiveIsAdmin.value
     ? props.menus
     : props.menus
         .filter((m) => !m.adminOnly)

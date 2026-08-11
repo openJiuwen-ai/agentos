@@ -5,10 +5,17 @@ const refreshToken = ref(localStorage.getItem('refresh_token') || '');
 const username = ref(localStorage.getItem('username') || '');
 const userId = ref(localStorage.getItem('user_id') || '');
 const role = ref(localStorage.getItem('role') || 'user');
+const workspace = ref<'admin' | 'user'>(localStorage.getItem('workspace') === 'user' ? 'user' : 'admin');
 
 export function useAuth() {
   const isAdmin = computed(() => role.value === 'admin');
+  const effectiveIsAdmin = computed(() => isAdmin.value && workspace.value !== 'user');
   const isLoggedIn = computed(() => !!accessToken.value);
+
+  function setWorkspace(mode: 'admin' | 'user') {
+    workspace.value = mode;
+    localStorage.setItem('workspace', mode);
+  }
 
   function storeAuth(auth: {
     access_token: string;
@@ -22,12 +29,14 @@ export function useAuth() {
     userId.value = auth.user_id;
     username.value = auth.username;
     role.value = auth.role;
+    workspace.value = 'admin';
 
     localStorage.setItem('access_token', auth.access_token);
     localStorage.setItem('refresh_token', auth.refresh_token);
     localStorage.setItem('user_id', auth.user_id);
     localStorage.setItem('username', auth.username);
     localStorage.setItem('role', auth.role);
+    localStorage.setItem('workspace', 'admin');
   }
 
   function clearAuth() {
@@ -43,6 +52,7 @@ export function useAuth() {
     localStorage.removeItem('username');
     localStorage.removeItem('role');
     localStorage.removeItem('workspace');
+    workspace.value = 'admin';
   }
 
   return {
@@ -51,9 +61,12 @@ export function useAuth() {
     userId,
     username,
     role,
+    workspace,
     isAdmin,
+    effectiveIsAdmin,
     isLoggedIn,
     storeAuth,
+    setWorkspace,
     clearAuth,
   };
 }

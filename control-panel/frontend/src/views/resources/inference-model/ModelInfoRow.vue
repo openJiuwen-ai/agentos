@@ -9,8 +9,15 @@ defineProps<{
 <template>
   <div class="info-row" :style="span === 'full' ? 'grid-column: span 2' : undefined">
     <span class="info-row__label">{{ label }}</span>
-    <span class="info-row__value">
+    <span class="info-row__value" :class="{ 'info-row__value--wrap': span === 'full' }">
       <slot>{{ value ?? '--' }}</slot>
     </span>
   </div>
 </template>
+
+<style scoped>
+.info-row__value--wrap {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+</style>
