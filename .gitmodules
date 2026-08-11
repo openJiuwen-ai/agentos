@@ -4,9 +4,6 @@
 [submodule "jiuwenswarm"]
 	path = jiuwenswarm
 	url = https://gitcode.com/openJiuwen/jiuwenswarm.git
-[submodule "skill-store"]
-	path = skill-store
-	url = https://gitcode.com/openJiuwen/agent-store.git
 [submodule "Conch"]
 	path = Conch
 	url = https://gitcode.com/openeuler/Conch.git

@@ -6,7 +6,6 @@ AgentOS 仓库通过 Git Submodule 引入以下依赖，均位于仓库根目录
 |------|------|----------|
 | `yuanrong/` | [openeuler/yuanrong](https://gitcode.com/openeuler/yuanrong) | `v0.8.0` |
 | `jiuwenswarm/` | [openJiuwen/jiuwenswarm](https://gitcode.com/openJiuwen/jiuwenswarm) | `JiuwenSwarm0.2.2` |
-| `skill-store/` | [openJiuwen/agent-store](https://gitcode.com/openJiuwen/agent-store) | 主仓库记录的 commit |
 | `Conch/` | [openeuler/Conch](https://gitcode.com/openeuler/Conch) | 主仓库记录的 commit |
 | `agent-protocol/` | [openJiuwen/agent-protocol](https://gitcode.com/openJiuwen/agent-protocol) | `feature/Agentregistry-dev` 分支记录的 commit |
 
