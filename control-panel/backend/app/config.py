@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # ── Home directories ──
     AGENTOS_HOME_BASE: str = "/home/agentos/users"
-    AGENTOS_SWARM_TEMPLATE_DIR: str = "/root/.jiuwenswarm"
+    AGENTOS_SWARM_TEMPLATE_DIR: str = "/home/agentos/jiuwenswarm_template"
 
     # ── Logging ──
     LOG_DIR: str = "/home/agentos/logs"
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     LOG_BACKUP_COUNT: int = 5
 
     # ── Log Center ──
-    LOG_EXPORT_PATH: str = "/var/log/agentos"
+    LOG_EXPORT_PATH: str = "/var/log/agentos_exports"
     LOG_INITIAL_TAIL_LINES: int = 100
     LOG_MAX_LINE_LENGTH: int = 10000
     LOG_MAX_FILES_PER_WS: int = 5
@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     LOG_EXPORT_RETENTION_DAYS: int = 7
     LOG_EXPORT_CLEANUP_HOUR: int = 3
     LOG_EXPORT_MAX_SIZE_BYTES: int = 536_870_912  # 512 MB
+
+    # ── Loki ──
+    LOKI_BASE_URL: str = "http://loki:8096"
     # ── Thirdparty Agents ──
     AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB

@@ -13,6 +13,7 @@ from app.api.v1.litellm_model import router as litellm_router, config_router as 
 from app.api.v1.litellm_usage import router as litellm_usage_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.logs_ws import ws_router as logs_ws_router
+from app.api.v1.log_loki import router as log_loki_router
 from app.api.v1.users import router as users_router
 from app.api.v1.hardware import router as hardware_router
 from app.core.logging import setup_file_logging
@@ -136,6 +137,7 @@ app.include_router(litellm_usage_router)
 app.include_router(hardware_router)
 app.include_router(logs_router)
 app.include_router(logs_ws_router)
+app.include_router(log_loki_router)
 app.include_router(thirdparty_agent_router)
 
 

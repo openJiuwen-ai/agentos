@@ -7,18 +7,29 @@ import {
   ElTableColumn,
   ElDrawer,
   ElMessage,
+  ElBreadcrumb,
+  ElBreadcrumbItem,
 } from "element-plus";
-import { Monitor, Download } from "@element-plus/icons-vue";
+import { Monitor, Download, Search } from "@element-plus/icons-vue";
 import {
   createArchive,
   type FileEntry,
 } from "@/api/logs";
 import { useLogs } from "@/composables/useLogs";
+import jiuwenswarmIcon from "@/assets/images/log-center/jiuwen.png";
 import vllmIcon from "@/assets/images/log-center/vllm.png";
 import controlPanelIcon from "@/assets/images/log-center/control_panel.png";
-import jiuwenIcon from "@/assets/images/log-center/jiuwen.png";
-import yuanrongIcon from "@/assets/images/log-center/yuanrong.png";
-import tongtuIcon from "@/assets/images/log-center/tongtu.png";
+
+
+const categoryIcons: Record<string, string> = {
+  vllm: vllmIcon,
+  control_panel: controlPanelIcon,
+  jiuwenswarm: jiuwenswarmIcon,
+  "agent-runtime": jiuwenswarmIcon,
+  "agent-gateway": jiuwenswarmIcon,
+  "agent-registry": jiuwenswarmIcon,
+  jiuwenbox: jiuwenswarmIcon,
+};
 
 const router = useRouter();
 
@@ -31,14 +42,6 @@ const {
   fetchComponentFiles,
 } = useLogs();
 
-const CATEGORY_ICONS: Record<string, string> = {
-  vllm: vllmIcon,
-  control_panel: controlPanelIcon,
-  jiuwen: jiuwenIcon,
-  yuanrong: yuanrongIcon,
-  tongtu: tongtuIcon,
-};
-
 const activeCategoryKey = ref<string>("");
 const activeCategoryLabel = computed(() => {
   const cat = categories.value.find((c) => c.key === activeCategoryKey.value);
@@ -47,32 +50,71 @@ const activeCategoryLabel = computed(() => {
 const showComponentDrawer = ref(false);
 const selectedComponent = ref<{ id: string; name: string } | null>(null);
 
+const MAX_DEPTH = 5;
+const currentPathStack = ref<{ name: string; path: string }[]>([]);
+const currentDepth = computed(() => currentPathStack.value.length + 1);
+const currentSubpath = computed(() =>
+  currentPathStack.value.map((s) => s.name).join("/"),
+);
+
+async function loadCurrentFiles() {
+  if (!selectedComponent.value) return;
+  fileEntries.value = [];
+  fileEntriesLoading.value = true;
+  try {
+    await fetchComponentFiles(
+      selectedComponent.value.id,
+      currentSubpath.value || undefined,
+    );
+  } catch {
+    ElMessage.error("读取目录失败");
+  } finally {
+    fileEntriesLoading.value = false;
+  }
+}
+
+function navigateToDir(row: FileEntry) {
+  if (currentDepth.value >= MAX_DEPTH) {
+    ElMessage.warning(`已达到最大目录深度（${MAX_DEPTH} 级）`);
+    return;
+  }
+  currentPathStack.value.push({ name: row.name, path: row.path });
+  loadCurrentFiles();
+}
+
+function navigateToBreadcrumb(index: number) {
+  if (index < 0) {
+    currentPathStack.value = [];
+  } else {
+    currentPathStack.value = currentPathStack.value.slice(0, index + 1);
+  }
+  loadCurrentFiles();
+}
+
 async function onCategoryClick(key: string) {
   const cat = categories.value.find((c) => c.key === key);
   if (!cat || !cat.component_id) return;
   activeCategoryKey.value = key;
   showComponentDrawer.value = true;
   selectedComponent.value = { id: cat.component_id, name: cat.label };
-  fileEntries.value = [];
-  try {
-    await fetchComponentFiles(cat.component_id);
-  } catch {
-    ElMessage.error("读取目录失败");
-  }
+  currentPathStack.value = [];
+  await loadCurrentFiles();
 }
 
 function onComponentDrawerClose() {
   activeCategoryKey.value = "";
   selectedComponent.value = null;
   fileEntries.value = [];
+  currentPathStack.value = [];
 }
 
 function openLiveLog(fileEntry: FileEntry) {
   router.push({
-    name: "log-live",
+    name: "log-explore",
     query: {
-      component_id: selectedComponent.value?.id,
-      name: fileEntry.name,
+      category: activeCategoryKey.value,
+      component_id: selectedComponent.value?.id || "",
+      file_path: fileEntry.path || fileEntry.name,
     },
   });
 }
@@ -122,7 +164,7 @@ async function handleArchiveDir(fileEntry: FileEntry) {
 }
 
 function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "—";
+  if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + units[i];
@@ -159,12 +201,10 @@ onMounted(() => fetchCategories());
       >
         <div class="category-card__icon">
           <img
-            v-if="CATEGORY_ICONS[cat.key]"
-            :src="CATEGORY_ICONS[cat.key]"
+            :src="categoryIcons[cat.key] || controlPanelIcon"
             :alt="cat.label"
             class="category-card__icon-img"
           />
-          <span v-else class="category-card__icon-fallback">📄</span>
         </div>
         <div class="category-card__info">
           <div class="category-card__label">{{ cat.label }}</div>
@@ -191,14 +231,44 @@ onMounted(() => fetchCategories());
         </div>
       </template>
 
+      <div class="drawer-breadcrumb" v-if="currentPathStack.length > 0">
+        <el-breadcrumb separator="/">
+          <el-breadcrumb-item>
+            <a href="#" @click.prevent="navigateToBreadcrumb(-1)">
+              {{ activeCategoryLabel }}
+            </a>
+          </el-breadcrumb-item>
+          <el-breadcrumb-item
+            v-for="(seg, idx) in currentPathStack"
+            :key="idx"
+          >
+            <a
+              v-if="idx < currentPathStack.length - 1"
+              href="#"
+              @click.prevent="navigateToBreadcrumb(idx)"
+            >{{ seg.name }}</a>
+            <span v-else>{{ seg.name }}</span>
+          </el-breadcrumb-item>
+        </el-breadcrumb>
+        <span class="breadcrumb-depth-hint">
+          {{ currentDepth }} / {{ MAX_DEPTH }} 级
+        </span>
+      </div>
+
       <el-table
         :data="fileEntries"
         v-loading="fileEntriesLoading"
         stripe
+        @row-click="(row: FileEntry) => row.is_dir && navigateToDir(row)"
       >
         <el-table-column label="文件名" min-width="180">
           <template #default="{ row }">
-            <span :class="{ 'entry-dir': row.is_dir, 'entry-file': !row.is_dir }">
+            <span
+              :class="{
+                'entry-dir': row.is_dir,
+                'entry-file': !row.is_dir,
+              }"
+            >
               {{ row.name }}
             </span>
           </template>
@@ -219,10 +289,10 @@ onMounted(() => fetchCategories());
               <el-button
                 type="primary"
                 link
-                :icon="Monitor"
+                :icon="Search"
                 size="small"
                 @click="openLiveLog(row)"
-              >实时日志</el-button>
+              >日志预览</el-button>
               <el-button
                 type="primary"
                 link
@@ -364,9 +434,26 @@ onMounted(() => fetchCategories());
 
 .entry-dir {
   font-weight: 600;
+  cursor: pointer;
+  color: var(--el-color-primary);
 }
 
 .entry-file {
   font-weight: 400;
+}
+
+.drawer-breadcrumb {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 0 4px;
+}
+
+.breadcrumb-depth-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  margin-left: 12px;
 }
 </style>

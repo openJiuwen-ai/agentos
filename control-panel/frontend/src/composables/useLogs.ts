@@ -70,10 +70,10 @@ export function useLogs() {
     }
   }
 
-  async function fetchComponentFiles(componentId: string) {
+  async function fetchComponentFiles(componentId: string, subpath?: string) {
     fileEntriesLoading.value = true;
     try {
-      fileEntries.value = await getComponentFiles(componentId);
+      fileEntries.value = await getComponentFiles(componentId, subpath);
     } finally {
       fileEntriesLoading.value = false;
     }

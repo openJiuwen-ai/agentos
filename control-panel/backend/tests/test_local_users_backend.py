@@ -295,12 +295,15 @@ async def test_jwswarm_config_copied_on_user_create(backend, test_data):
     await backend.create_user(username)
     jwswarm_dir = os.path.join(settings.AGENTOS_HOME_BASE, username, ".jiuwenswarm")
     assert os.path.isdir(jwswarm_dir)
-    assert os.path.isfile(os.path.join(jwswarm_dir, "config", "config.yaml"))
+    config_file = os.path.join(jwswarm_dir, "config", "config.yaml")
+    assert os.path.isfile(config_file)
+    content = Path(config_file).read_text(encoding="utf-8")
+    assert "models:" in content
 
 
 @pytest.mark.asyncio
 async def test_create_user_home_already_exists(backend, test_data):
-    """家目录已存在（如重装后重建同名用户）→ 仍然成功，.jiuwenswarm 被覆盖写入。"""
+    """家目录已存在（如重装后重建同名用户）→ 仍然成功，.jiuwenswarm 被覆盖写入，非模板文件保留。"""
     username = test_data["users"]["auto_password"][7]
     home = os.path.join(settings.AGENTOS_HOME_BASE, username)
     os.makedirs(home, exist_ok=True)
@@ -308,13 +311,19 @@ async def test_create_user_home_already_exists(backend, test_data):
     old_jwswarm = os.path.join(home, ".jiuwenswarm")
     os.makedirs(os.path.join(old_jwswarm, "config"), exist_ok=True)
     Path(old_jwswarm, "config", "config.yaml").write_text("old: true", encoding="utf-8")
+    # 模拟一个非模板的用户自定义文件，应保留
+    Path(old_jwswarm, "config", "user-extra.yaml").write_text("user: data", encoding="utf-8")
 
     await backend.create_user(username)
 
-    # .jiuwenswarm 应该已更新为模板内容
+    # .jiuwenswarm 中模板文件应已更新为模板内容
     new_content = Path(old_jwswarm, "config", "config.yaml").read_text(encoding="utf-8")
     assert "models:" in new_content
     assert "defaults" in new_content
+    # 非模板的用户自定义文件应保留
+    extra = Path(old_jwswarm, "config", "user-extra.yaml")
+    assert extra.is_file()
+    assert extra.read_text(encoding="utf-8") == "user: data"
 
 
 @pytest.mark.asyncio

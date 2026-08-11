@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -33,6 +34,7 @@ from app.services.log_export import (
     delete_export_task,
     _format_size,
 )
+from app.services.local_users.models import User
 from app.services.log_component import get_component_by_id as _db_get_component_by_id
 
 router = APIRouter(prefix="/api/v1/logs", tags=["日志中心"])
@@ -78,20 +80,24 @@ def _count_dir_entries(dir_path: str) -> int:
 )
 async def list_components(
     category: str | None = Query(None),
+    session: AsyncSession = Depends(get_session),
     _admin: TokenData = Depends(require_admin),
 ):
     config_components = get_components(category=category)
-    result = [
-        LogComponentRead(
+    result = []
+    for c in config_components:
+        if c.id == "jiuwenswarm":
+            size = (await session.execute(select(func.count()).select_from(User))).scalar() or 0
+        else:
+            size = _count_dir_entries(c.path)
+        result.append(LogComponentRead(
             id=c.id,
             category=c.category,
             name=c.name,
             log_path=c.path,
             description=c.description,
-            size=_count_dir_entries(c.path),
-        )
-        for c in config_components
-    ]
+            size=size,
+        ))
     return ApiResponse(data=result)
 
 
@@ -114,37 +120,81 @@ def _get_component_path(component_id: str, username: str = "") -> str | None:
 
 
 @router.get(
-    "/components/{component_id}/files",
-    summary="获取组件目录下的文件和子目录列表",
-    response_model=ApiResponse[list[FileEntry]],
+    "/components/{component_id}/resolve-path",
+    summary="根据组件和相对路径解析完整文件路径",
+    response_model=ApiResponse[dict],
 )
-async def list_component_files(
+async def resolve_file_path(
     component_id: str,
+    subpath: str = Query(...),
     admin: TokenData = Depends(require_admin),
 ):
     base_dir = _get_component_path(component_id, admin.username)
     if not base_dir:
         raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
 
+    if os.path.isfile(base_dir):
+        return ApiResponse(data={"resolved_path": os.path.realpath(base_dir)})
+
+    resolved = _resolve_safe_path(base_dir, subpath)
+    return ApiResponse(data={"resolved_path": resolved})
+
+
+@router.get(
+    "/components/{component_id}/files",
+    summary="获取组件目录下的文件和子目录列表（支持子目录导航，最多5级）",
+    response_model=ApiResponse[list[FileEntry]],
+)
+async def list_component_files(
+    component_id: str,
+    subpath: str = Query(""),
+    session: AsyncSession = Depends(get_session),
+    admin: TokenData = Depends(require_admin),
+):
+    base_dir = _get_component_path(component_id, admin.username)
+    if not base_dir:
+        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
+
+    target_dir = _resolve_safe_path(base_dir, subpath) if subpath else base_dir
+    if not os.path.isdir(target_dir):
+        if os.path.isfile(target_dir):
+            st = os.stat(target_dir)
+            entry = FileEntry(
+                name=os.path.basename(target_dir),
+                path="",
+                size=st.st_size,
+                modified=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                is_dir=False,
+            )
+            return ApiResponse(data=[entry])
+        return ApiResponse(data=[])
+
+    db_usernames: set[str] | None = None
+    if component_id == "jiuwenswarm" and not subpath:
+        result = await session.execute(select(User.username))
+        db_usernames = {row[0] for row in result.all()}
+
     entries: list[FileEntry] = []
     try:
-        with os.scandir(base_dir) as it:
+        with os.scandir(target_dir) as it:
             for entry in it:
                 try:
                     st = entry.stat()
                 except OSError:
                     continue
+                if db_usernames is not None:
+                    if not entry.is_dir() or entry.name not in db_usernames:
+                        continue
+                rel_path = os.path.relpath(entry.path, base_dir)
                 entries.append(FileEntry(
                     name=entry.name,
-                    path=entry.path,
+                    path=rel_path,
                     size=st.st_size if entry.is_file() else 0,
                     modified=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
                     is_dir=entry.is_dir(),
                 ))
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        raise HTTPException(status_code=500, detail="DIRECTORY_READ_ERROR") from e
+    except OSError:
+        return ApiResponse(data=[])
 
     entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
     return ApiResponse(data=entries)

@@ -4,8 +4,13 @@ Thin orchestration layer — delegates to ``iam.auth_service`` for logic and
 ``iam.deps`` for dependency injection.  Backend-agnostic.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_async_session
 from app.iam.auth_service import login, refresh_tokens, revoke_user_tokens
@@ -97,3 +102,54 @@ async def permissions_endpoint(
             "permissions": perms,
         },
     }
+
+
+def _parse_token_from_uri(uri: str) -> str:
+    """从 URI 的 query string 中提取 token 参数."""
+    if "?" not in uri:
+        return ""
+    query = uri.split("?", 1)[1]
+    parsed = parse_qs(query)
+    return parsed.get("token", [""])[0]
+
+
+@router.get("/proxy-verify")
+async def proxy_verify_endpoint(
+    request: Request
+):
+    """nginx auth_request 回查端点 — 从 Header / cookie 读取 JWT。
+
+    nginx 通过 ``auth_request /auth-proxy`` 调用此端点，并通过
+    ``proxy_set_header X-Original-URI $request_uri`` 传递原始请求 URI。
+    URI 中 token 只用一次（首次页面加载），之后走 cookie。
+    成功后从响应头 ``X-WEBAUTH-USER`` 获取用户名注入 Grafana 请求。
+    """
+    token = ""
+
+    original_uri = request.headers.get("X-Original-URI", "")
+    if original_uri:
+        token = _parse_token_from_uri(original_uri)
+        
+    if not token:
+        token = request.cookies.get("grafana_token", "")
+
+    if not token:
+        logger.warning("proxy-verify: no token in URI or cookie")
+        raise HTTPException(status_code=401, detail="未登录")
+
+    token_data = TokenService.verify_access_token(token)
+    if not token_data:
+        logger.warning("proxy-verify: token verify failed")
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+    if token_data.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可访问日志 Dashboard")
+
+    resp = Response(
+        status_code=200,
+        headers={
+            "X-WEBAUTH-USER": token_data.username,
+            "X-WEBAUTH-ROLE": token_data.role,
+            "Cache-Control": "no-store",
+        },
+    )
+    return resp

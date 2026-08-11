@@ -7,3 +7,4 @@
 **/.mypy_cache/
 **/node_modules/
 **/.venv/
+**/*.env

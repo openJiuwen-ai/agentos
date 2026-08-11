@@ -14,6 +14,7 @@ fi
 #   sudo bash deploy.sh install              # 安装（默认非交互，单机 master）
 #   sudo bash deploy.sh install -i           # 安装（交互式，可选 master/worker、多机监控）
 #   sudo bash deploy.sh install --role worker
+#   sudo bash deploy.sh install --role worker --master-ip 192.168.1.10
 #   sudo bash deploy.sh install --mode multi --workers 192.168.1.11,192.168.1.12
 #   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
 #   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷、.env 和安装目录）
@@ -33,6 +34,11 @@ NE_BINARY="/usr/bin/node_exporter"
 NPU_BINARY="/usr/local/bin/npu-exporter"
 NPU_RUN_USER="hwMindX"
 NPU_RUN_GROUP="hwMindX"
+ALLOY_DIR="${DEPLOY_DIR}/alloy"
+ALLOY_CONTAINER="agentos-alloy"
+ALLOY_IMAGE="grafana/alloy:v1.18.1"
+ALLOY_DATA_HOST="/opt/agentos/alloy-data"
+ALLOY_CONFIG_HOST="/opt/agentos/config.alloy"
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────
 
@@ -366,19 +372,24 @@ _resolve_worker_nodes_for_master() {
 
 _init_env_worker_noninteractive() {
     local env_file="$1"
-    local detected_ip ne_host npu_host
+    local detected_ip ne_host npu_host master_ip
 
     detected_ip=$(detect_host_ip)
     ne_host="${NODE_EXPORTER_HOST:-$detected_ip}"
     npu_host="${NPU_EXPORTER_HOST:-$detected_ip}"
+    master_ip="${MASTER_IP:-}"
 
     sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$ne_host")/" "$env_file"
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$npu_host")/" "$env_file"
+    if [ -n "$master_ip" ]; then
+        sed -i "s/^MASTER_IP=.*/MASTER_IP=$(sed_escape "$master_ip")/" "$env_file"
+    fi
     _set_worker_nodes_json "$env_file" "[]"
 
     log "  worker 非交互模式："
     log "  NODE_EXPORTER_HOST = ${ne_host}"
     log "  NPU_EXPORTER_HOST  = ${npu_host}"
+    [ -n "$master_ip" ] && log "  MASTER_IP          = ${master_ip}"
 }
 
 _init_env_worker_interactive() {
@@ -386,7 +397,7 @@ _init_env_worker_interactive() {
 
     detected_ip=$(detect_host_ip)
     echo ""
-    log "  worker 节点：仅需配置本机 exporter 地址"
+    log "  worker 节点：需配置本机 exporter 地址及 master IP"
     echo ""
 
     val=$(read_ip "NODE_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
@@ -396,6 +407,15 @@ _init_env_worker_interactive() {
     val=$(read_ip "NPU_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
     log "  NPU_EXPORTER_HOST = ${val}"
+
+    echo ""
+    val=$(read_ip "MASTER_IP (master 节点 IP，用于 Alloy 日志上报) []: " "")
+    if [ -n "$val" ]; then
+        sed -i "s/^MASTER_IP=.*/MASTER_IP=$(sed_escape "$val")/" "$env_file"
+        log "  MASTER_IP = ${val}"
+    else
+        log "  MASTER_IP = (未设置，Alloy 日志上报需手动配置)"
+    fi
 
     _set_worker_nodes_json "$env_file" "[]"
 }
@@ -454,6 +474,7 @@ init_env() {
         if [ "$INTERACTIVE" -eq 1 ]; then
             _init_env_worker_interactive "$env_file"
         else
+            [ -n "$INSTALL_MASTER_IP" ] && export MASTER_IP="$INSTALL_MASTER_IP"
             _init_env_worker_noninteractive "$env_file"
         fi
     elif [ "$INTERACTIVE" -eq 1 ]; then
@@ -639,6 +660,8 @@ for svc in data.get('services', {}).values():
             "ghcr.io/berriai/litellm-database:v1.91.1"
             "victoriametrics/victoria-metrics:v1.135.0"
             "grafana/grafana:12.4.2"
+            "grafana/loki:3.6.0"
+            "grafana/alloy:v1.18.1"
         )
         for img in "${fallback_images[@]}"; do
             if ! docker image inspect "$img" &>/dev/null; then
@@ -868,27 +891,104 @@ uninstall_npu_exporter() {
     systemctl daemon-reload 2>/dev/null || true
 }
 
+# ── alloy 安装/卸载（仅 worker 节点；master 由 docker compose 管理）──────────────
+
+install_alloy() {
+    is_worker || { log "  master 节点：Alloy 由 docker compose 管理，跳过独立安装"; return; }
+
+    local cfg="${ALLOY_DIR}/config.alloy"
+    [ -f "$cfg" ] || { log "  WARNING: ${cfg} 不存在，跳过 Alloy 安装"; return 1; }
+    command -v docker &>/dev/null || fail "Alloy 安装需要 Docker"
+
+    local loki_endpoint master_ip
+    master_ip=$(env_default MASTER_IP "")
+    if [ -n "$master_ip" ]; then
+        loki_endpoint=$(env_default ALLOY_LOKI_ENDPOINT "http://${master_ip}:8096/loki/api/v1/push")
+    else
+        loki_endpoint=$(env_default ALLOY_LOKI_ENDPOINT "http://loki:8096/loki/api/v1/push")
+    fi
+
+    # 如果已有容器在运行，先停止
+    if docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
+        docker stop "$ALLOY_CONTAINER" 2>/dev/null || true
+        docker rm "$ALLOY_CONTAINER" 2>/dev/null || true
+    fi
+
+    mkdir -p "$ALLOY_DATA_HOST"
+
+    # 生成 worker 端 config.alloy（替换 Loki endpoint）
+    sed "s|http://loki:8096/loki/api/v1/push|$(sed_escape "$loki_endpoint")|g" \
+        "$cfg" > "$ALLOY_CONFIG_HOST"
+    log "  Alloy 配置已生成: ${ALLOY_CONFIG_HOST} (loki: ${loki_endpoint})"
+
+    # 检测/拉取镜像
+    if docker image inspect "$ALLOY_IMAGE" &>/dev/null; then
+        log "  Alloy 镜像已存在: ${ALLOY_IMAGE}"
+    else
+        log "  拉取 Alloy 镜像 ${ALLOY_IMAGE} ..."
+        docker pull "$ALLOY_IMAGE" || fail "Alloy 镜像拉取失败: ${ALLOY_IMAGE}"
+    fi
+
+    # 创建容器（不启动，由 do_up 统一管理）
+    docker create \
+        --name "$ALLOY_CONTAINER" \
+        --restart unless-stopped \
+        --network host \
+        -v "${ALLOY_CONFIG_HOST}:/etc/alloy/config.alloy:ro" \
+        -v "${ALLOY_DATA_HOST}:/etc/alloy/data" \
+        -v /root/.jiuwenswarm/agent/.logs:/var/log/agentos:ro \
+        -v /home/agentos:/home/agentos:ro \
+        -v /tmp/yr_sessions:/tmp/yr_sessions:ro \
+        -v /tmp/jiuwenbox:/tmp/jiuwenbox:ro \
+        "$ALLOY_IMAGE" \
+        run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/etc/alloy/data /etc/alloy/config.alloy \
+        2>/dev/null || fail "Alloy 容器创建失败"
+
+    log "  Alloy 容器已创建"
+}
+
+uninstall_alloy() {
+    if ! docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
+        log "  跳过：Alloy 容器不存在"
+        return
+    fi
+
+    docker stop "$ALLOY_CONTAINER" 2>/dev/null || true
+    docker rm "$ALLOY_CONTAINER" 2>/dev/null || true
+    log "  已移除 Alloy 容器"
+
+    if [ "$CLEAN" -eq 1 ]; then
+        [ -f "$ALLOY_CONFIG_HOST" ] && rm -f "$ALLOY_CONFIG_HOST" && log "  已删除 ${ALLOY_CONFIG_HOST}"
+        [ -d "$ALLOY_DATA_HOST" ] && rm -rf "$ALLOY_DATA_HOST" && log "  已删除 ${ALLOY_DATA_HOST}"
+    else
+        log "  保留 ${ALLOY_CONFIG_HOST} 和 ${ALLOY_DATA_HOST}（使用 --clean 彻底删除）"
+    fi
+}
+
 # ── install ─────────────────────────────────────────────────────────────────
 
 do_install() {
     need_root
     log "========== install =========="
 
-    log "[1/4] 初始化 .env"
+    log "[1/5] 初始化 .env"
     init_env
     load_env
 
-    log "[2/4] 安装 node_exporter"
+    log "[2/5] 安装 node_exporter"
     install_node_exporter || true
 
-    log "[3/4] 安装 npu_exporter"
+    log "[3/5] 安装 npu_exporter"
     install_npu_exporter || true
 
+    log "[4/5] 安装 Alloy"
+    install_alloy || true
+
     if is_master; then
-        log "[4/4] 拉取 Docker 镜像"
+        log "[5/5] 拉取 Docker 镜像"
         pull_images
     else
-        log "[4/4] worker 节点跳过 Docker 镜像拉取"
+        log "[5/5] worker 节点跳过 Docker 镜像拉取"
     fi
 
     log "install 完成。"
@@ -907,7 +1007,7 @@ do_uninstall() {
     log "========== uninstall =========="
 
     if is_master; then
-        log "[1/3] 停止 Docker 服务"
+        log "[1/4] 停止 Docker 服务"
         cd "$DEPLOY_DIR"
         if [ "$CLEAN" -eq 1 ]; then
             docker compose down -v || true
@@ -917,13 +1017,16 @@ do_uninstall() {
             log "  已停止（数据卷保留）"
         fi
     else
-        log "[1/3] worker 节点跳过 Docker 服务"
+        log "[1/4] worker 节点跳过 Docker 服务"
     fi
 
-    log "[2/3] 注销 node_exporter"
+    log "[2/4] 注销 Alloy"
+    uninstall_alloy
+
+    log "[3/4] 注销 node_exporter"
     uninstall_node_exporter
 
-    log "[3/3] 注销 npu_exporter"
+    log "[4/4] 注销 npu_exporter"
     uninstall_npu_exporter
 
     if [ "$CLEAN" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
@@ -1068,7 +1171,19 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[4/5] 生成 hardware-metrics.json"
+    log "[4/6] 启动 Alloy"
+    if is_worker; then
+        if docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
+            docker start "$ALLOY_CONTAINER" 2>/dev/null || true
+            log "  Alloy: started"
+        else
+            log "  WARNING: Alloy 容器不存在，请先执行: sudo bash $0 install"
+        fi
+    else
+        log "  master 节点：Alloy 由 docker compose 管理"
+    fi
+
+    log "[5/6] 生成 hardware-metrics.json"
     if is_master; then
         sync_worker_nodes_env
         generate_hardware_metrics_json
@@ -1076,7 +1191,7 @@ do_up() {
         log "  跳过：worker 节点无需生成"
     fi
 
-    log "[5/5] 启动 Docker 服务"
+    log "[6/6] 启动 Docker 服务"
     if is_master; then
         cd "$DEPLOY_DIR"
         docker compose up -d
@@ -1098,7 +1213,7 @@ do_down() {
     need_install_dir
     log "========== down =========="
 
-    log "[1/3] 停止 Docker 服务"
+    log "[1/4] 停止 Docker 服务"
     if is_master; then
         cd "$DEPLOY_DIR"
         docker compose down
@@ -1106,11 +1221,19 @@ do_down() {
         log "  worker 节点跳过 Docker 服务"
     fi
 
-    log "[2/3] 停止 node_exporter"
+    log "[2/4] 停止 Alloy"
+    if is_worker; then
+        docker stop "$ALLOY_CONTAINER" 2>/dev/null || true
+        log "  Alloy: stopped"
+    else
+        log "  master 节点：Alloy 由 docker compose 管理"
+    fi
+
+    log "[3/4] 停止 node_exporter"
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     log "  node_exporter: stopped"
 
-    log "[3/3] 停止 npu_exporter"
+    log "[4/4] 停止 npu_exporter"
     systemctl stop "$NPU_TIMER" 2>/dev/null || true
     systemctl stop "$NPU_SERVICE" 2>/dev/null || true
     log "  npu_exporter: stopped"
@@ -1127,48 +1250,6 @@ do_restart() {
 }
 
 # ── status ──────────────────────────────────────────────────────────────────
-
-_check_remote_workers() {
-    local json ne_port ne_host
-    json=$(read_worker_nodes_json)
-    ne_port=$(env_default NODE_EXPORTER_PORT 8091)
-    ne_host=$(resolve_master_exporter_host)
-    json=$(sanitize_worker_nodes_json "$ne_host" "$json")
-    [ "$json" = "[]" ] && return
-    [ -z "$json" ] && return
-
-    echo ""
-    log "--- 远程从节点 exporter ---"
-
-    WORKER_NODES_JSON="$json" NE_PORT="$ne_port" python3 <<'PY'
-import json
-import os
-import subprocess
-
-nodes = json.loads(os.environ.get("WORKER_NODES_JSON", "[]") or "[]")
-ne_port = os.environ.get("NE_PORT", "8091")
-for node in nodes:
-    if not isinstance(node, str):
-        continue
-    host = node.strip()
-    if not host:
-        continue
-    url = f"http://{host}:{ne_port}/metrics"
-    try:
-        result = subprocess.run(
-            ["curl", "-sf", url],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-        ok = result.returncode == 0
-    except Exception:
-        ok = False
-    mark = "OK" if ok else "--"
-    print(f"  [{mark}]   worker node_exporter ({host}:{ne_port})")
-PY
-}
-
 do_status() {
     need_install_dir
     load_env
@@ -1239,7 +1320,9 @@ do_status() {
         && _check "grafana          (:${grafana_port})" 1 \
         || _check "grafana          (:${grafana_port})" 0
 
-    _check_remote_workers
+    curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:12345/ready" &>/dev/null \
+        && _check "alloy            (127.0.0.1:12345)" 1 \
+        || _check "alloy            (127.0.0.1:12345)" 0
 
     unset -f _check
     echo ""
@@ -1249,8 +1332,8 @@ do_status() {
 
 validate_install_cli() {
     if [ "$INTERACTIVE" -eq 1 ]; then
-        if [ -n "$INSTALL_ROLE_CLI" ] || [ -n "$INSTALL_MODE" ] || [ -n "$INSTALL_WORKERS" ]; then
-            fail "交互模式 (-i) 与 --role / --mode / --workers 不能同时使用"
+        if [ -n "$INSTALL_ROLE_CLI" ] || [ -n "$INSTALL_MODE" ] || [ -n "$INSTALL_WORKERS" ] || [ -n "$INSTALL_MASTER_IP" ]; then
+            fail "交互模式 (-i) 与 --role / --mode / --workers / --master-ip 不能同时使用"
         fi
         return
     fi
@@ -1272,6 +1355,15 @@ validate_install_cli() {
     local role="${INSTALL_ROLE_CLI:-master}"
     if [ "$role" = "worker" ] && { [ -n "$INSTALL_MODE" ] || [ -n "$INSTALL_WORKERS" ]; }; then
         fail "worker 节点不支持 --mode 或 --workers"
+    fi
+
+    if [ -n "$INSTALL_MASTER_IP" ]; then
+        {
+            valid_ipv4 "$INSTALL_MASTER_IP" && [ "$INSTALL_MASTER_IP" != "localhost" ]
+        } || fail "--master-ip 必须是有效的 IPv4 地址"
+        if [ "${INSTALL_ROLE_CLI:-master}" != "worker" ]; then
+            fail "--master-ip 仅能与 --role worker 一起使用"
+        fi
     fi
 
     if [ -n "$INSTALL_WORKERS" ] && [ -z "$INSTALL_MODE" ]; then
@@ -1297,6 +1389,7 @@ CLEAN=0
 INSTALL_ROLE_CLI=""
 INSTALL_MODE=""
 INSTALL_WORKERS=""
+INSTALL_MASTER_IP=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1323,6 +1416,11 @@ while [ $# -gt 0 ]; do
             INSTALL_WORKERS="$2"
             shift 2
             ;;
+        --master-ip)
+            [ -n "${2:-}" ] || fail "--master-ip 需要 master 节点 IP 地址"
+            INSTALL_MASTER_IP="$2"
+            shift 2
+            ;;
         *)
             fail "未知参数: $1"
             ;;
@@ -1342,6 +1440,7 @@ if [ "$ACTION" = "install" ] && [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
     DEPLOY_DIR="$INSTALL_DIR"
     NE_DIR="${DEPLOY_DIR}/node-exporter"
     NPU_DIR="${DEPLOY_DIR}/npu-exporter"
+    ALLOY_DIR="${DEPLOY_DIR}/alloy"
 
     log "后续操作将使用 ${DEPLOY_DIR} 中的内容执行"
 fi
@@ -1373,13 +1472,14 @@ case "$ACTION" in
         echo "install 拓扑参数（非交互，与 -i 互斥）:"
         echo "  --role master|worker   节点角色，默认 master"
         echo "  --mode single|multi    仅 master；默认 single；仅传 --workers 时自动设为 multi"
-        echo "  --workers ip1,ip2,...  master 多机 worker IPv4；可单独传参，或 --mode multi 时必填"
+ 	    echo "  --workers ip1,ip2,...  master 多机 worker IPv4；可单独传参，或 --mode multi 时必填"
+        echo "  --master-ip <ip>       仅 --role worker；master 节点 IP（用于 Alloy 日志上报）"
         echo ""
         echo "install 示例:"
         echo "  sudo bash $0 install                                          # 单机 master"
         echo "  sudo bash $0 install --workers 192.168.1.11,192.168.1.12"
         echo "  sudo bash $0 install --mode multi --workers 192.168.1.11,192.168.1.12"
-        echo "  sudo bash $0 install --role worker"
+        echo "  sudo bash $0 install --role worker --master-ip 192.168.1.10"
         exit 1
         ;;
 esac

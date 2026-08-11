@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import type { ApiResponse } from './types';
+import { useAuth } from '@/composables/useAuth';
 
 /** HTTP 错误：携带状态码，供调用方按 status 精确判别（如 503 未配置）。 */
 export class ApiError extends Error {
@@ -102,10 +103,8 @@ instance.interceptors.response.use(
         const newAccess = data.data?.access_token || data.access_token;
         const newRefresh = data.data?.refresh_token || data.refresh_token;
 
-        localStorage.setItem('access_token', newAccess);
-        if (newRefresh) {
-          localStorage.setItem('refresh_token', newRefresh);
-        }
+        const { setTokens } = useAuth();
+        setTokens(newAccess, newRefresh);
 
         if (originalRequest.headers) {
           originalRequest.headers.Authorization = `Bearer ${newAccess}`;
@@ -135,11 +134,7 @@ instance.interceptors.response.use(
 );
 
 function clearAuth() {
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('refresh_token');
-  localStorage.removeItem('username');
-  localStorage.removeItem('role');
-  localStorage.removeItem('workspace');
+  useAuth().clearAuth();
 }
 
 function unwrap<T>(response: { data: ApiResponse<T> | T }): T {

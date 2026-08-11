@@ -39,6 +39,15 @@ export function useAuth() {
     localStorage.setItem('workspace', 'admin');
   }
 
+  function setTokens(access: string, refresh?: string) {
+    accessToken.value = access;
+    localStorage.setItem('access_token', access);
+    if (refresh) {
+      refreshToken.value = refresh;
+      localStorage.setItem('refresh_token', refresh);
+    }
+  }
+
   function clearAuth() {
     accessToken.value = '';
     refreshToken.value = '';
@@ -66,6 +75,7 @@ export function useAuth() {
     effectiveIsAdmin,
     isLoggedIn,
     storeAuth,
+    setTokens,
     setWorkspace,
     clearAuth,
   };

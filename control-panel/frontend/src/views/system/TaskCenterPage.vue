@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
+import { useRouter } from "vue-router";
 import {
   ElButton,
   ElTable,
@@ -16,6 +17,7 @@ import {
   Download,
   Search,
   Refresh,
+  Monitor,
 } from "@element-plus/icons-vue";
 import {
   getExports,
@@ -24,6 +26,12 @@ import {
   type LogExportTask,
 } from "@/api/logs";
 import { http } from "@/api/index";
+
+const router = useRouter();
+
+function goToLogCenter() {
+  router.push({ name: "log-center" });
+}
 
 const tasks = ref<LogExportTask[]>([]);
 const loading = ref(false);
@@ -187,7 +195,17 @@ onUnmounted(() => stopPolling());
 
 <template>
   <section class="page">
-    <h1 class="page-title">任务中心</h1>
+    <div class="page-header-row">
+      <h1 class="page-title">任务中心</h1>
+      <el-button
+        type="primary"
+        :icon="Monitor"
+        size="small"
+        @click="goToLogCenter"
+      >
+        日志中心
+      </el-button>
+    </div>
 
     <div class="toolbar">
       <div class="toolbar__left">
@@ -302,8 +320,15 @@ onUnmounted(() => stopPolling());
   overflow: hidden;
 }
 
+.page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
 .page-title {
-  margin: 0 0 20px 0;
+  margin: 0;
   font-size: 20px;
   font-weight: 600;
   flex-shrink: 0;

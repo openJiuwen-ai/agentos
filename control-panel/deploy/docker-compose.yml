@@ -29,6 +29,7 @@ services:
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       AGENTOS_HOME_BASE: ${AGENTOS_BASE:-/home/agentos}/users
       LOG_DIR: ${AGENTOS_BASE:-/home/agentos}/logs
+      AGENTOS_SWARM_TEMPLATE_DIR: /home/agentos/jiuwenswarm_template
       IMAGE_PROCESS_URL: http://image-process:8091
       # ── Hardware monitoring ──
       NODE_EXPORTER_HOST: ${NODE_EXPORTER_HOST:-host.docker.internal}
@@ -45,9 +46,12 @@ services:
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
       - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users
-      - ${AGENTOS_BASE:-/home/agentos}/supervisor:${AGENTOS_BASE:-/home/agentos}/supervisor:ro
+      - ${AGENTOS_BASE:-/home/agentos}/logs:${AGENTOS_BASE:-/home/agentos}/logs
+      - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
+      - ${AGENTOS_SWARM_TEMPLATE_DIR:-/root/.jiuwenswarm}:/home/agentos/jiuwenswarm_template:ro
+      - ${AGENTOS_LOG_DIR:-/root/.jiuwenswarm/agent/.logs}:/var/log/agentos:ro
       - ${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:ro
-      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:${YR_LOG_DIR:-/tmp/yr_sessions/latest/log}:ro
+      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -152,6 +156,42 @@ services:
     restart: unless-stopped
 
   # =========================================================================
+  # Grafana Loki (Simple Scalable, 单节点 all target)
+  # =========================================================================
+  loki:
+    image: grafana/loki:3.6.0
+    user: "0:0"
+    ports: ["8096:8096"]
+    command:
+      - -target=all
+      - -config.file=/etc/loki/config.yaml
+    volumes:
+      - loki-data:/var/loki
+      - loki-wal:/var/loki-wal
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+    networks:
+      - agentos
+    restart: unless-stopped
+
+  # =========================================================================
+  # Alloy — 日志采集 agent
+  # =========================================================================
+  alloy:
+    image: grafana/alloy:v1.18.1
+    volumes:
+      - ${AGENTOS_BASE:-/home/agentos}:/home/agentos:ro
+      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
+      - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
+      - ${AGENT_GATEWAY_LOG_DIR:-/root/.jiuwenswarm/agent/.logs}:/var/log/agentos:ro
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/etc/alloy/data
+    ports: ["127.0.0.1:12345:12345"]
+    command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/etc/alloy/data /etc/alloy/config.alloy
+    networks:
+      - agentos
+    restart: unless-stopped
+
+  # =========================================================================
   # Grafana — dashboards
   # =========================================================================
   grafana:
@@ -159,12 +199,17 @@ services:
     depends_on: [victoriametrics]
     ports: ["${GRAFANA_PORT:-8093}:3000"]
     environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      # 未设 GRAFANA_ROOT_URL 时默认 http://127.0.0.1:${FRONTEND_PORT}；/grafana/ 固定由 compose 拼接
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:${FRONTEND_PORT:-8090}}/grafana/
-      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
+      GF_SERVER_ROOT_URL: "http://localhost:${FRONTEND_PORT:-8090}/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_CHECK_FOR_UPDATES: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
@@ -172,9 +217,11 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/victoriametrics.yml:/etc/grafana/provisioning/datasources/victoriametrics.yml:ro
+      - ./grafana/loki.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
       - ./grafana/default.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
       - ./grafana/vllm-perf.json:/var/lib/grafana/dashboards/vllm-perf.json:ro
       - ./grafana/sglang-perf.json:/var/lib/grafana/dashboards/sglang-perf.json:ro
+      - ./grafana/log-explore.json:/var/lib/grafana/dashboards/log-explore.json:ro
     networks:
       - agentos
     restart: unless-stopped
@@ -183,3 +230,6 @@ volumes:
   postgres-data:
   vm-data:
   grafana-data:
+  loki-data:
+  loki-wal:
+  alloy_data:

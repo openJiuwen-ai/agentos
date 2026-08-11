@@ -50,15 +50,26 @@ def _ensure_home(username: str) -> None:
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
 
 
+def _copy_tree_overwrite(src: Path, dst: Path) -> None:
+    """递归复制目录树，目标文件已存在时直接覆盖。"""
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            _copy_tree_overwrite(item, target)
+        else:
+            shutil.copy2(str(item), str(target))
+
+
 def _create_jwswarm_config(username: str) -> None:
-    """从模板目录复制 .jiuwenswarm 到用户家目录；失败则清理 .jiuwenswarm。"""
+    """从模板目录复制 .jiuwenswarm 到用户家目录；已有文件则完全覆盖，失败则清理。"""
     src = Path(settings.AGENTOS_SWARM_TEMPLATE_DIR)
     if not src.is_dir():
         logger.warning("swarm 模板目录 %s 不存在，跳过复制", src)
         return
     dst = _home_path(username) / ".jiuwenswarm"
     try:
-        shutil.copytree(str(src), str(dst), symlinks=False, dirs_exist_ok=True)
+        _copy_tree_overwrite(src, dst)
     except Exception:
         logger.exception("复制 .jiuwenswarm 模板到用户 %s 失败", username)
         shutil.rmtree(str(dst), ignore_errors=True)

@@ -3,15 +3,24 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-LOG_CATEGORIES = ["vllm", "control_panel", "jiuwen", "yuanrong", "tongtu", "shaxiang"]
+LOG_CATEGORIES = [
+    "vllm",
+    "control_panel",
+    "jiuwenswarm",
+    "agent-runtime",
+    "agent-gateway",
+    "agent-registry",
+    "jiuwenbox",
+]
 
 CATEGORY_LABELS: dict[str, str] = {
     "vllm": "vLLM",
     "control_panel": "管理面",
-    "jiuwen": "九问",
-    "yuanrong": "元戎",
-    "tongtu": "通途",
-    "shaxiang": "沙箱",
+    "jiuwenswarm": "jiuwenswarm",
+    "agent-runtime": "agent-runtime",
+    "agent-gateway": "agent-gateway",
+    "agent-registry": "agent-registry",
+    "jiuwenbox": "jiuwenbox",
 }
 
 

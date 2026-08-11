@@ -15,10 +15,11 @@ class ComponentConfig:
 
 DEFAULT_COMPONENTS: list[dict] = [
     {"id": "control_panel", "name": "管理面", "path": settings.LOG_DIR},
-    {"id": "jiuwen", "name": "九问", "path": "/home/agentos/users/{username}/.jiuwenswarm"},
-    {"id": "tongtu", "name": "通途", "path": "/home/agentos/.jiuwenswarm/agent/.logs"},
-    {"id": "yuanrong", "name": "元戎", "path": "/tmp/yr_sessions/latest/log"},
-    {"id": "shaxiang", "name": "沙箱", "path": "/home/agentos/supervisor"},
+    {"id": "jiuwenswarm", "name": "jiuwenswarm", "path": "/home/agentos/users"},
+    {"id": "agent-gateway", "name": "agent-gateway", "path": "/var/log/agentos/gateway.log"},
+    {"id": "agent-registry", "name": "agent-registry", "path": "/var/log/agentos/registry.log"},
+    {"id": "agent-runtime", "name": "agent-runtime", "path": "/tmp/yr_sessions/latest/logs"},
+    {"id": "jiuwenbox", "name": "jiuwenbox", "path": "/tmp/jiuwenbox"},
 ]
 
 _cached_components: Optional[list[ComponentConfig]] = None

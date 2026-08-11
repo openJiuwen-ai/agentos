@@ -62,8 +62,14 @@ export function getLogComponents(category?: string): Promise<LogComponent[]> {
   );
 }
 
-export function getComponentFiles(componentId: string): Promise<FileEntry[]> {
-  return get<FileEntry[]>(`${BASE}/components/${componentId}/files`);
+export function getComponentFiles(
+  componentId: string,
+  subpath?: string,
+): Promise<FileEntry[]> {
+  return get<FileEntry[]>(
+    `${BASE}/components/${componentId}/files`,
+    subpath ? { subpath } : undefined,
+  );
 }
 
 export function getFileDownloadUrl(componentId: string, filePath: string): string {
@@ -74,6 +80,16 @@ export function createExport(
   data: ExportCreate,
 ): Promise<{ task_id: string; status: string }> {
   return post<{ task_id: string; status: string }>(`${BASE}/export`, data);
+}
+
+export function resolveFilePath(
+  componentId: string,
+  subpath: string,
+): Promise<{ resolved_path: string }> {
+  return get<{ resolved_path: string }>(
+    `${BASE}/components/${componentId}/resolve-path`,
+    { subpath },
+  );
 }
 
 export function createArchive(
