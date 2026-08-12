@@ -8,7 +8,7 @@ import { resolveFilePath } from "@/api/logs";
 
 const route = useRoute();
 const router = useRouter();
-const { accessToken } = useAuth();
+const { accessToken, setGrafanaCookie } = useAuth();
 
 const categoryFromQuery = (route.query.category as string) || "";
 const keywordFromQuery = (route.query.keyword as string) || "";
@@ -30,6 +30,9 @@ const hostname = ref("");
 const timeRange = ref("now-1h");
 
 onMounted(async () => {
+  // 写入 Grafana 鉴权 cookie，供 nginx auth_request 验证
+  setGrafanaCookie();
+
   if (componentIdFromQuery && filePathFromQuery) {
     try {
       const result = await resolveFilePath(componentIdFromQuery, filePathFromQuery);
@@ -70,7 +73,6 @@ const grafanaUrl = computed(() => {
   params.set("from", timeRange.value);
   params.set("to", "now");
   params.set("refresh", "10s");
-  params.set("token", accessToken.value || "");
   return `/grafana/d-solo/log-explore?${params.toString()}`;
 });
 

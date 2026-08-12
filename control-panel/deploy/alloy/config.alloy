@@ -17,7 +17,7 @@ local.file_match "jiuwenswarm" {
 // 通途拆分成两个: agent-gateway + agent-registry
 local.file_match "agent_gateway" {
   path_targets = [{
-    __path__  = "/var/log/agentos/gateway.log",
+    __path__  = "/home/agentos/host_root/.jiuwenswarm/agent/.logs/gateway.log",
     category  = "agent-gateway",
     host      = constants.hostname,
   }]
@@ -25,7 +25,7 @@ local.file_match "agent_gateway" {
 
 local.file_match "agent_registry" {
   path_targets = [{
-    __path__  = "/var/log/agentos/registry.log",
+    __path__  = "/home/agentos/host_root/.jiuwenswarm/agent/.logs/registry.log",
     category  = "agent-registry",
     host      = constants.hostname,
   }]

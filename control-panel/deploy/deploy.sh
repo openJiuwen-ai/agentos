@@ -111,6 +111,12 @@ sed_escape() {
     printf '%s' "$1" | sed 's/[\\&/|]/\\&/g'
 }
 
+# URL 编码密码中的特殊字符（@ : / # ? & = % 等）
+# 解决 docker-compose 里 POSTGRES_PASSWORD 嵌入 URL 时，@ 等字符破坏 URL 解析的问题
+url_encode() {
+    python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+}
+
 # 从 .env 直接读取 WORKER_NODES（bash source 会剥掉 JSON 内层双引号，如 ["ip"] → [ip]）
 read_worker_nodes_json() {
     local env_file="${DEPLOY_DIR}/.env"
@@ -496,7 +502,10 @@ _init_env_noninteractive() {
 
     # 用户名/密码：优先读环境变量，未设置则用默认值/自动生成
     local pg_user="${POSTGRES_USER:-agentos}"
+    local pg_user="${POSTGRES_USER:-agentos}"
     local pg_pass="${POSTGRES_PASSWORD:-agentos123}"
+    local pg_pass_encoded
+    pg_pass_encoded=$(url_encode "$pg_pass")
     local admin_user="${AGENTOS_ADMIN_USERNAME:-admin}"
     local admin_pass="${AGENTOS_ADMIN_PASSWORD:-admin123}"
 
@@ -515,7 +524,7 @@ _init_env_noninteractive() {
     local register_url="${AGENT_REGISTER_URL:-http://${detected_ip}:4003}"
 
     sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "$pg_user")/" "$env_file"
-    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$pg_pass")/" "$env_file"
+    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$pg_pass_encoded")/" "$env_file"
     sed -i "s/^AGENTOS_ADMIN_USERNAME=.*/AGENTOS_ADMIN_USERNAME=$(sed_escape "$admin_user")/" "$env_file"
     sed -i "s/^AGENTOS_ADMIN_PASSWORD=.*/AGENTOS_ADMIN_PASSWORD=$(sed_escape "$admin_pass")/" "$env_file"
     sed -i "s/^AGENTOS_JWT_SECRET_KEY=.*/AGENTOS_JWT_SECRET_KEY=${jwt_key}/" "$env_file"
@@ -528,6 +537,14 @@ _init_env_noninteractive() {
     if [ -n "$register_url" ]; then
         sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$register_url")|" "$env_file"
     fi
+
+    # 检测 agentos 系统用户 UID/GID（默认 1000）
+    local sys_uid sys_gid
+    sys_uid="${AGENTOS_SYS_UID:-$(id -u agentos 2>/dev/null || echo 1000)}"
+    sys_gid="${AGENTOS_SYS_GID:-$(id -g agentos 2>/dev/null || echo 1000)}"
+    sed -i "s/^AGENTOS_SYS_UID=.*/AGENTOS_SYS_UID=${sys_uid}/" "$env_file"
+    sed -i "s/^AGENTOS_SYS_GID=.*/AGENTOS_SYS_GID=${sys_gid}/" "$env_file"
+
     local worker_json
     worker_json=$(_resolve_worker_nodes_for_master "$ne_host")
     _set_worker_nodes_json "$env_file" "$worker_json"
@@ -544,6 +561,8 @@ _init_env_noninteractive() {
     log "  NPU_EXPORTER_HOST  = ${npu_host}"
     log "  AGENT_REGISTER_URL = ${register_url:-（已禁用）}"
     log "  WORKER_NODES       = ${worker_json}"
+    log "  AGENTOS_SYS_UID    = ${sys_uid}"
+    log "  AGENTOS_SYS_GID    = ${sys_gid}"
 }
 
 # 交互式：逐项询问用户
@@ -555,7 +574,9 @@ _init_env_interactive() {
 
     read -rsp "POSTGRES_PASSWORD: " val; echo
     [ -n "$val" ] || fail "POSTGRES_PASSWORD 不能为空"
-    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$val")/" "$env_file"
+    local pg_enc_val
+    pg_enc_val=$(url_encode "$val")
+    sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(sed_escape "$pg_enc_val")/" "$env_file"
 
     read -rp "AGENTOS_ADMIN_USERNAME [admin]: " val
     sed -i "s/^AGENTOS_ADMIN_USERNAME=.*/AGENTOS_ADMIN_USERNAME=$(sed_escape "${val:-admin}")/" "$env_file"
@@ -621,6 +642,15 @@ _init_env_interactive() {
         _set_worker_nodes_json "$env_file" "[]"
         log "  WORKER_NODES = []"
     fi
+
+    # 自动检测 agentos 系统用户 UID/GID
+    local sys_uid sys_gid
+    sys_uid=$(id -u agentos 2>/dev/null || echo 1000)
+    sys_gid=$(id -g agentos 2>/dev/null || echo 1000)
+    sed -i "s/^AGENTOS_SYS_UID=.*/AGENTOS_SYS_UID=${sys_uid}/" "$env_file"
+    sed -i "s/^AGENTOS_SYS_GID=.*/AGENTOS_SYS_GID=${sys_gid}/" "$env_file"
+    log "  AGENTOS_SYS_UID = ${sys_uid} (从 agentos 用户检测)"
+    log "  AGENTOS_SYS_GID = ${sys_gid} (从 agentos 用户检测)"
 }
 
 # ── 镜像检测与拉取 ─────────────────────────────────────────────────────────
@@ -936,7 +966,7 @@ install_alloy() {
         --network host \
         -v "${ALLOY_CONFIG_HOST}:/etc/alloy/config.alloy:ro" \
         -v "${ALLOY_DATA_HOST}:/etc/alloy/data" \
-        -v /root/.jiuwenswarm/agent/.logs:/var/log/agentos:ro \
+        -v /root:/home/agentos/host_root:ro \
         -v /home/agentos:/home/agentos:ro \
         -v /tmp/yr_sessions:/tmp/yr_sessions:ro \
         -v /tmp/jiuwenbox:/tmp/jiuwenbox:ro \

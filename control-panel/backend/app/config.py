@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # ── Home directories ──
     AGENTOS_HOME_BASE: str = "/home/agentos/users"
     AGENTOS_SWARM_TEMPLATE_DIR: str = "/home/agentos/jiuwenswarm_template"
+    AGENTOS_SYS_UID: int = 1000
+    AGENTOS_SYS_GID: int = 1000
 
     # ── Logging ──
     LOG_DIR: str = "/home/agentos/logs"

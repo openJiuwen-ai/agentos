@@ -7,10 +7,19 @@ const userId = ref(localStorage.getItem('user_id') || '');
 const role = ref(localStorage.getItem('role') || 'user');
 const workspace = ref<'admin' | 'user'>(localStorage.getItem('workspace') === 'user' ? 'user' : 'admin');
 
+const GRAFANA_COOKIE_NAME = 'grafana_token';
+const GRAFANA_COOKIE_MAX_AGE = 300; // 5 分钟
+
 export function useAuth() {
   const isAdmin = computed(() => role.value === 'admin');
   const effectiveIsAdmin = computed(() => isAdmin.value && workspace.value !== 'user');
   const isLoggedIn = computed(() => !!accessToken.value);
+
+  /** 写入 Grafana 鉴权 cookie，供 nginx auth_request 验证 */
+  function setGrafanaCookie() {
+    if (!accessToken.value) return;
+    document.cookie = `${GRAFANA_COOKIE_NAME}=${accessToken.value}; Path=/grafana; Max-Age=${GRAFANA_COOKIE_MAX_AGE}; SameSite=Lax`;
+  }
 
   function setWorkspace(mode: 'admin' | 'user') {
     workspace.value = mode;
@@ -78,5 +87,6 @@ export function useAuth() {
     setTokens,
     setWorkspace,
     clearAuth,
+    setGrafanaCookie,
   };
 }

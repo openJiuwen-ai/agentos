@@ -27,9 +27,11 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_KEY_ENCRYPTION_KEY: ${LITELLM_KEY_ENCRYPTION_KEY}
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
-      AGENTOS_HOME_BASE: ${AGENTOS_BASE:-/home/agentos}/users
-      LOG_DIR: ${AGENTOS_BASE:-/home/agentos}/logs
-      AGENTOS_SWARM_TEMPLATE_DIR: /home/agentos/jiuwenswarm_template
+      AGENTOS_HOME_BASE: /home/agentos/users
+      LOG_DIR: /home/agentos/logs
+      AGENTOS_SWARM_TEMPLATE_DIR: /home/agentos/host_root/.jiuwenswarm
+      AGENTOS_SYS_UID: ${AGENTOS_SYS_UID:-1000}
+      AGENTOS_SYS_GID: ${AGENTOS_SYS_GID:-1000}
       IMAGE_PROCESS_URL: http://image-process:8091
       # ── Hardware monitoring ──
       NODE_EXPORTER_HOST: ${NODE_EXPORTER_HOST:-host.docker.internal}
@@ -45,12 +47,10 @@ services:
       # agentos 不再挂 docker.sock；构建由 image-process 服务负责
       - ./victoriametrics/agent-metrics.json:/etc/vm/agent-metrics.json
       - ./exports:/var/log/agentos_exports
-      - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users
-      - ${AGENTOS_BASE:-/home/agentos}/logs:${AGENTOS_BASE:-/home/agentos}/logs
+      - ${AGENTOS_BASE:-/home/agentos}/users:/home/agentos/users
+      - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
-      - ${AGENTOS_SWARM_TEMPLATE_DIR:-/root/.jiuwenswarm}:/home/agentos/jiuwenswarm_template:ro
-      - ${AGENTOS_LOG_DIR:-/root/.jiuwenswarm/agent/.logs}:/var/log/agentos:ro
-      - ${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:${AGENTOS_BASE:-/home/agentos}/.jiuwenswarm:ro
+      - /root:/home/agentos/host_root:ro
       - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
 
     extra_hosts:
@@ -179,10 +179,10 @@ services:
   alloy:
     image: grafana/alloy:v1.18.1
     volumes:
-      - ${AGENTOS_BASE:-/home/agentos}:/home/agentos:ro
+      - /root:/home/agentos/host_root:ro
+      - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs:ro
       - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
-      - ${AGENT_GATEWAY_LOG_DIR:-/root/.jiuwenswarm/agent/.logs}:/var/log/agentos:ro
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy_data:/etc/alloy/data
     ports: ["127.0.0.1:12345:12345"]

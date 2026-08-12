@@ -38,7 +38,7 @@ const curlExample = computed(() => `curl -X POST "${gatewayBase.value}/v1/chat/c
 const jiuwenswarmYaml = computed(() => `models:
   defaults:
     - model_client_config:
-        api_base: ${gatewayBase.value}
+        api_base: ${gatewayBase.value}/v1
         api_key: <<您的apikey>>
         model_name: ${modelName.value}
         client_provider: DeepSeek

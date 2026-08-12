@@ -9,15 +9,18 @@
     <iframe
       v-else
       class="tab-panel__iframe"
-      :src="grafanaIframeSrc"
+      :src="iframeSrc"
       title="Grafana 性能监控"
     />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import { ElEmpty } from 'element-plus';
+import { useAuth } from '@/composables/useAuth';
+
+const { accessToken, setGrafanaCookie } = useAuth();
 
 const GRAFANA_QUERY_BASE = 'orgId=1&from=now-30m&to=now&kiosk&theme=light';
 
@@ -37,7 +40,9 @@ const grafanaDashboardPath = computed(() => {
   return key ? DASHBOARD_BY_ENGINE[key] ?? null : null;
 });
 
-const grafanaIframeSrc = computed(() => {
+const iframeSrc = ref('');
+
+function buildGrafanaUrl(): string {
   const path = grafanaDashboardPath.value;
   if (!path) return '';
 
@@ -47,7 +52,23 @@ const grafanaIframeSrc = computed(() => {
     query += `&var-job=${encodeURIComponent(job)}`;
   }
   return `/grafana${path}?${query}`;
-});
+}
+
+function refreshIframe() {
+  if (!accessToken.value || !grafanaDashboardPath.value) {
+    iframeSrc.value = '';
+    return;
+  }
+  // 写入 Grafana 鉴权 cookie，供 nginx auth_request 验证
+  setGrafanaCookie();
+  iframeSrc.value = buildGrafanaUrl();
+}
+
+onMounted(refreshIframe);
+watch(
+  [() => props.inferenceEngine, () => props.grafanaJobName],
+  () => refreshIframe(),
+);
 </script>
 
 <style scoped>

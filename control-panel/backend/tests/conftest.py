@@ -37,6 +37,8 @@ def _configure_for_test(data: dict) -> None:
     settings.USER_SYSTEM_BACKEND = "local-users"
     settings.AGENTOS_HOME_BASE = TEST_HOME
     settings.AGENTOS_SWARM_TEMPLATE_DIR = TEST_SWARM_TEMPLATE
+    settings.AGENTOS_SYS_UID = 1000
+    settings.AGENTOS_SYS_GID = 1000
     settings.AGENTOS_ADMIN_USERNAME = data["admin"]["username"]
     settings.AGENTOS_ADMIN_PASSWORD = data["admin"]["password"]
     settings.AGENTOS_JWT_SECRET_KEY = "test-secret-key"
