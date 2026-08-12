@@ -96,9 +96,9 @@ jiuwenswarm_uninstall() {
     # 先停用 systemd 服务，再卸载 pip 包，避免卸载后残留 unit 文件
     jiuwenswarm_disable_systemd
 
-    if bash -c "python${YR_PYTHON_VERSION} -m pip uninstall -y jiuwenswarm 2>/dev/null"; then
-        success "jiuwenswarm uninstalled on ${local_host}"
+    if bash -c "python${YR_PYTHON_VERSION} -m pip uninstall -y jiuwenswarm openjiuwen 2>/dev/null"; then
+        success "jiuwenswarm and openjiuwen uninstalled on ${local_host}"
     else
-        warning "jiuwenswarm not installed or failed to uninstall on ${local_host}"
+        warning "jiuwenswarm/openjiuwen not installed or failed to uninstall on ${local_host}"
     fi
 }
