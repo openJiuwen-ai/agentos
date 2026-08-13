@@ -110,8 +110,9 @@ export function Composer({
     if (disabled) return;
     const mediaItems = attachments.length > 0 ? attachments : undefined;
     setAttachments([]);
+    setInputValue(sessionId, '');
     onSend(content, mediaItems);
-  }, [inputValue, attachments, disabled, onSend]);
+  }, [inputValue, attachments, disabled, onSend, sessionId, setInputValue]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

@@ -140,7 +140,7 @@
 }
 
 .composer-model:hover { background: var(--bg-hover); }
-.composer-model-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* DSL inner container for model dropdown: wraps text + chevron */
 .composer-model-label {
@@ -258,17 +258,22 @@
   color: rgba(0, 0, 0, 0.9); /* DSL */
 }
 
-/* DSL mode chip: width:120px (单Agent模式 dropdown button) */
-.composer-home-wrap .composer-mode-chip {
-  width: 120px; /* DSL */
+/* 单Agent/团队模式 chip —— 首页 + 对话页统一样式 */
+.composer-mode-chip {
+  width: 120px;
+  height: auto;
+  padding: 4px 8px;
+  gap: 0;
+  justify-content: space-between;
+  font-size: 12px;
+  line-height: 16px;
 }
 
-/* DSL inner container: width:84px, space-between, text + chevron */
-.composer-home-wrap .composer-mode-label {
-  width: 84px; /* DSL */
+.composer-mode-label {
+  width: 84px;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start; /* DSL */
+  align-items: flex-start;
 }
 
 .composer-home-wrap .composer-chip img {
@@ -297,27 +302,18 @@
   align-items: flex-start; /* DSL */
 }
 
-/* DSL 右侧容器: width:113px, justify-content:space-between, align-items:flex-start, NO gap */
+/* 右侧容器: 自适应宽度，容纳完整模型名 + 发送按钮 */
 .composer-home-wrap .composer-bottom-right {
-  width: 113px; /* DSL */
-  gap: 0; /* DSL: 无 gap, 由 space-between 分配 */
-  justify-content: space-between;
-  align-items: flex-start; /* DSL */
+  gap: 8px;
+  align-items: flex-start;
 }
 .composer-home-wrap .composer-model {
-  width: 77px; /* DSL */
   height: auto;
   padding: 4px 8px;
-  gap: 0;
-  justify-content: space-between;
+  gap: 4px;
   font-size: 12px;
   line-height: 16px;
   color: rgba(0, 0, 0, 0.9);
-}
-
-/* DSL model label inner container: width:41px (home variant) */
-.composer-home-wrap .composer-model-label {
-  width: 41px; /* DSL */
 }
 
 /* ---------- 弹出菜单细节 ---------- */

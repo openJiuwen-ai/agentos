@@ -51,7 +51,8 @@ export function PlusMenu({
   const [open, setOpen] = useState(false);
   const [modeSubOpen, setModeSubOpen] = useState(false);
   const [connectorSubOpen, setConnectorSubOpen] = useState(false);
-  const [comingSubOpen, setComingSubOpen] = useState(false);
+  const [skillSubOpen, setSkillSubOpen] = useState(false);
+  const [expertSubOpen, setExpertSubOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   void sessionId;
   void onOpenSkills; // 技能入口暂为「敬请期待」占位，保留 prop 兼容调用方
@@ -60,7 +61,8 @@ export function PlusMenu({
     setOpen(false);
     setModeSubOpen(false);
     setConnectorSubOpen(false);
-    setComingSubOpen(false);
+    setSkillSubOpen(false);
+    setExpertSubOpen(false);
   };
 
   return (
@@ -127,15 +129,15 @@ export function PlusMenu({
           </div>
           <div
             className="menu-item has-sub"
-            onMouseEnter={() => { setComingSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); }}
-            onMouseLeave={() => setComingSubOpen(false)}
+            onMouseEnter={() => { setSkillSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); setExpertSubOpen(false); }}
+            onMouseLeave={() => setSkillSubOpen(false)}
           >
             <span className="menu-item-icon">
               <img src={skillIcon} alt="" style={{ width: 15, height: 15 }} />
             </span>
             <span className="menu-item-label">技能</span>
             <ChevronRight size={13} className="menu-sub-arrow" />
-            {comingSubOpen ? (
+            {skillSubOpen ? (
               <div className="menu-pop sub-menu">
                 <div className="menu-coming">
                   <div className="menu-coming-title">敬请期待</div>
@@ -146,13 +148,13 @@ export function PlusMenu({
           </div>
           <div
             className="menu-item has-sub"
-            onMouseEnter={() => { setComingSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); }}
-            onMouseLeave={() => setComingSubOpen(false)}
+            onMouseEnter={() => { setExpertSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); setSkillSubOpen(false); }}
+            onMouseLeave={() => setExpertSubOpen(false)}
           >
             <span className="menu-item-icon"><Users size={15} /></span>
             <span className="menu-item-label">专家</span>
             <ChevronRight size={13} className="menu-sub-arrow" />
-            {comingSubOpen ? (
+            {expertSubOpen ? (
               <div className="menu-pop sub-menu">
                 <div className="menu-coming">
                   <div className="menu-coming-title">敬请期待</div>
@@ -225,7 +227,7 @@ export function ModelSelector({ sessionId }: { sessionId: string }) {
         <img src={autoModelIcon} alt="" style={{ width: 16, height: 16 }} />
         {/* DSL: container(41px) wraps text + chevron with space-between */}
         <span className="composer-model-label">
-          <span className="composer-model-name">{display}</span>
+          <span className="composer-model-name" title={display}>{display}</span>
           <img src={chevronDownIcon} alt="" className={open ? 'rotate-180' : ''} style={{ width: 10, height: 10, marginTop: 3 }} />
         </span>
       </button>
