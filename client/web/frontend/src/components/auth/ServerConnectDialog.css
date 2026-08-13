@@ -1,0 +1,130 @@
+/* 服务器连接弹窗 */
+.server-connect-mask {
+  position: fixed;
+  inset: 0;
+  background: #f5f6f8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.server-connect-card {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 36px 28px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+
+.server-connect-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--t1);
+  margin: 0 0 10px;
+}
+
+.server-connect-desc {
+  font-size: 13px;
+  color: var(--t3);
+  line-height: 1.7;
+  margin: 0 0 24px;
+}
+
+.server-connect-label {
+  font-size: 14px;
+  color: var(--t1);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.server-connect-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--bd-3);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--t1);
+  transition: border-color 0.12s ease;
+  box-sizing: border-box;
+}
+
+.server-connect-input:focus {
+  border-color: var(--brand);
+  outline: none;
+}
+
+.server-connect-error {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 12px;
+  word-break: break-all;
+}
+
+.server-connect-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+}
+
+.server-connect-quit {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 8px;
+  border: 1px solid var(--bd-3);
+  background: #fff;
+  color: var(--t2);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.server-connect-quit:hover {
+  background: #f2f3f5;
+}
+
+.server-connect-submit {
+  height: 40px;
+  min-width: 120px;
+  padding: 0 20px;
+  border-radius: 8px;
+  border: none;
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.12s ease;
+}
+
+.server-connect-submit:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.server-connect-submit:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.server-connect-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: server-connect-spin 0.8s linear infinite;
+}
+
+@keyframes server-connect-spin {
+  to { transform: rotate(360deg); }
+}

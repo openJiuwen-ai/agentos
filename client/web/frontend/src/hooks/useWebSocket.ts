@@ -44,6 +44,7 @@ import {
 } from '../stores';
 import { normalizeTaskEvent } from '../stores/teamTaskNormalize';
 import { webClient, requestGoalAction, sendGoalStreamCommand } from '../services/webClient';
+import { getAuthSession, iamRefresh, saveAuthSession } from '../services/serverConfig';
 import { createStreamDeltaBatcher } from '../services/streamDeltaBatcher';
 import {
   fetchTtsAudio,
@@ -59,6 +60,7 @@ import {
   shouldCollapseTurnFinal,
   parseTimestampToMs,
   timestampMsToIso,
+  humanizeError,
 } from '../utils';
 import {
   findOverlappingFileExecutionEvent,
@@ -493,6 +495,8 @@ interface UseWebSocketOptions {
   onDisconnect?: () => void;
   onError?: (error: string) => void;
   onConfigChanged?: (updatedKeys?: string[]) => void;
+  /** cron 最终结果（非占位）广播到达时回调：(cronSessionId, cronJobId)。 */
+  onCronResultArrived?: (cronSessionId: string, cronJobId: string) => void;
 }
 
 interface UseWebSocketReturn {
@@ -759,6 +763,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onDisconnect,
     onError,
     onConfigChanged,
+    onCronResultArrived,
   } = options;
 
   // 同步更新 ref，避免竞态条件
@@ -775,6 +780,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
   const onConfigChangedRef = useRef(onConfigChanged);
+  const onCronResultArrivedRef = useRef(onCronResultArrived);
   const sendMessageRef = useRef<typeof sendMessage>();
   // 标记本地 sendMessage 刚发起但后端尚未确认 processing_status=true 的 session。
   // 用于区分"旧任务被打断的 false"和"任务正常结束的 false"——前者应跳过自动排空，
@@ -1163,7 +1169,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
 
       const reportFailure = (error: unknown) => {
         const webError = error as WebError;
-        const errorMsg = webError.message || t('network.sendMessageFailed');
+        const errorMsg = humanizeError(webError.message || t('network.sendMessageFailed')).title;
         useChatStore.getState().addMessage(sessionId, {
           id: `error-${Date.now()}`,
           role: 'system',
@@ -1381,7 +1387,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         setConnectionStats({ lastError: webError.message });
         useChatStore.getState().setProcessing(sessionId, false);
         useChatStore.getState().setThinking(sessionId, false);
-        const errorMsg = webError.message || t('network.sendMessageFailed');
+        const errorMsg = humanizeError(webError.message || t('network.sendMessageFailed')).title;
         onErrorRef.current?.(errorMsg);
         useChatStore.getState().addMessage(sessionId, {
           id: `error-${Date.now()}`,
@@ -1434,7 +1440,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         setConnectionStats({ lastError: webError.message });
         useChatStore.getState().setProcessing(sessionId, false);
         useChatStore.getState().setThinking(sessionId, false);
-        const errorMsg = webError.message || t('network.sendMessageFailed');
+        const errorMsg = humanizeError(webError.message || t('network.sendMessageFailed')).title;
         onErrorRef.current?.(errorMsg);
         useChatStore.getState().addMessage(sessionId, {
           id: `error-${Date.now()}`,
@@ -1756,7 +1762,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onDisconnectRef.current = onDisconnect;
     onErrorRef.current = onError;
     onConfigChangedRef.current = onConfigChanged;
-  }, [onConfigChanged, onConnect, onDisconnect, onError]);
+    onCronResultArrivedRef.current = onCronResultArrived;
+  }, [onConfigChanged, onConnect, onCronResultArrived, onDisconnect, onError]);
 
   const shouldDropDuplicatedEvent = useCallback(
     (eventName: string, payload: Record<string, unknown>): boolean => {
@@ -2113,6 +2120,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           }
         }
         if (!sessionId) return;
+        // cron 最终结果（非占位）广播到达：通知上层（跳转/恢复/提示），
+        // 参照 jiuwenswarm web 的 onCronResultArrived 语义。
+        if (cronMeta && typeof cronMeta === 'object' && cronMeta.is_placeholder !== true) {
+          const cronJobIdForNav = typeof cronMeta.job_id === 'string' ? cronMeta.job_id.trim() : '';
+          onCronResultArrivedRef.current?.(sessionId, cronJobIdForNav);
+        }
         flushPendingStreamDelta(sessionId);
 
         const memberAction = pickString(payload.member_action);
@@ -2994,14 +3007,16 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!sessionId) return;
         if (shouldDropDuplicatedEvent('chat.error', payload)) return;
         useChatStore.getState().setThinking(sessionId, false);
-        const errorMsg =
-          typeof payload.error === 'string' ? payload.error : t('network.unknownError');
+        const rawError = typeof payload.error === 'string' ? payload.error : '';
         // 忽略 "invalid page_idx or session history not found" 错误，因为这是新会话的正常情况
-        if (errorMsg.includes('invalid page_idx or session history not found')) {
+        if (rawError.includes('invalid page_idx or session history not found')) {
           useChatStore.getState().setLoadingHistory(sessionId, false);
           return;
         }
-        useChatStore.getState().setExecutionError(sessionId, errorMsg);
+        // 人性化错误：提示文案用友好标题；executionError 保留原始信息供 MessageList 展开详情
+        const humanized = humanizeError(rawError);
+        const errorMsg = humanized.title;
+        useChatStore.getState().setExecutionError(sessionId, rawError || errorMsg);
         onErrorRef.current?.(errorMsg);
         useChatStore.getState().setSessionError(sessionId, errorMsg);
         useChatStore.getState().addMessage(sessionId, {
@@ -3686,6 +3701,51 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     provider,
     setConnectionStats,
   ]);
+
+  // reauth：gateway 因凭据失效（close code 1008）关闭连接时，用 refresh_token 静默换新 pair 后重连。
+  // 成功路径不弹窗；refresh_token 也失效（或连续失败）才弹窗提示重新登录。
+  useEffect(() => {
+    let disposed = false;
+    let reauthInFlight = false;
+    let consecutiveReauthFailures = 0;
+    const MAX_REAUTH_FAILURES = 3;
+
+    const unsub = webClient.onAuthExpired(() => {
+      if (disposed || reauthInFlight) return;
+      reauthInFlight = true;
+      void (async () => {
+        try {
+          const session = getAuthSession();
+          if (!session?.refresh_token) {
+            throw new Error('NO_REFRESH_TOKEN');
+          }
+          const newSession = await iamRefresh(session.refresh_token);
+          if (disposed) return;
+          saveAuthSession(newSession);
+          consecutiveReauthFailures = 0;
+          // 静默重连：connect 内部会重新读取本地 session，带上最新的 user_id/access_token
+          await webClient.reconnect();
+        } catch (error) {
+          consecutiveReauthFailures += 1;
+          if (consecutiveReauthFailures >= MAX_REAUTH_FAILURES) {
+            consecutiveReauthFailures = 0;
+            const msg =
+              error instanceof Error && error.message === 'NO_REFRESH_TOKEN'
+                ? t('network.authSessionExpired')
+                : t('network.reauthFailed');
+            onErrorRef.current?.(msg);
+          }
+        } finally {
+          reauthInFlight = false;
+        }
+      })();
+    });
+
+    return () => {
+      disposed = true;
+      unsub();
+    };
+  }, [t]);
 
   useEffect(() => {
     return () => {

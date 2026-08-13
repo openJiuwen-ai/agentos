@@ -182,11 +182,13 @@ export const useCronStore = create<CronState>((set, get) => ({
 
 const DEFAULT_PROJECT_ID = 'default';
 
-// 系统自动维护的 cron job id（与后端 proactive_cron_sync.PROACTIVE_JOB_ID、
-// CronPanel/index.tsx 的 PROACTIVE_AUTO_JOB_ID 一致）。这类 job 由配置开关自动创建/删除，
+/** proactive 自动任务 id（与后端 proactive_cron_sync.PROACTIVE_JOB_ID 一致）。 */
+export const PROACTIVE_AUTO_JOB_ID = 'proactive-tick-auto';
+
+// 系统自动维护的 cron job id。这类 job 由配置开关自动创建/删除，
 // 不创建会话、不给推送的会话打 cron_id——所以"触发的会话"列表恒空，在会话侧栏是个空壳。
 // 从会话侧栏隐藏它（Cron 面板里仍可见可编辑 cron 表达式/时区），避免空壳 item 碍眼。
-const SYSTEM_AUTO_JOB_IDS = new Set(['proactive-tick-auto']);
+const SYSTEM_AUTO_JOB_IDS = new Set([PROACTIVE_AUTO_JOB_ID]);
 
 export function isDefaultProjectId(projectId: string): boolean {
   return !projectId || projectId === DEFAULT_PROJECT_ID;

@@ -11,7 +11,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { useCronStore, useWorkspaceStore, type SidebarCronJob } from '../../stores';
+import {
+  PROACTIVE_AUTO_JOB_ID,
+  useCronStore,
+  useWorkspaceStore,
+  type SidebarCronJob,
+} from '../../stores';
 import type { CronTemplateUI } from '../../types';
 import { webRequest } from '../../services/webClient';
 import { CronHomePage } from '../cron';
@@ -87,7 +92,17 @@ export function CronPanel({
   const handleRunNow = async (id: string) => {
     const job = jobs.find(j => j.id === id);
     try {
-      await webRequest('cron.job.run_now', { id });
+      const result = await webRequest<{ accepted?: boolean; run_id?: string; session_id?: string }>(
+        'cron.job.run_now',
+        { id },
+      );
+      // proactive 自动任务的"立即执行"不跳转：返回的 session_id 是 cron 执行会话，
+      // 而推荐消息实际投递到用户当前会话，跳过去只会看到空页。
+      const runSessionId = (result?.session_id ?? '').trim();
+      if (runSessionId && id !== PROACTIVE_AUTO_JOB_ID) {
+        useCronStore.getState().setLastRunSessionId(id, runSessionId);
+        onOpenSession(runSessionId);
+      }
       onToast(`已触发「${job?.name ?? '任务'}」`);
     } catch (error) {
       onToast(error instanceof Error ? error.message : '触发失败', true);

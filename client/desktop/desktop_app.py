@@ -70,6 +70,18 @@ class DesktopBridge:
     def set_window(self, window: webview.Window) -> None:
         self._window = window
 
+    # ---------- 退出程序 ----------
+
+    def quit_app(self) -> bool:
+        """销毁窗口并退出程序（服务器连接弹窗的"退出"按钮）。"""
+        try:
+            if self._window is not None:
+                self._window.destroy()
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("quit_app 失败")
+            return False
+
     # ---------- 项目目录选择 ----------
 
     def select_project_directory(self) -> str | None:

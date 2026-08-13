@@ -2069,7 +2069,9 @@
     "resumeFailed": "Resume failed",
     "submitAnswerFailed": "Failed to submit answer",
     "unknownError": "Unknown error",
-    "errorPrefix": "Error: {{message}}"
+    "errorPrefix": "Error: {{message}}",
+    "authSessionExpired": "Session expired, please sign in again",
+    "reauthFailed": "Auto refresh failed, please sign in again"
   },
   "speech": {
     "recognitionUnsupported": "Speech recognition is not supported by this browser",

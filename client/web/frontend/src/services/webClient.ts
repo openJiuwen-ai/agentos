@@ -11,10 +11,16 @@ import {
 import { getWsBase } from '../utils/env';
 import i18n from '../i18n';
 import { GoalRecord } from '../types/goal';
+import { getAuthSession } from './serverConfig';
 
 type EventHandler = (event: WsEvent) => void;
 type TypedEventHandler<TPayload> = (event: WsEvent & { payload: TPayload }) => void;
 type StateHandler = (state: WebConnectionState) => void;
+/** 认证过期回调（gateway 返回 close code 1008 时触发，用于 reauth 静默重连） */
+type AuthExpiredHandler = () => void;
+
+/** gateway 拒绝当前凭据的标准 close code（与 jiuwenswarm-tui ws-client 对齐） */
+const WS_CLOSE_AUTH_EXPIRED = 1008;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -79,6 +85,7 @@ class WebClient {
   private state: WebConnectionState = 'idle';
   private handlers = new Map<string, Set<EventHandler>>();
   private stateHandlers = new Set<StateHandler>();
+  private authExpiredHandlers = new Set<AuthExpiredHandler>();
   private pending = new Map<string, PendingRequest>();
   private reconnectTimer: number | null = null;
   private reconnectAttempts = 0;
@@ -99,6 +106,19 @@ class WebClient {
     this.stateHandlers.add(handler);
     return () => {
       this.stateHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * 认证过期回调：gateway 因凭据无效（close code 1008）关闭连接时触发。
+   * 用于 reauth 流程——上层用 refresh_token 换新 pair 后调用 connect() 静默重连。
+   * 触发后本类不会自动走 scheduleReconnect（避免凭据已失效时无限重试），
+   * 由回调方决定是否立即重连或弹窗提示。
+   */
+  onAuthExpired(handler: AuthExpiredHandler): () => void {
+    this.authExpiredHandlers.add(handler);
+    return () => {
+      this.authExpiredHandlers.delete(handler);
     };
   }
 
@@ -131,11 +151,23 @@ class WebClient {
       return this.connectPromise;
     }
 
-    this.lastConnectOptions = options;
+    // 合并 IAM 会话身份：username/access_token 放进 /ws query，由本机代理 app_web.py ws_proxy
+    // 提取为 X-User-Id / Authorization: Bearer header 转发给 gateway（浏览器 WebSocket 无法
+    // 自定义 header，见 001-iam-auth-v0.md 方案A）。显式传入的 options 优先，否则回退本地会话。
+    // 注意：X-User-Id 必须填 username（如 admin）而非管理面返回的 user_id（UUID），
+    // 与 tui-launcher 行为对齐（cli.py 传 current_context.username）。
+    const session = getAuthSession();
+    const mergedOptions: WebConnectOptions = {
+      ...options,
+      ...(options.userId ? {} : { userId: session?.username }),
+      ...(options.accessToken ? {} : { accessToken: session?.access_token }),
+    };
+
+    this.lastConnectOptions = mergedOptions;
     this.manualClose = false;
     this.updateState(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
 
-    const url = this.buildWsUrl(options);
+    const url = this.buildWsUrl(mergedOptions);
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url);
@@ -197,11 +229,31 @@ class WebClient {
           this.updateState('closed');
           return;
         }
+        // 凭据失效（1008）：不自动重连，触发 reauth 回调，由上层 refresh_token 换新 pair 后重连
+        if (closeEvent.code === WS_CLOSE_AUTH_EXPIRED) {
+          this.updateState('closed');
+          this.notifyAuthExpired();
+          return;
+        }
         this.scheduleReconnect();
       };
     });
 
     return this.connectPromise;
+  }
+
+  /**
+   * 使用最近一次连接参数重连（reauth 流程专用）。
+   * 内部会重新读取本地 IAM 会话，从而带上 refresh 后最新的 user_id/access_token。
+   * 注意：不能直接复用 lastConnectOptions——它保存的是首次连接时合并好的身份快照，
+   * 若凭据已失效并完成 refresh，这里必须丢弃缓存的 userId/accessToken，
+   * 让 connect() 回退读取本地最新会话，否则会一直用旧 token 反复触发 1008。
+   */
+  reconnect(): Promise<void> {
+    const options = { ...this.lastConnectOptions };
+    delete options.userId;
+    delete options.accessToken;
+    return this.connect(options);
   }
 
   disconnect(reason = 'User disconnect'): Promise<void> {
@@ -505,6 +557,16 @@ class WebClient {
     });
   }
 
+  private notifyAuthExpired(): void {
+    this.authExpiredHandlers.forEach((handler) => {
+      try {
+        handler();
+      } catch {
+        // 单个回调异常不影响其他回调
+      }
+    });
+  }
+
   private buildWsUrl(options: WebConnectOptions): string {
     const wsBase = getWsBase();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -517,6 +579,8 @@ class WebClient {
     if (options.apiBase) params.set('api_base', options.apiBase);
     if (options.model) params.set('model', options.model);
     if (options.projectDir) params.set('project_dir', options.projectDir);
+    if (options.userId) params.set('user_id', options.userId);
+    if (options.accessToken) params.set('access_token', options.accessToken);
     const query = params.toString();
     const target = `${base}${path}`;
     return query ? `${target}?${query}` : target;

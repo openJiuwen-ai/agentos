@@ -2070,7 +2070,9 @@
     "resumeFailed": "恢复失败",
     "submitAnswerFailed": "提交回答失败",
     "unknownError": "未知错误",
-    "errorPrefix": "错误: {{message}}"
+    "errorPrefix": "错误: {{message}}",
+    "authSessionExpired": "登录已过期，请重新登录",
+    "reauthFailed": "自动续期失败，请重新登录"
   },
   "speech": {
     "recognitionUnsupported": "浏览器不支持语音识别",

@@ -6,6 +6,9 @@ import { spawnSync } from 'child_process'
 import { createHash } from 'node:crypto'
 import path from 'path'
 import fs from 'fs'
+import net from 'net'
+import http from 'http'
+import os from 'os'
 
 type ConfigWithLogger = { logger?: { error?: (msg: string, opts?: { error?: Error }) => void } }
 
@@ -831,6 +834,180 @@ function devFileContentApi(): Plugin {
   }
 }
 
+/**
+ * dev 模式下的 /local-api（服务器地址配置 + 连接测试）与 /iam-api（管理面鉴权代理）。
+ * 行为与桌面端 app_web.py 中的实现保持一致；端口固定：管理面 8090、jiuwen 后端 19000。
+ */
+const MANAGER_PORT = 8090
+const BACKEND_PORT = 19000
+const LOCAL_CONFIG_FILE = path.join(os.homedir(), '.agentos_client', 'config.json')
+
+function readLocalConfig(): Record<string, string> {
+  try {
+    return JSON.parse(fs.readFileSync(LOCAL_CONFIG_FILE, 'utf8')) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function writeLocalConfig(config: Record<string, string>): void {
+  fs.mkdirSync(path.dirname(LOCAL_CONFIG_FILE), { recursive: true })
+  fs.writeFileSync(LOCAL_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8')
+}
+
+function parseServerAddress(raw: string): string {
+  const text = (raw || '').trim()
+  if (!text) throw new Error('服务器地址不能为空')
+  const withScheme = text.includes('://') ? text : `http://${text}`
+  try {
+    const host = new URL(withScheme).hostname
+    if (!host) throw new Error('empty host')
+    return host
+  } catch {
+    throw new Error(`无法解析服务器地址: ${raw}`)
+  }
+}
+
+function testManagerEndpoint(host: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const req = http.get({ host, port: MANAGER_PORT, path: '/health', timeout: 5000 }, (resp) => {
+      resp.resume()
+      if (resp.statusCode === 200) resolve({ ok: true })
+      else resolve({ ok: false, error: `管理面健康检查返回 HTTP ${resp.statusCode}` })
+    })
+    req.on('timeout', () => {
+      req.destroy()
+      resolve({ ok: false, error: `管理面连接失败（${host}:${MANAGER_PORT}）：连接超时` })
+    })
+    req.on('error', (err) => {
+      resolve({ ok: false, error: `管理面连接失败（${host}:${MANAGER_PORT}）：${err.message}` })
+    })
+  })
+}
+
+function testBackendEndpoint(host: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port: BACKEND_PORT, timeout: 5000 })
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve({ ok: true })
+    })
+    socket.once('timeout', () => {
+      socket.destroy()
+      resolve({ ok: false, error: `jiuwen 后端连接失败（${host}:${BACKEND_PORT}）：连接超时` })
+    })
+    socket.once('error', (err) => {
+      socket.destroy()
+      resolve({ ok: false, error: `jiuwen 后端连接失败（${host}:${BACKEND_PORT}）：${err.message}` })
+    })
+  })
+}
+
+function devServerConnectApi(): Plugin {
+  const sendJson = (res: http.ServerResponse, statusCode: number, payload: unknown) => {
+    if (res.headersSent) return
+    res.statusCode = statusCode
+    res.setHeader('content-type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify(payload))
+  }
+  const readBody = (req: http.IncomingMessage): Promise<string> =>
+    new Promise((resolve) => {
+      let raw = ''
+      req.on('data', (chunk) => { raw += chunk.toString() })
+      req.on('end', () => resolve(raw))
+      req.on('error', () => resolve(raw))
+    })
+
+  return {
+    name: 'dev-server-connect-api',
+    configureServer(server) {
+      server.middlewares.use('/local-api/server/test', async (req, res) => {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { error: 'method_not_allowed' })
+          return
+        }
+        let address = ''
+        try {
+          const body = JSON.parse(await readBody(req) || '{}') as { address?: unknown }
+          address = typeof body.address === 'string' ? body.address : ''
+        } catch { /* keep empty */ }
+        let host: string
+        try {
+          host = parseServerAddress(address)
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: (error as Error).message })
+          return
+        }
+        const [manager, backend] = await Promise.all([
+          testManagerEndpoint(host),
+          testBackendEndpoint(host),
+        ])
+        sendJson(res, 200, { ok: manager.ok && backend.ok, host, manager, backend })
+      })
+
+      server.middlewares.use('/local-api/server', async (req, res) => {
+        if (req.method === 'GET') {
+          const config = readLocalConfig()
+          sendJson(res, 200, {
+            address: config.server_address || null,
+            host: config.server_host || null,
+          })
+          return
+        }
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { error: 'method_not_allowed' })
+          return
+        }
+        let address = ''
+        try {
+          const body = JSON.parse(await readBody(req) || '{}') as { address?: unknown }
+          address = typeof body.address === 'string' ? body.address : ''
+        } catch { /* keep empty */ }
+        try {
+          const host = parseServerAddress(address)
+          writeLocalConfig({ server_address: address.trim(), server_host: host })
+          sendJson(res, 200, { ok: true, host })
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: (error as Error).message })
+        }
+      })
+
+      // /iam-api/* → http://{server_host}:8090/api/v1/*（管理面鉴权）
+      server.middlewares.use('/iam-api', (req, res) => {
+        const host = readLocalConfig().server_host
+        if (!host) {
+          sendJson(res, 400, { error: '未配置服务器地址' })
+          return
+        }
+        const proxyReq = http.request(
+          {
+            host,
+            port: MANAGER_PORT,
+            path: `/api/v1${req.url || ''}`,
+            method: req.method,
+            headers: { ...req.headers, host: `${host}:${MANAGER_PORT}` },
+            timeout: 15000,
+          },
+          (proxyResp) => {
+            res.statusCode = proxyResp.statusCode || 502
+            const contentType = proxyResp.headers['content-type']
+            if (contentType) res.setHeader('content-type', contentType)
+            proxyResp.pipe(res)
+          },
+        )
+        proxyReq.on('timeout', () => {
+          proxyReq.destroy()
+          sendJson(res, 504, { error: '管理面请求超时' })
+        })
+        proxyReq.on('error', (err) => {
+          sendJson(res, 502, { error: `管理面不可达：${err.message}` })
+        })
+        req.pipe(proxyReq)
+      })
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 function portFromEnv(name: string, fallback: number): number {
   const value = Number.parseInt(process.env[name] ?? '', 10)
@@ -842,7 +1019,7 @@ const webPort = portFromEnv('WEB_PORT', 19000)
 const webTarget = `http://127.0.0.1:${webPort}`
 
 export default defineConfig({
-  plugins: [suppressWsProxySocketErrors(), devWsTrafficLogger(), devFileContentApi(), react(), svgr()],
+  plugins: [suppressWsProxySocketErrors(), devWsTrafficLogger(), devFileContentApi(), devServerConnectApi(), react(), svgr()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -867,6 +1044,30 @@ export default defineConfig({
               return
             }
             console.error('[vite] ws proxy error:', err.message)
+          })
+          // 与桌面版 app_web.py ws_proxy 对齐：浏览器 WebSocket 无法自定义 header，
+          // 前端把 IAM 身份放进 /ws query，此处提取并注入 X-User-Id / Authorization，
+          // 同时从转发 URL 中剔除，避免 token 进入后端日志/URL。
+          proxy.on('proxyReqWs', (proxyReq, req) => {
+            try {
+              const url = new URL(req.url || '/ws', 'http://localhost')
+              const userId = url.searchParams.get('user_id')
+              const accessToken = url.searchParams.get('access_token')
+              if (userId) {
+                proxyReq.setHeader('X-User-Id', userId)
+              }
+              if (accessToken) {
+                proxyReq.setHeader('Authorization', `Bearer ${accessToken}`)
+              }
+              if (userId || accessToken) {
+                url.searchParams.delete('user_id')
+                url.searchParams.delete('access_token')
+                const search = url.search
+                proxyReq.path = (url.pathname || '/ws') + search
+              }
+            } catch {
+              // 解析失败时保持原样转发
+            }
           })
         },
       },

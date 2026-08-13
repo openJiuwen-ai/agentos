@@ -335,6 +335,25 @@
   overflow-y: auto;
 }
 
+/* ---------- 敬请期待占位 ---------- */
+.menu-coming {
+  padding: 18px 20px;
+  text-align: center;
+}
+
+.menu-coming-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--t1);
+  margin-bottom: 6px;
+}
+
+.menu-coming-desc {
+  font-size: 12px;
+  color: var(--t3);
+  line-height: 1.6;
+}
+
 .connector-dot {
   width: 14px;
   height: 14px;

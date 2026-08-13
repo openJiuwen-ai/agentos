@@ -14,14 +14,27 @@ import {
   NEW_CONVERSATION_ID,
   createConversationTitle,
   forgetCreatedConversation,
+  isConversationMissing,
   registerCreatedConversation,
   resetNewConversationRuntime,
 } from './multi-session/state/newConversationLifecycle';
-import { createConversationSession } from './multi-session/state/createConversationSession';
+import {
+  createConversationSession,
+  type SessionCreateRequestFn,
+} from './multi-session/state/createConversationSession';
 import { beginHistoryRestore, HISTORY_GET_METHOD, type HistoryRestoreHandle } from './features/historyRestore';
 import { normalizeToolCallPayload, normalizeToolResultPayload } from './features/tool-events/toolEventNormalizer';
 import { generateUuidV4 } from './utils/uuid';
 import { LoginPage, getLoginUser, clearLoginUser } from './components/auth/LoginPage';
+import { ServerConnectDialog } from './components/auth/ServerConnectDialog';
+import {
+  getAuthSession,
+  getSavedServer,
+  iamLogout,
+  iamRefresh,
+  saveAuthSession,
+  testServer,
+} from './services/serverConfig';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChatHome } from './components/home/ChatHome';
 import { ChatView } from './components/chat/ChatView';
@@ -30,24 +43,101 @@ import { ToolsDrawer } from './components/sidebar/ToolsDrawer';
 import { SettingsDialog, PluginsDialog } from './components/settings/SettingsDialog';
 import './App.css';
 
-function generateSessionId(): string {
-  const ts = Date.now().toString(16);
-  const rand = generateUuidV4().replace(/-/g, '').slice(0, 12);
-  return `sess_${ts}_${rand}`;
-}
-
 interface Toast {
   id: number;
   message: string;
   isError: boolean;
 }
 
+/** session.get_metadata 失败时的短退避重试间隔（毫秒）。 */
+const SESSION_METADATA_RETRY_DELAYS_MS = [200, 500];
+
+async function requestSessionMetadataWithRetry(
+  request: SessionCreateRequestFn,
+  sessionId: string,
+): Promise<Session | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await request<Session>('session.get_metadata', { session_id: sessionId });
+    } catch {
+      if (attempt >= SESSION_METADATA_RETRY_DELAYS_MS.length) return null;
+      await new Promise((resolve) => setTimeout(resolve, SESSION_METADATA_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+/**
+ * session.get_metadata 失败时的兜底：用 session.list 从后端聚合的
+ * metadata（metadata.json）里按 id 查找，作为跨进程/时序可见性的兜底。
+ */
+async function findSessionViaList(
+  request: SessionCreateRequestFn,
+  sessionId: string,
+): Promise<Session | null> {
+  try {
+    const payload = await request<{ sessions?: Session[] }>('session.list', { limit: 200 });
+    const rows = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    return rows.find((item) => item.session_id === sessionId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** 通过聊天创建定时任务:预填到对话输入框的引导文案(用户补全后发送,agent 用 cron_create_job 工具建任务)。 */
 const CREATE_CRON_VIA_CHAT_PROMPT = '帮我创建一个定时任务：';
 
 function App() {
+  /* ---------- 服务器连接门（第二阶段）：checking → prompt / ready ---------- */
+  const [serverStage, setServerStage] = useState<'checking' | 'prompt' | 'ready'>('checking');
+  const [savedAddress, setSavedAddress] = useState('');
+  const [serverError, setServerError] = useState('');
+
   /* ---------- 登录 ---------- */
   const [username, setUsername] = useState<string | null>(() => getLoginUser());
+
+  /* 启动：读取本地 config 中的服务器地址；有则直接测试连接，失败/无则弹窗 */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await getSavedServer();
+      if (cancelled) return;
+      if (!saved.address) {
+        setServerStage('prompt');
+        return;
+      }
+      setSavedAddress(saved.address);
+      try {
+        const result = await testServer(saved.address);
+        if (cancelled) return;
+        if (result.ok) {
+          setServerStage('ready');
+          return;
+        }
+        const details: string[] = [];
+        if (result.manager && !result.manager.ok && result.manager.error) details.push(result.manager.error);
+        if (result.backend && !result.backend.ok && result.backend.error) details.push(result.backend.error);
+        setServerError(details.length > 0 ? details.join('；') : '服务器连接失败，请检查后重试');
+      } catch (error) {
+        if (cancelled) return;
+        setServerError(error instanceof Error ? error.message : '服务器连接失败，请检查后重试');
+      }
+      setServerStage('prompt');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /* 服务器就绪后：若本地已有登录会话，先用 refresh_token 换新 pair 校验有效性，失效则回登录页 */
+  useEffect(() => {
+    if (serverStage !== 'ready') return;
+    const session = getAuthSession();
+    if (!session) return;
+    void iamRefresh(session.refresh_token)
+      .then((fresh) => saveAuthSession(fresh))
+      .catch(() => {
+        clearLoginUser();
+        setUsername(null);
+      });
+  }, [serverStage]);
 
   /* ---------- 路由与会话 ---------- */
   const { route, navigate } = useChatRoute();
@@ -73,6 +163,7 @@ function App() {
 
   const initialDataLoadedRef = useRef(false);
   const creatingSessionRef = useRef(false);
+  const createCancelledRef = useRef(false);
   const historyHandlesRef = useRef(new Map<string, HistoryRestoreHandle>());
   const restoredSessionsRef = useRef(new Set<string>());
   const promotedSessionIdsRef = useRef(new Set<string>());
@@ -82,6 +173,20 @@ function App() {
   const { isConnected, connectionState, request, sendMessage, cancel, switchMode, sendUserAnswer, refreshGoal, resumeGoal, setGoalObjective } = useWebSocket({
     activeSessionId: sessionId,
     onError: error => pushToast(error, true),
+    onCronResultArrived: (cronSessionId, cronJobId) => {
+      if (!cronJobId) return;
+      // 非占位最终结果到达：先给用户可感知的提示（定时触发/立即执行都适用）。
+      const cronJob = useCronStore.getState().jobs.find(j => j.id === cronJobId);
+      if (cronJob) {
+        pushToast(`定时任务「${cronJob.name}」执行完成`);
+      }
+      // 仅当用户仍停留在该任务的"立即执行"等待会话时才恢复历史（对齐 jiuwenswarm web）：
+      // 定时调度不强制跳转，避免多个任务同时返回时互相覆盖跳转。
+      const lastSid = useCronStore.getState().lastRunSessionId[cronJobId] ?? '';
+      if (lastSid && sessionIdRef.current === lastSid) {
+        restoreHistory(cronSessionId);
+      }
+    },
   });
 
   /* ---------- Toast ---------- */
@@ -206,21 +311,37 @@ function App() {
       setMissingSession(false);
       return;
     }
+    // 刚创建提升的会话：本地已有完整元数据（registerCreatedConversation），
+    // 无需再向后端 get_metadata——避免后端跨进程/时序上 metadata 尚未可见时
+    // 误判“会话不存在或已被删除”。
+    if (promotedSessionIdsRef.current.has(routeSessionId)) {
+      const localSession = useSessionStore.getState().sessions.find(
+        (item) => item.session_id === routeSessionId,
+      );
+      if (localSession) {
+        useSessionStore.getState().setCurrentSession(localSession);
+      }
+      setMissingSession(false);
+      return;
+    }
     let cancelled = false;
     void (async () => {
-      try {
-        const session = await request<Session>('session.get_metadata', { session_id: routeSessionId });
-        if (cancelled) return;
-        useSessionStore.getState().updateSession(routeSessionId, session);
-        useSessionStore.getState().setCurrentSession(session);
-        if (session.model) {
-          useSessionStore.getState().setSelectedModelName(routeSessionId, session.model);
-        }
-        setMissingSession(false);
-      } catch {
-        if (!cancelled) setMissingSession(true);
+      // 单条 get_metadata 失败时先短退避重试，再退到 session.list 兜底
+      let session: Session | null = await requestSessionMetadataWithRetry(request, routeSessionId);
+      if (!session) {
+        session = await findSessionViaList(request, routeSessionId);
+      }
+      if (cancelled) return;
+      if (!session) {
+        setMissingSession(true);
         return;
       }
+      useSessionStore.getState().updateSession(routeSessionId, session);
+      useSessionStore.getState().setCurrentSession(session);
+      if (session.model) {
+        useSessionStore.getState().setSelectedModelName(routeSessionId, session.model);
+      }
+      setMissingSession(false);
       // 刚创建提升的会话无需拉历史（消息都在本地）
       if (promotedSessionIdsRef.current.has(routeSessionId)) return;
       if (restoredSessionsRef.current.has(routeSessionId)) return;
@@ -302,23 +423,22 @@ function App() {
         return;
       }
 
-      // 首页首条消息：先创建会话再发送
-      if (creatingSessionRef.current) return;
-      creatingSessionRef.current = true;
-      useChatStore.getState().setProcessing(NEW_CONVERSATION_ID, true);
-      const newSid = generateSessionId();
-      const newRuntime = useSessionStore.getState().getRuntime(NEW_CONVERSATION_ID);
-      const runtimeSettings = {
-        mode: newRuntime?.mode ?? ('agent' as AgentMode),
-        selectedModelName: useSessionStore.getState().getEffectiveModelName(NEW_CONVERSATION_ID),
-        projectDir: newRuntime?.projectDirectory ?? null,
-      };
-      const selectedProject = useWorkspaceStore.getState().selectedProject;
-      const workMode = useWorkspaceStore.getState().workMode;
+    // 首页首条消息：先创建会话再发送
+    if (creatingSessionRef.current) return;
+    creatingSessionRef.current = false;
+    useChatStore.getState().setProcessing(NEW_CONVERSATION_ID, true);
+    const createToken = generateUuidV4();
+    const newRuntime = useSessionStore.getState().getRuntime(NEW_CONVERSATION_ID);
+    const runtimeSettings = {
+      mode: newRuntime?.mode ?? ('agent' as AgentMode),
+      selectedModelName: useSessionStore.getState().getEffectiveModelName(NEW_CONVERSATION_ID),
+      projectDir: newRuntime?.projectDirectory ?? null,
+    };
+    const selectedProject = useWorkspaceStore.getState().selectedProject;
+    const workMode = useWorkspaceStore.getState().workMode;
 
       try {
         const createParams: Record<string, unknown> = {
-          session_id: newSid,
           mode: runtimeSettings.mode,
           title: createConversationTitle(content).slice(0, 100),
           work_mode: workMode,
@@ -327,37 +447,58 @@ function App() {
         if (selectedProject?.project_id) createParams.project_id = selectedProject.project_id;
         if (selectedProject?.project_dir) createParams.project_dir = selectedProject.project_dir;
 
-        const created = await createConversationSession(request, createParams, newSid);
-        const createdSession = registerCreatedConversation(created.session_id, runtimeSettings, Date.now(), content, {
+      const created = await createConversationSession(request, createParams, createToken);
+      const realSid = created.session_id;
+
+      // 创建期间用户点击了停止：取消创建，清理后端会话并留在首页
+      if (createCancelledRef.current) {
+        useChatStore.getState().setProcessing(NEW_CONVERSATION_ID, false);
+        useChatStore.getState().setThinking(NEW_CONVERSATION_ID, false);
+        useChatStore.getState().setInputValue(NEW_CONVERSATION_ID, content);
+        forgetCreatedConversation(realSid);
+        try {
+          await request('session.delete', { session_id: realSid });
+        } catch {
+          // 删除失败静默处理，会话残留不影响使用
+        }
+        return;
+      }
+
+      const createdSession = registerCreatedConversation(
+        created.session_id,
+        runtimeSettings,
+        Date.now(),
+        content,
+        {
           project_id: created.project_id || selectedProject?.project_id || '',
           project_dir: created.project_dir || selectedProject?.project_dir || '',
           work_mode: created.work_mode || workMode,
         });
         // 迁移首页已选技能
         const pendingSkills = useSessionStore.getState().getRuntime(NEW_CONVERSATION_ID)?.selectedSkills ?? [];
-        pendingSkills.forEach(skill => useSessionStore.getState().addSelectedSkill(newSid, skill));
+        pendingSkills.forEach(skill => useSessionStore.getState().addSelectedSkill(realSid, skill));
         useSessionStore.getState().clearSelectedSkills(NEW_CONVERSATION_ID);
         useWorkspaceStore.getState().upsertSession(createdSession, { isNew: true });
-        promotedSessionIdsRef.current.add(newSid);
+        promotedSessionIdsRef.current.add(realSid);
         useChatStore.getState().setProcessing(NEW_CONVERSATION_ID, false);
-        setSessionId(newSid);
-        navigate({ kind: 'chat-session', sessionId: newSid }, { replace: true });
+        setSessionId(realSid);
+        navigate({ kind: 'chat-session', sessionId: realSid }, { replace: true });
 
         const goalArmed = useGoalStore.getState().runtimes[NEW_CONVERSATION_ID]?.armed ?? false;
         useGoalStore.getState().setArmed(NEW_CONVERSATION_ID, false);
         if (goalArmed) {
-          useChatStore.getState().addMessage(newSid, {
+          useChatStore.getState().addMessage(realSid, {
             id: `user-${Date.now()}`,
             role: 'user',
             content,
             timestamp: new Date().toISOString(),
             isGoalObjectiveMessage: true,
           });
-          await setGoalObjective(newSid, content);
+          await setGoalObjective(realSid, content);
         } else {
-          const sent = await sendMessage(content, newSid, mediaItems);
+          const sent = await sendMessage(content, realSid, mediaItems);
           if (!sent) {
-            useChatStore.getState().setInputValue(newSid, content);
+            useChatStore.getState().setInputValue(realSid, content);
           }
         }
       } catch (error) {
@@ -372,10 +513,20 @@ function App() {
     [navigate, pushToast, request, sendMessage, setGoalObjective]
   );
 
-  /* ---------- 停止 ---------- */
+  /* ---------- 停止（含首页创建请求的取消） ---------- */
   const handleCancel = useCallback(() => {
     const currentSessionId = sessionIdRef.current;
-    if (!currentSessionId || currentSessionId === NEW_CONVERSATION_ID) return;
+    if (!currentSessionId) return;
+    if (currentSessionId === NEW_CONVERSATION_ID) {
+      // 首页创建请求进行中：标记取消，创建完成后不再进入会话
+      if (creatingSessionRef.current) {
+        createCancelledRef.current = true;
+        creatingSessionRef.current = false;
+        useChatStore.getState().setProcessing(NEW_CONVERSATION_ID, false);
+        useChatStore.getState().setThinking(NEW_CONVERSATION_ID, false);
+      }
+      return;
+    }
     void cancel(currentSessionId);
   }, [cancel]);
 
@@ -482,6 +633,10 @@ function App() {
 
   /* ---------- 退出登录 ---------- */
   const handleLogout = useCallback(() => {
+    const session = getAuthSession();
+    if (session) {
+      void iamLogout(session);
+    }
     clearLoginUser();
     webClient.disconnect();
     window.location.hash = '';
@@ -495,6 +650,11 @@ function App() {
   const chatRuntime = useChatStore(s => s.runtimes[sessionId]);
   const isNewSession = sessionId === NEW_CONVERSATION_ID;
   const isProcessing = chatRuntime?.isProcessing ?? false;
+  // 对齐 jiuwenswarm web：即使 get_metadata 失败，只要会话是本页刚创建的
+  // 或已存在于会话列表，就不渲染“会话不存在或已被删除”。
+  const routeSessionMissing = Boolean(routeSessionId)
+    && missingSession
+    && isConversationMissing(routeSessionId ?? '', initialDataLoadedRef.current, sessions);
 
   const sessionTitle = useMemo(() => {
     if (isNewSession) return '';
@@ -502,9 +662,47 @@ function App() {
     return (session?.display_title || session?.title || '').trim();
   }, [currentSession, isNewSession, sessionId, sessions]);
 
+  /* ---------- 服务器连接门 ---------- */
+  if (serverStage === 'checking') {
+    return (
+      <div className="app-connecting" style={{ position: 'fixed', inset: 0 }}>
+        <div className="app-connecting-card">
+          <div className="app-connecting-spinner" />
+          <div className="app-connecting-text">正在连接服务器…</div>
+        </div>
+      </div>
+    );
+  }
+  if (serverStage === 'prompt') {
+    return (
+      <ServerConnectDialog
+        initialAddress={savedAddress}
+        initialError={serverError}
+        onConnected={() => {
+          setServerError('');
+          setServerStage('ready');
+        }}
+      />
+    );
+  }
+
   /* ---------- 登录门 ---------- */
   if (!username) {
-    return <LoginPage onLogin={setUsername} />;
+    return (
+      <LoginPage
+        onLogin={nextUsername => {
+          setUsername(nextUsername);
+          // 登录前 useWebSocket 在组件挂载时已建立过一次 WS 连接，此时
+          // getAuthSession() 为 null（尚未登录），/ws 没带 user_id/access_token，
+          // gateway 侧 user_id 为空，session.create 会报
+          // "user_id is required for AgentOS routing"。
+          // 新 session 已由 LoginPage 保存（saveAuthSession 先于 onLogin 调用），
+          // 这里断开旧连接并用新身份重连（reconnect 会丢弃缓存的 userId/accessToken，
+          // 重新读取本地最新会话，自然带上 username）。
+          void webClient.disconnect('login').then(() => webClient.reconnect());
+        }}
+      />
+    );
   }
 
   const connecting = connectionState !== 'ready';
@@ -552,7 +750,7 @@ function App() {
             mode={sessionRuntime?.mode ?? 'agent'}
             onSwitchMode={handleSwitchMode}
           />
-        ) : missingSession ? (
+        ) : routeSessionMissing ? (
           <div className="app-missing">
             <div className="app-missing-text">会话不存在或已被删除</div>
             <button className="btn btn-primary" onClick={enterNewConversation}>

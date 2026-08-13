@@ -49,6 +49,10 @@ export interface WebConnectOptions {
   apiBase?: string;
   model?: string;
   projectDir?: string;
+  /** IAM 用户 ID（放入 /ws query，由本机代理 app_web.py ws_proxy 提取为 X-User-Id header） */
+  userId?: string;
+  /** IAM access_token（放入 /ws query，由本机代理提取为 Authorization: Bearer header） */
+  accessToken?: string;
 }
 
 export interface WebError extends Error {

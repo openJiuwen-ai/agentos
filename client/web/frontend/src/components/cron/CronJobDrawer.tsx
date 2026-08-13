@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { useCronStore } from '../../stores';
 import { webRequest } from '../../services/webClient';
+import { getAuthSession } from '../../services/serverConfig';
 import { DEFAULT_CRON_TARGET, DEFAULT_CRON_TIMEZONE, normalizeJobForEdit, validateCronExpr } from '../../utils/cronExpr';
 import type { CronTemplateUI } from '../../types';
 import { CronSvgIcon } from './cronSvgIcons';
@@ -170,7 +171,15 @@ export function CronJobDrawer({ mode, editJobId, template, initialDescription, o
         await updateJob(editJobId, baseFields);
         onSaved();
       } else {
-        await webRequest('cron.job.create', { ...baseFields, mode: 'agent' });
+        // 显式带上创建者 user_id：job 触发时后端用它作为 AgentOS 路由身份，
+        // 缺失会报 "user_id is required for AgentOS routing"。
+        // 网关若已从连接注入 user_id 会覆盖此值（连接身份优先），此处仅为兜底。
+        const createParams: Record<string, unknown> = { ...baseFields, mode: 'agent' };
+        const authSession = getAuthSession();
+        if (authSession?.user_id) {
+          createParams.user_id = authSession.user_id;
+        }
+        await webRequest('cron.job.create', createParams);
         onCreated();
       }
     } catch (e) {

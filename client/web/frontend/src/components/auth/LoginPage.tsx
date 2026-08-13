@@ -1,27 +1,24 @@
 /**
  * 登录页 —— 按 UI_design/登录页 设计稿实现
- * 纯前端校验（无后端鉴权），任意非空账号名 + 密码即可进入
+ * 第二阶段：对接管理面 IAM 鉴权（POST /api/v1/auth/login，见 001-iam-auth-v0.md），
+ * 成功返回 access_token + refresh_token + user 信息并保存本地会话；失败展示错误信息允许重试。
  */
 import { useState } from 'react';
 import loginHero from '../../assets/design/login-hero.png';
+import {
+  clearAuthSession,
+  getAuthSession,
+  iamLogin,
+  saveAuthSession,
+} from '../../services/serverConfig';
 import './LoginPage.css';
 
-export const LOGIN_STORAGE_KEY = 'agentos_login_user';
-
 export function getLoginUser(): string | null {
-  try {
-    return window.localStorage.getItem(LOGIN_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+  return getAuthSession()?.username ?? null;
 }
 
 export function clearLoginUser(): void {
-  try {
-    window.localStorage.removeItem(LOGIN_STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
+  clearAuthSession();
 }
 
 function LogoMark() {
@@ -45,10 +42,12 @@ export function LoginPage({ onLogin }: { onLogin: (username: string) => void }) 
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = (event?: React.FormEvent) => {
+  const handleSubmit = async (event?: React.FormEvent) => {
     event?.preventDefault();
-    if (!account.trim()) {
+    const username = account.trim();
+    if (!username) {
       setError('请输入账号名');
       return;
     }
@@ -56,12 +55,17 @@ export function LoginPage({ onLogin }: { onLogin: (username: string) => void }) 
       setError('请输入密码');
       return;
     }
+    setBusy(true);
+    setError('');
     try {
-      window.localStorage.setItem(LOGIN_STORAGE_KEY, account.trim());
-    } catch {
-      /* ignore */
+      const session = await iamLogin(username, password);
+      saveAuthSession(session);
+      onLogin(session.username);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '鉴权失败，请重试');
+    } finally {
+      setBusy(false);
     }
-    onLogin(account.trim());
   };
 
   return (
@@ -79,6 +83,7 @@ export function LoginPage({ onLogin }: { onLogin: (username: string) => void }) 
             placeholder="请输入账号名"
             value={account}
             autoComplete="username"
+            disabled={busy}
             onChange={(e) => { setAccount(e.target.value); setError(''); }}
           />
 
@@ -90,12 +95,15 @@ export function LoginPage({ onLogin }: { onLogin: (username: string) => void }) 
             placeholder="请输入密码"
             value={password}
             autoComplete="current-password"
+            disabled={busy}
             onChange={(e) => { setPassword(e.target.value); setError(''); }}
           />
 
           {error ? <div className="login-error">{error}</div> : null}
 
-          <button type="submit" className="login-submit">登录</button>
+          <button type="submit" className="login-submit" disabled={busy}>
+            {busy ? '登录中…' : '登录'}
+          </button>
           <div className="login-tip">暂无账号？请联系系统管理员</div>
         </form>
       </div>

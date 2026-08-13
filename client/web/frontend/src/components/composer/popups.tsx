@@ -51,13 +51,16 @@ export function PlusMenu({
   const [open, setOpen] = useState(false);
   const [modeSubOpen, setModeSubOpen] = useState(false);
   const [connectorSubOpen, setConnectorSubOpen] = useState(false);
+  const [comingSubOpen, setComingSubOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   void sessionId;
+  void onOpenSkills; // 技能入口暂为「敬请期待」占位，保留 prop 兼容调用方
 
   const close = () => {
     setOpen(false);
     setModeSubOpen(false);
     setConnectorSubOpen(false);
+    setComingSubOpen(false);
   };
 
   return (
@@ -122,24 +125,42 @@ export function PlusMenu({
               </div>
             ) : null}
           </div>
-          <button
-            className="menu-item"
-            onClick={() => {
-              close();
-              onOpenSkills();
-            }}
+          <div
+            className="menu-item has-sub"
+            onMouseEnter={() => { setComingSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); }}
+            onMouseLeave={() => setComingSubOpen(false)}
           >
             <span className="menu-item-icon">
               <img src={skillIcon} alt="" style={{ width: 15, height: 15 }} />
             </span>
             <span className="menu-item-label">技能</span>
-          </button>
-          <button className="menu-item" disabled title="敬请期待">
-            <span className="menu-item-icon">
-              <Users size={15} />
-            </span>
+            <ChevronRight size={13} className="menu-sub-arrow" />
+            {comingSubOpen ? (
+              <div className="menu-pop sub-menu">
+                <div className="menu-coming">
+                  <div className="menu-coming-title">敬请期待</div>
+                  <div className="menu-coming-desc">该功能正在建设中，敬请期待</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div
+            className="menu-item has-sub"
+            onMouseEnter={() => { setComingSubOpen(true); setModeSubOpen(false); setConnectorSubOpen(false); }}
+            onMouseLeave={() => setComingSubOpen(false)}
+          >
+            <span className="menu-item-icon"><Users size={15} /></span>
             <span className="menu-item-label">专家</span>
-          </button>
+            <ChevronRight size={13} className="menu-sub-arrow" />
+            {comingSubOpen ? (
+              <div className="menu-pop sub-menu">
+                <div className="menu-coming">
+                  <div className="menu-coming-title">敬请期待</div>
+                  <div className="menu-coming-desc">该功能正在建设中，敬请期待</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <div
             className="menu-item has-sub"
             onMouseEnter={() => {
@@ -189,7 +210,8 @@ export function ModelSelector({ sessionId }: { sessionId: string }) {
   const getEffectiveModelName = useSessionStore(s => s.getEffectiveModelName);
 
   const effective = getEffectiveModelName(sessionId);
-  const isAuto = !selectedModelName || selectedModelName === defaultModelName;
+  // 只有「未选择」时才是 Auto；手动选择了默认模型时如实显示模型名
+  const isAuto = !selectedModelName;
   const display = isAuto ? 'Auto' : (selectedModelName ?? 'Auto');
 
   const handleSelect = (name: string) => {

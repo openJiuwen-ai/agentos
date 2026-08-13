@@ -1,19 +1,20 @@
 /**
- * session.create 创建会话：加长超时，并在超时后按同一 session_id 做幂等恢复。
+ * session.create 创建会话：session_id 由后端生成并通过响应返回，前端不再传 session_id。
  *
- * 背景：前端默认 RPC 超时 15s，而 Gateway→AgentServer unary 可达 600s。
- * create 超时后 pending 被丢弃，后端却可能已落盘，导致前后端会话分叉。
+ * 加长超时（Gateway→AgentServer unary 可达 600s）；超时后用同一个 create_token
+ * 幂等重试——AgentServer 按 (create_token, session 参数签名) 返回同一个 session，
+ * 避免超时后前后端会话分叉。
  */
 
 import type { WorkMode } from '../../features/workspace/projectTypes';
 
 export const SESSION_CREATE_TIMEOUT_MS = 60_000;
 
-/** 超时后轮询 metadata 的次数（含首次立即查询）。 */
-export const SESSION_CREATE_METADATA_POLL_ATTEMPTS = 5;
+/** 超时后重试 session.create 的次数。 */
+export const SESSION_CREATE_RETRY_ATTEMPTS = 3;
 
-/** 轮询间隔；给仍在飞行的 create 留出落盘时间，降低并发重试 create 的概率。 */
-export const SESSION_CREATE_METADATA_POLL_INTERVAL_MS = 500;
+/** 重试间隔：给仍在飞行的 create 留出落盘时间，降低并发重复创建的几率。 */
+export const SESSION_CREATE_RETRY_INTERVAL_MS = 1000;
 
 export type SessionCreateRequestFn = <T = unknown>(
   method: string,
@@ -40,8 +41,8 @@ export interface CreatedConversationSession {
 }
 
 export interface CreateConversationSessionOptions {
-  metadataPollAttempts?: number;
-  metadataPollIntervalMs?: number;
+  retryAttempts?: number;
+  retryIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -59,10 +60,6 @@ export function isRequestTimeoutError(error: unknown): boolean {
   return errorCode(error) === 'REQUEST_TIMEOUT';
 }
 
-export function isAlreadyExistsError(error: unknown): boolean {
-  return errorCode(error) === 'ALREADY_EXISTS';
-}
-
 export function resolveCreatedSessionId(
   payload: SessionCreatePayload | null | undefined,
 ): string | undefined {
@@ -74,18 +71,6 @@ export function resolveCreatedSessionId(
   return undefined;
 }
 
-function normalizeCreatedSession(
-  expectedSessionId: string,
-  payload?: SessionCreatePayload | null,
-): CreatedConversationSession {
-  return {
-    session_id: expectedSessionId,
-    project_id: payload?.project_id ?? payload?.projectId,
-    project_dir: payload?.project_dir ?? payload?.projectDir,
-    work_mode: normalizeWorkMode(payload?.work_mode ?? payload?.workMode),
-  };
-}
-
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -95,94 +80,78 @@ function defaultSleep(ms: number): Promise<void> {
 async function invokeSessionCreate(
   request: SessionCreateRequestFn,
   createParams: Record<string, unknown>,
-  expectedSessionId: string,
+  createToken: string,
 ): Promise<CreatedConversationSession> {
-  const payload = await request<SessionCreatePayload>('session.create', createParams, {
+  // session_id 必须由后端生成：显式剔除，避免旧逻辑误传。
+  // create_token 由前端每次“逻辑创建”生成并跨重试复用，AgentServer 凭它做幂等。
+  const params: Record<string, unknown> = { ...createParams, create_token: createToken };
+  delete params.session_id;
+
+  const payload = await request<SessionCreatePayload>('session.create', params, {
     timeoutMs: SESSION_CREATE_TIMEOUT_MS,
   });
   const createdSessionId = resolveCreatedSessionId(payload);
-  if (createdSessionId !== expectedSessionId) {
-    throw new Error('session.create returned an unexpected session id');
+  if (!createdSessionId) {
+    throw new Error('session.create did not return a session id');
   }
-  return normalizeCreatedSession(expectedSessionId, payload);
-}
-
-async function tryLoadCreatedSessionMetadata(
-  request: SessionCreateRequestFn,
-  expectedSessionId: string,
-): Promise<CreatedConversationSession | undefined> {
-  try {
-    const meta = await request<SessionCreatePayload>(
-      'session.get_metadata',
-      { session_id: expectedSessionId },
-      { timeoutMs: SESSION_CREATE_TIMEOUT_MS },
-    );
-    const existingId = resolveCreatedSessionId(meta) ?? expectedSessionId;
-    if (existingId === expectedSessionId) {
-      return normalizeCreatedSession(expectedSessionId, meta);
-    }
-  } catch {
-    // metadata 尚未就绪或查询失败时继续轮询
-  }
-  return undefined;
+  return {
+    session_id: createdSessionId,
+    project_id: payload?.project_id ?? payload?.projectId,
+    project_dir: payload?.project_dir ?? payload?.projectDir,
+    work_mode: normalizeWorkMode(payload?.work_mode ?? payload?.workMode),
+  };
 }
 
 async function recoverAfterCreateTimeout(
   request: SessionCreateRequestFn,
   createParams: Record<string, unknown>,
-  expectedSessionId: string,
+  createToken: string,
   options: CreateConversationSessionOptions = {},
 ): Promise<CreatedConversationSession> {
-  const pollAttempts = Math.max(
+  const retryAttempts = Math.max(
     1,
-    options.metadataPollAttempts ?? SESSION_CREATE_METADATA_POLL_ATTEMPTS,
+    options.retryAttempts ?? SESSION_CREATE_RETRY_ATTEMPTS,
   );
-  const pollIntervalMs = Math.max(
+  const retryIntervalMs = Math.max(
     0,
-    options.metadataPollIntervalMs ?? SESSION_CREATE_METADATA_POLL_INTERVAL_MS,
+    options.retryIntervalMs ?? SESSION_CREATE_RETRY_INTERVAL_MS,
   );
   const sleep = options.sleep ?? defaultSleep;
 
-  for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
-    if (attempt > 0 && pollIntervalMs > 0) {
-      await sleep(pollIntervalMs);
+  let lastError: unknown = new Error('session.create timed out');
+  for (let attempt = 0; attempt < retryAttempts; attempt += 1) {
+    if (attempt > 0 && retryIntervalMs > 0) {
+      await sleep(retryIntervalMs);
     }
-    const recovered = await tryLoadCreatedSessionMetadata(request, expectedSessionId);
-    if (recovered) {
-      return recovered;
-    }
-  }
-
-  // 轮询仍未见到落盘时，再同 id 重试；ALREADY_EXISTS 视为并发 create 已成功。
-  try {
-    return await invokeSessionCreate(request, createParams, expectedSessionId);
-  } catch (retryError) {
-    if (isAlreadyExistsError(retryError)) {
-      const lateMeta = await tryLoadCreatedSessionMetadata(request, expectedSessionId);
-      if (lateMeta) {
-        return lateMeta;
+    try {
+      // 同一 create_token 重试：后端返回同一个 session，不会重复创建。
+      return await invokeSessionCreate(request, createParams, createToken);
+    } catch (error) {
+      if (!isRequestTimeoutError(error)) {
+        throw error;
       }
-      return normalizeCreatedSession(expectedSessionId);
+      lastError = error;
     }
-    throw retryError;
   }
+  throw lastError;
 }
 
 /**
- * 创建会话。超时后先轮询 metadata，再同 session_id 重试；ALREADY_EXISTS 视为成功。
+ * 创建会话。后端生成 session_id 并通过响应返回；
+ * 超时后按同一 create_token 幂等重试。
  */
 export async function createConversationSession(
   request: SessionCreateRequestFn,
   createParams: Record<string, unknown>,
-  expectedSessionId: string,
+  createToken: string,
   options: CreateConversationSessionOptions = {},
 ): Promise<CreatedConversationSession> {
   try {
-    return await invokeSessionCreate(request, createParams, expectedSessionId);
+    return await invokeSessionCreate(request, createParams, createToken);
   } catch (error) {
     if (!isRequestTimeoutError(error)) {
       throw error;
     }
-    return recoverAfterCreateTimeout(request, createParams, expectedSessionId, options);
+    return recoverAfterCreateTimeout(request, createParams, createToken, options);
   }
 }

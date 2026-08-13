@@ -2,13 +2,15 @@
  * 消息列表 —— 按 UI_design/工作-PPT生成中 设计稿实现
  * 用户气泡（右侧灰底+技能chip）/ 助手头像+Markdown / 工具状态行 / 思考过程折叠块 / 媒体与文件卡片
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search, Box, TerminalSquare, PencilLine, Wrench, Loader2, ChevronDown, ChevronRight,
-  Download, FileText, Brain, AlertCircle,
+  Download, FileText, Brain, AlertCircle, CheckCircle2,
 } from 'lucide-react';
-import type { FileDownloadItem, MediaItem, Message, ToolExecution, UserAnswer } from '../../types';
+import type { FileDownloadItem, InterruptResultPayload, MediaItem, Message, ToolExecution, UserAnswer } from '../../types';
 import { useChatStore, type ReasoningSegment } from '../../stores/chatStore';
+import { humanizeError } from '../../utils';
+import { webRequest } from '../../services/webClient';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AskUserQuestionCard } from './AskUserQuestionCard';
 import mascot from '../../assets/design/mascot.png';
@@ -134,25 +136,82 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/* 单个文件卡片：点击时 HEAD 探测签名是否有效，失效则调用 files.renew 重签后下载 */
+function FileCard({ file }: { file: FileDownloadItem }) {
+  const [renewing, setRenewing] = useState(false);
+
+  const handleDownload = useCallback(async () => {
+    let url = file.download_url;
+    if (!url) return;
+
+    // 1. HEAD 探测签名令牌是否仍有效
+    let tokenValid = false;
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      tokenValid = res.ok;
+    } catch {
+      tokenValid = false;
+    }
+
+    // 2. 令牌失效 -> files.renew 重签（后端已实现，expires_in=600）
+    if (!tokenValid) {
+      setRenewing(true);
+      try {
+        const result = await webRequest<{ download_url?: string }>('files.renew', {
+          download_url: file.download_url,
+        });
+        if (result?.download_url) url = result.download_url;
+      } catch {
+        // 重签失败，退回原链接
+      } finally {
+        setRenewing(false);
+      }
+    }
+
+    // 3. 触发下载
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name || '';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [file.download_url, file.name]);
+
+  return (
+    <div
+      className="msg-file-card"
+      role="button"
+      tabIndex={0}
+      title={file.name}
+      onClick={handleDownload}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleDownload();
+        }
+      }}
+    >
+      <FileText size={16} className="msg-file-icon" />
+      <span className="msg-file-info">
+        <span className="msg-file-name">{file.name}</span>
+        {file.size ? <span className="msg-file-size">{formatFileSize(file.size)}</span> : null}
+      </span>
+      {renewing ? (
+        <Loader2 size={14} className="msg-file-download spin" />
+      ) : (
+        <Download size={14} className="msg-file-download" />
+      )}
+    </div>
+  );
+}
+
 function FileCards({ items }: { items: FileDownloadItem[] }) {
   return (
     <div className="msg-files">
       {items.map((file, index) => (
-        <a
-          key={`${file.name}-${index}`}
-          className="msg-file-card"
-          href={file.download_url}
-          download={file.name}
-          target="_blank"
-          rel="noreferrer"
-        >
-          <FileText size={16} className="msg-file-icon" />
-          <span className="msg-file-info">
-            <span className="msg-file-name">{file.name}</span>
-            {file.size ? <span className="msg-file-size">{formatFileSize(file.size)}</span> : null}
-          </span>
-          <Download size={14} className="msg-file-download" />
-        </a>
+        <FileCard key={`${file.name}-${index}`} file={file} />
       ))}
     </div>
   );
@@ -196,6 +255,47 @@ function AssistantMessageRow({ message }: { message: Message }) {
           <div className="msg-usage">
             tokens: {message.usageSummary.total_tokens}
           </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 中断结果提示（3s 后由 store 自动清除） ---------- */
+
+function InterruptResultBubble({ result }: { result: InterruptResultPayload }) {
+  const message = result.message?.trim();
+  if (!message) return null;
+  return (
+    <div className={`msg-interrupt ${result.success ? 'is-success' : 'is-failed'}`} role="status">
+      {result.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+      <span>{message}</span>
+    </div>
+  );
+}
+
+/* ---------- 错误提示条（人性化标题 + 可展开原始详情） ---------- */
+
+function ErrorBanner({ message }: { message: string }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const humanized = useMemo(() => humanizeError(message), [message]);
+  const hasDetail = Boolean(humanized.detail) && humanized.detail !== humanized.title;
+  return (
+    <div className="chat-error" role="alert">
+      <AlertCircle size={16} className="chat-error-icon" />
+      <div className="chat-error-body">
+        <div className="chat-error-title">{humanized.title}</div>
+        {hasDetail ? (
+          <>
+            <button
+              type="button"
+              className="chat-error-toggle"
+              onClick={() => setShowDetail((v) => !v)}
+            >
+              {showDetail ? '收起详情' : '查看详情'}
+            </button>
+            {showDetail ? <pre className="chat-error-detail">{humanized.detail}</pre> : null}
+          </>
         ) : null}
       </div>
     </div>
@@ -281,6 +381,7 @@ export function MessageList({
   const streaming = runtime?.messages.some((m) => m.isStreaming) ?? false;
   const thinking = runtime?.isThinking ?? false;
   const error = runtime?.executionError ?? runtime?.error ?? null;
+  const interruptResult = runtime?.interruptResult ?? null;
   const pendingQuestion = runtime?.pendingQuestion ?? null;
 
   // 自动滚动到底部（用户上翻时暂停）
@@ -322,12 +423,9 @@ export function MessageList({
           </div>
         ) : null}
 
-        {error ? (
-          <div className="chat-error">
-            <AlertCircle size={14} />
-            <span>{error}</span>
-          </div>
-        ) : null}
+        {interruptResult ? <InterruptResultBubble result={interruptResult} /> : null}
+
+        {error ? <ErrorBanner message={error} /> : null}
 
         {pendingQuestion ? (
           <AskUserQuestionCard
