@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
-MODULES=("jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
+MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
 
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
@@ -231,6 +231,12 @@ Options:
   -h, --help      显示帮助信息
 
 Config:
+  moosefs     配置文件: deploy/moosefs/moosefs.conf (端口/目录/副本数/systemd 开关等)
+              默认部署分布式文件系统，通过 MOOSEFS_ENABLED=no 关闭
+              master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
+              systemd 可选: MOOSEFS_USE_SYSTEMD=auto/yes/no (默认 auto 自动检测)
+              角色判断: 本机 IP 匹配 MOOSEFS_MASTER_HOST 为 master，否则为 agent
+              生命周期: install(配置+unit生成) → up(enable --now) → down(disable --now) → uninstall(停止+清理)
   jiuwenbox   配置文件: deploy/jiuwenbox/default-policy.yaml (含 extensions 目录占位符)
               jiuwenbox-server 随 jiuwenswarm whl 包安装，无需单独 install
   yuanrong    环境变量直接通过命令行/环境变量传入（见 yuanrong_deploy.sh -h）

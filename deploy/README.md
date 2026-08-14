@@ -8,6 +8,7 @@
 
 | 模块 | 说明 | 部署/安装内容 |
 | --- | --- | --- |
+| `moosefs` | 分布式共享存储 | MooseFS 集群（master + chunkserver + client），单机自动跳过 |
 | `jiuwenbox` | 沙箱服务 | 在 `--hosts` 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
 | `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
 | `jiuwenswarm` | jiuwenswarm 函数 + gateway | 函数注册 + gateway 进程（whl 包已包含 gateway） |
@@ -18,6 +19,10 @@
 deploy/
 ├── agentos.sh                # agentos 部署总脚本（不含模块特有逻辑）
 ├── README.md                 # 本文档
+├── moosefs/
+│   ├── module.sh             # moosefs 钩子函数
+│   ├── moosefs_deploy.sh     # moosefs 部署脚本（install/up/down/uninstall）
+│   └── moosefs.conf          # moosefs 配置文件
 ├── jiuwenbox/
 │   ├── module.sh             # jiuwenbox 钩子（含 --hosts 编排）
 │   ├── jiuwenbox_deploy.sh   # up/down/restart（含 --hosts 编排）
@@ -121,6 +126,31 @@ bash agentos.sh restart --hosts 192.168.1.1
 | `-h, --help` | 显示帮助信息 |
 
 ### 配置
+
+#### moosefs
+
+配置文件：`deploy/moosefs/moosefs.conf`。主要配置项：
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `MOOSEFS_MASTER_HOST` | Master 节点地址（systemd 模式下区分 master/agent 角色） | 空（SSH 多机模式自动取 `--hosts` 第一个 IP） |
+| `MOOSEFS_ENABLED` | 是否启用 MooseFS（`auto`/`yes`/`no`） | `auto`（多机自动启用，单机自动跳过） |
+| `MOOSEFS_USE_SYSTEMD` | 是否使用 systemd（`auto`/`yes`/`no`） | `auto`（自动检测） |
+| `MFS_MASTER_PORT` | Master 服务端口 | `9420` |
+| `MFS_CHUNK_PORT` | Chunkserver 端口 | `9422` |
+| `MFS_CLIENT_PORT` | Client (mfsmount) 端口 | `9421` |
+| `MFS_CHUNK_DIR` | Chunkserver 数据目录 | `/data/mfschunks` |
+| `MFS_MOUNT_POINT` | 共享挂载点路径 | `/home/agentos/users` |
+| `MFS_GOAL` | 数据副本数 | `2`（单机自动设为 1） |
+
+三种部署模式：
+1. **SSH 多机模式**：`--hosts` 指定 2+ IP，Master 取第一个 IP，通过 SSH 远程协调
+2. **systemd 模式**：各节点独立 `install` + `systemctl start`，通过 `MOOSEFS_MASTER_HOST` 区分 master/agent 角色
+3. **单机跳过**：其他场景（使用本地文件系统，不部署 MooseFS）
+
+`--hosts` 命令行参数优先级高于 `MOOSEFS_MASTER_HOST` 配置，同时设置时打印 warning。
+
+MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 `deploy/moosefs/README.md`。支持 openEuler 22.03-LTS-SP1/SP4 和 24.03-LTS-SP1/SP4（x86_64 和 aarch64）。
 
 #### jiuwenbox
 
