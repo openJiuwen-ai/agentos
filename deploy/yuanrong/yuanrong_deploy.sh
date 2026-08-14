@@ -16,6 +16,20 @@ YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 YR_VERSION="${YR_VERSION:-0.9.0}"
 CLUSTER_HOSTS=""
 CMD=""
+# 部署模式：默认 systemd（本机单节点，角色推导交给 config.py）；--no-systemd 走进程模式（SSH fanout）
+NO_SYSTEMD=0
+
+# ===== systemd 模式常量 =====
+YR_CONFIG_PY="${SCRIPT_DIR}/../scripts/config.py"
+YR_ETCD_SVC="agentos-etcd"
+YR_ETCD_UNIT="/etc/systemd/system/${YR_ETCD_SVC}.service"
+YR_EXECUTOR_SVC="agentos-executor"
+YR_EXECUTOR_UNIT="/etc/systemd/system/${YR_EXECUTOR_SVC}.service"
+YR_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${YR_EXECUTOR_SVC}.service.d"
+YR_EXECUTOR_DROPIN="${YR_EXECUTOR_DROPIN_DIR}/env.conf"
+# etcd 数据目录（down 保留，便于重装恢复）
+YR_ETCD_DATA_DIR="/var/lib/agentos/etcd"
+YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
 # ===== agent SSH 直连密钥路径（默认 /root/.ssh 下，用户自行生成，部署脚本不生成）=====
 # 简便模式：host / backend / client 三处用途混用同一套密钥（私钥 + 公钥）。
@@ -533,8 +547,249 @@ yr_stop_all() {
     success "openyuanrong uninstall completed!"
 }
 
+# ============================================================
+# systemd 模式：本机单节点执行。角色推导交给 config.py（读 ~/.agentos/deploy/config.yaml）。
+#   - etcd unit 仅 etcd_nodes 节点生成
+#   - executor unit 所有节点生成，master 节点用 master 变体，否则 agent 变体
+# ============================================================
+
+# ===== 检测 systemd 是否可用 =====
+_yr_has_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+# ===== 定位 python 解释器 =====
+_yr_python() {
+    command -v "python${YR_PYTHON_VERSION}" 2>/dev/null || command -v python3 2>/dev/null \
+        || error "python not found (need python${YR_PYTHON_VERSION} or python3)"
+}
+
+# ===== config.py 封装：角色推导 =====
+_yr_cfg() {
+    "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+}
+
+# ===== 探测 yr 内置 etcd 二进制路径 =====
+# 优先从 `yr config dump` 的 values.etcd.bin_path 读取；失败则回退到 yr 包内 third_party 路径。
+_yr_etcd_bin_path() {
+    local bin_path yr_pkg
+
+    if command -v yr >/dev/null 2>&1; then
+        bin_path=$(yr config dump 2>/dev/null \
+            | grep -E "bin_path" \
+            | grep -i "etcd" \
+            | head -n1 \
+            | sed -E 's/.*bin_path[[:space:]]*[:=][[:space:]]*"?([^",}]+)"?.*/\1/' \
+            | tr -d '[:space:]')
+        if [ -n "${bin_path}" ] && [ -x "${bin_path}" ]; then
+            echo "${bin_path}"
+            return 0
+        fi
+    fi
+
+    yr_pkg=$("$(_yr_python)" -c "import yr, os; print(os.path.dirname(yr.__file__))" 2>/dev/null)
+    if [ -n "${yr_pkg}" ] && [ -x "${yr_pkg}/third_party/etcd/etcd" ]; then
+        echo "${yr_pkg}/third_party/etcd/etcd"
+        return 0
+    fi
+
+    return 1
+}
+
+# ===== 生成 etcd unit（仅 etcd_nodes 节点调用） =====
+_yr_generate_etcd_unit() {
+    local etcd_bin node_name initial_cluster advertise_ip
+    etcd_bin=$(_yr_etcd_bin_path) \
+        || error "Cannot locate yr built-in etcd binary (yr config dump / third_party/etcd/etcd)"
+    node_name=$(_yr_cfg etcd-name) || error "Failed to derive etcd node name"
+    initial_cluster=$(_yr_cfg initial-cluster) || error "Failed to build initial-cluster"
+
+    # advertise IP = 本机在 etcd_nodes 中匹配到的 config IP（通配匹配时用通配 IP 本身）。
+    # 绝不能用 get_local_ip 的真实 IP，否则 advertise 地址与 initial-cluster 不一致
+    # 导致 bootstrap 失败。
+    advertise_ip=$(_yr_cfg etcd-advertise-ip) \
+        || error "Failed to derive etcd advertise IP"
+
+    info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}"
+
+    cat > "${YR_ETCD_UNIT}" <<EOF
+[Unit]
+Description=AgentOS etcd Service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+ExecStart=${etcd_bin} \\
+    --name ${node_name} \\
+    --data-dir ${YR_ETCD_DATA_DIR} \\
+    --unsafe-no-fsync=false \\
+    --auto-compaction-mode=revision \\
+    --auto-compaction-retention=100000 \\
+    --quota-backend-bytes=8589934592 \\
+    --snapshot-count=10000 \\
+    --heartbeat-interval=250 \\
+    --election-timeout=2500 \\
+    --pre-vote=true \\
+    --strict-reconfig-check=true \\
+    --listen-client-urls http://0.0.0.0:32379 \\
+    --advertise-client-urls http://${advertise_ip}:32379 \\
+    --listen-peer-urls http://0.0.0.0:32380 \\
+    --initial-advertise-peer-urls http://${advertise_ip}:32380 \\
+    --initial-cluster ${initial_cluster} \\
+    --initial-cluster-state new \\
+    --initial-cluster-token etcd-cluster-1
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=0
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# ===== 生成 executor unit（所有节点调用；master/agent 变体） =====
+_yr_generate_executor_unit() {
+    local host_ip etcd_addr_list py_bindir
+    host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
+    etcd_addr_list=$(_yr_cfg etcd-address-list) || error "Failed to build etcd address list"
+    py_bindir=$(dirname "$(_yr_python)")
+
+    if _yr_cfg is-master-node; then
+        info "executor unit: master variant (host_ip=${host_ip})"
+        cat > "${YR_EXECUTOR_UNIT}" <<EOF
+[Unit]
+Description=AgentOS Executor Service (Master)
+After=${YR_ETCD_SVC}.service
+Wants=${YR_ETCD_SVC}.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
+ExecStart=/usr/local/bin/yr start --master \\
+    -s 'values.host_ip="${host_ip}"' \\
+    -s 'mode.master.etcd=false' \\
+    -s 'values.etcd.address=${etcd_addr_list}' \\
+    -s 'values.etcd.enable_multi_master=true' \\
+    -s 'mode.master.frontend=true' \\
+    --block=true
+ExecStop=/usr/local/bin/yr stop --force
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=40s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    else
+        local master_ip
+        master_ip=$(_yr_cfg master-ip) || error "Failed to get function master IP"
+        info "executor unit: agent variant (host_ip=${host_ip}, master=${master_ip})"
+        cat > "${YR_EXECUTOR_UNIT}" <<EOF
+[Unit]
+Description=AgentOS Executor Service (Agent)
+After=${YR_ETCD_SVC}.service
+Wants=${YR_ETCD_SVC}.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
+ExecStart=/usr/local/bin/yr start \\
+    -s 'values.host_ip="${host_ip}"' \\
+    -s 'values.etcd.address=${etcd_addr_list}' \\
+    -s 'values.etcd.enable_multi_master=true' \\
+    -s 'mode.agent.frontend=true' \\
+    --block=true
+ExecStop=/usr/local/bin/yr stop --force
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=40s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+
+    # drop-in: PATH/LD_LIBRARY_PATH（systemd 默认 PATH 不含 /usr/local/bin）
+    mkdir -p "${YR_EXECUTOR_DROPIN_DIR}"
+    cat > "${YR_EXECUTOR_DROPIN}" <<EOF
+[Service]
+Environment=PATH=${py_bindir}:${PATH}
+Environment=LD_LIBRARY_PATH=${py_bindir}/lib:${LD_LIBRARY_PATH:-}
+EOF
+}
+
+# ===== systemd up: 角色推导 → 生成 unit → enable --now → 健康检查 =====
+deploy_yr_up_systemd() {
+    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
+    _yr_has_systemd || error "systemd not available; yuanrong up requires systemd (or use --no-systemd)"
+
+    local i
+
+    # ---- etcd（仅 etcd_nodes 节点）----
+    if _yr_cfg is-etcd-node; then
+        info "This host is an etcd node, generating ${YR_ETCD_SVC} unit"
+        mkdir -p "${YR_ETCD_DATA_DIR}"
+        _yr_generate_etcd_unit
+        systemctl daemon-reload
+        systemctl enable --now "${YR_ETCD_SVC}" || error "Failed to start ${YR_ETCD_SVC}"
+        for i in $(seq 1 "${YR_HEALTH_CHECK_RETRIES}"); do
+            systemctl is-active --quiet "${YR_ETCD_SVC}" && break
+            sleep 1
+        done
+        systemctl is-active --quiet "${YR_ETCD_SVC}" \
+            || error "${YR_ETCD_SVC} not active, see: journalctl -u ${YR_ETCD_SVC}"
+        success "${YR_ETCD_SVC} up"
+    else
+        info "This host is NOT an etcd node, skipping ${YR_ETCD_SVC}"
+    fi
+
+    # ---- executor（所有节点）----
+    info "Generating ${YR_EXECUTOR_SVC} unit"
+    _yr_generate_executor_unit
+    systemctl daemon-reload
+    systemctl enable --now "${YR_EXECUTOR_SVC}" || error "Failed to start ${YR_EXECUTOR_SVC}"
+    for i in $(seq 1 "${YR_HEALTH_CHECK_RETRIES}"); do
+        systemctl is-active --quiet "${YR_EXECUTOR_SVC}" && break
+        sleep 1
+    done
+    systemctl is-active --quiet "${YR_EXECUTOR_SVC}" \
+        || error "${YR_EXECUTOR_SVC} not active, see: journalctl -u ${YR_EXECUTOR_SVC}"
+    success "${YR_EXECUTOR_SVC} up"
+}
+
+# ===== systemd down: disable → 删除 unit（executor 先于 etcd；保留 etcd 数据） =====
+deploy_yr_down_systemd() {
+    _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
+
+    # executor 先停（依赖 etcd）
+    systemctl disable --now "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+    rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
+
+    # etcd 后停（保留 ${YR_ETCD_DATA_DIR} 数据，便于重装恢复）
+    systemctl disable --now "${YR_ETCD_SVC}" 2>/dev/null || true
+    rm -f "${YR_ETCD_UNIT}"
+
+    systemctl daemon-reload 2>/dev/null || true
+    success "yuanrong units stopped (etcd data preserved at ${YR_ETCD_DATA_DIR})"
+}
+
 # ===== 主流程 =====
 deploy_yr_up() {
+    if [ "${NO_SYSTEMD}" != "1" ]; then
+        deploy_yr_up_systemd
+        return
+    fi
     local hosts_str="${CLUSTER_HOSTS}"
     local master_host
     # yr_up_phase:
@@ -618,6 +873,10 @@ deploy_yr_up() {
 }
 
 deploy_yr_down() {
+    if [ "${NO_SYSTEMD}" != "1" ]; then
+        deploy_yr_down_systemd
+        return
+    fi
     yr_stop_all
 }
 
@@ -656,6 +915,11 @@ deploy_yr_uninstall() {
     local local_host
     local_host=$(get_local_ip)
 
+    # 卸载前先停服务：systemd 模式注销 unit（保留 etcd 数据）。进程模式的停止由用户显式 down。
+    if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd; then
+        deploy_yr_down_systemd
+    fi
+
     info "Uninstalling openyuanrong packages on local machine"
     info "Python version: ${YR_PYTHON_VERSION}"
 
@@ -679,6 +943,10 @@ parse_args() {
                 CLUSTER_HOSTS="${args[$((i+1))]}"
                 i=$((i+2))
                 ;;
+            --no-systemd)
+                NO_SYSTEMD=1
+                i=$((i+1))
+                ;;
             -h|--help)
                 print_help
                 ;;
@@ -693,8 +961,8 @@ parse_args() {
         exit 1
     fi
 
-    # install/uninstall 仅在本机执行，不需要 CLUSTER_HOSTS
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    # 进程模式(up/down/restart)需要 CLUSTER_HOSTS；systemd 模式角色推导交给 config.py，无需 --hosts
+    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
         if [ -z "${CLUSTER_HOSTS:-}" ]; then
             CLUSTER_HOSTS=$(get_local_ip)
             warning "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
@@ -703,7 +971,7 @@ parse_args() {
 
     info "Executing command: $*"
     info "CMD=${CMD}"
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
         info "CLUSTER_HOSTS=${CLUSTER_HOSTS}"
     fi
 }
@@ -723,8 +991,12 @@ Commands (Required):
   uninstall 仅在本机卸载 openyuanrong whl 包（不需要 --hosts）
 
 Options:
+  --no-systemd       进程模式部署（SSH fanout 多机）。不指定时默认 systemd 模式：
+                     本机单节点执行，角色推导交给 config.py（读 ~/.agentos/deploy/config.yaml），
+                     生成 agentos-etcd / agentos-executor unit 并 enable --now。
   --hosts HOSTS      目标主机IP列表，逗号分隔。第一个IP为master节点，其余为agent节点
-                     仅 up/down/restart 命令需要，install/uninstall 忽略此参数
+                     仅 --no-systemd 进程模式的 up/down/restart 需要；systemd 模式忽略
+                     （角色由 config.yaml 推导）。install/uninstall 忽略此参数
                      单机: --hosts 192.168.1.1
                      多机: --hosts 192.168.1.1,192.168.1.2,192.168.1.3
                      不指定时默认使用本机IP
