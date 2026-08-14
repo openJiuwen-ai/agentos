@@ -41,6 +41,8 @@ class TestBuildResult:
             image_digest="sha256:abc123",
             image_path="/tmp/opencode-1.0.tar.gz",
             base_image="agent-base:1.0",
+            runtime_spec={},
+            image_module_version="1.0",
         )
         assert r.image == "opencode:1.0"
         assert r.base_image == "agent-base:1.0"
@@ -64,10 +66,12 @@ class TestBuild:
                 (work_dir / "oci").mkdir(parents=True, exist_ok=True)
                 (work_dir / "oci" / f"{agent_name}-{version}.tar.gz").write_text("oci")
 
-            with patch("app.builder._builder") as mock_builder:
+            with patch("app.builder._builder") as mock_builder, \
+                 patch("app.builder._read_runtime_spec", AsyncMock(return_value={})):
                 mock_builder.build_image = AsyncMock()
                 mock_builder.save_image = AsyncMock(side_effect=_fake_save)
                 mock_builder.get_image_id = AsyncMock(return_value="sha256:abc")
+                mock_builder.get_sandbox_type = AsyncMock(return_value="docker")
 
                 result = asyncio_run(build(BuildParams(
                     task_id="task-1",
@@ -98,3 +102,108 @@ class TestBuild:
                     installer_path=installer,
                     output_dir=Path(tmp) / "out",
                 )))
+
+
+class TestBuildArgs:
+    @staticmethod
+    def test_uid_gid_injected_from_env():
+        import os
+        from app.builder import BuildParams, build
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            installer = Path(tmp) / "test.tgz"
+            installer.write_bytes(b"fake tgz")
+
+            async def _fake_save(_, agent_name, version, work_dir):
+                (work_dir / "oci").mkdir(parents=True, exist_ok=True)
+                (work_dir / "oci" / f"{agent_name}-{version}.tar.gz").write_text("oci")
+
+            with patch("app.builder._builder") as mock_builder, \
+                 patch("app.builder._read_runtime_spec", AsyncMock(return_value={})), \
+                 patch.dict(os.environ, {"AGENTOS_SYS_UID": "2001",
+                                         "AGENTOS_SYS_GID": "2002"}, clear=False):
+                mock_builder.build_image = AsyncMock()
+                mock_builder.save_image = AsyncMock(side_effect=_fake_save)
+                mock_builder.get_image_id = AsyncMock(return_value="sha256:abc")
+                mock_builder.get_sandbox_type = AsyncMock(return_value="docker")
+
+                asyncio_run(build(BuildParams(
+                    task_id="task-1",
+                    agent_name="test",
+                    version="1.0",
+                    installer_path=installer,
+                    output_dir=output_dir,
+                )))
+
+            build_args = mock_builder.build_image.call_args.args[2]
+            assert build_args["AGENTOS_SYS_UID"] == "2001"
+            assert build_args["AGENTOS_SYS_GID"] == "2002"
+
+    @staticmethod
+    def test_uid_gid_default_1000_without_env():
+        import os
+        from app.builder import BuildParams, build
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            installer = Path(tmp) / "test.tgz"
+            installer.write_bytes(b"fake tgz")
+
+            async def _fake_save(_, agent_name, version, work_dir):
+                (work_dir / "oci").mkdir(parents=True, exist_ok=True)
+                (work_dir / "oci" / f"{agent_name}-{version}.tar.gz").write_text("oci")
+
+            with patch("app.builder._builder") as mock_builder, \
+                 patch("app.builder._read_runtime_spec", AsyncMock(return_value={})), \
+                 patch.dict(os.environ, {}, clear=True):
+                mock_builder.build_image = AsyncMock()
+                mock_builder.save_image = AsyncMock(side_effect=_fake_save)
+                mock_builder.get_image_id = AsyncMock(return_value="sha256:abc")
+                mock_builder.get_sandbox_type = AsyncMock(return_value="docker")
+
+                asyncio_run(build(BuildParams(
+                    task_id="task-1",
+                    agent_name="test",
+                    version="1.0",
+                    installer_path=installer,
+                    output_dir=output_dir,
+                )))
+
+            build_args = mock_builder.build_image.call_args.args[2]
+            assert build_args["AGENTOS_SYS_UID"] == "1000"
+            assert build_args["AGENTOS_SYS_GID"] == "1000"
+
+    @staticmethod
+    def test_runtime_spec_read_from_base_image():
+        from app.builder import BuildParams, build
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            installer = Path(tmp) / "test.tgz"
+            installer.write_bytes(b"fake tgz")
+
+            async def _fake_save(_, agent_name, version, work_dir):
+                (work_dir / "oci").mkdir(parents=True, exist_ok=True)
+                (work_dir / "oci" / f"{agent_name}-{version}.tar.gz").write_text("oci")
+
+            mock_rs = AsyncMock(return_value={"runtime": "python3.11"})
+
+            with patch("app.builder._builder") as mock_builder, \
+                 patch("app.builder._read_runtime_spec", mock_rs):
+                mock_builder.build_image = AsyncMock()
+                mock_builder.save_image = AsyncMock(side_effect=_fake_save)
+                mock_builder.get_image_id = AsyncMock(return_value="sha256:abc")
+                mock_builder.get_sandbox_type = AsyncMock(return_value="docker")
+
+                result = asyncio_run(build(BuildParams(
+                    task_id="task-1",
+                    agent_name="test",
+                    version="1.0",
+                    installer_path=installer,
+                    output_dir=output_dir,
+                )))
+
+            mock_rs.assert_called_once_with("agent-base:1.0")
+            assert result.runtime_spec == {"runtime": "python3.11",
+                                           "sandbox_type": "docker"}

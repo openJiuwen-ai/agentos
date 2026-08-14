@@ -74,6 +74,9 @@ services:
   # =========================================================================
   image-process:
     image: agentos-image-process:latest
+    environment:
+      - AGENTOS_SYS_UID=${AGENTOS_SYS_UID:-1000}
+      - AGENTOS_SYS_GID=${AGENTOS_SYS_GID:-1000}
     volumes:
       - /run/docker.sock:/run/docker.sock
       - ${AGENTOS_BASE:-/home/agentos}/users:${AGENTOS_BASE:-/home/agentos}/users

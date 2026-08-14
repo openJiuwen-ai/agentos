@@ -77,17 +77,15 @@ def _create_jwswarm_config(username: str) -> None:
 
 
 def _chown_home(username: str) -> None:
-    """递归地将用户家目录的所有权和权限，使用 AGENTOS_SYS_UID/GID，权限设为 777。"""
+    """递归地将用户家目录的所有权和权限，使用 AGENTOS_SYS_UID/GID。"""
     path = _home_path(username)
     uid = settings.AGENTOS_SYS_UID
     gid = settings.AGENTOS_SYS_GID
     for dirpath, _, filenames in os.walk(str(path)):
         os.chown(dirpath, uid, gid)
-        os.chmod(dirpath, 0o777)
         for fn in filenames:
             fp = os.path.join(dirpath, fn)
             os.chown(fp, uid, gid)
-            os.chmod(fp, 0o777)
 
 
 def _remove_home(username: str) -> None:

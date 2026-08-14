@@ -97,6 +97,8 @@ async def test_create_build_and_reach_done(tmp_path: Path):
             image_digest="sha256:abc",
             image_path=str(output_dir / f"{params.agent_name}-{params.version}.tar.gz"),
             base_image="agent-base:1.0",
+            runtime_spec={},
+            image_module_version="1.0",
         )
 
     with patch("app.tasks.build", AsyncMock(side_effect=_fake_build)), \

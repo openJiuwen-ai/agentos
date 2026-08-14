@@ -129,10 +129,7 @@ class TestListInstallers:
 
             result = await ThirdpartyAgentService.list_installers(
                 AsyncMock(),
-                uploaded_by="admin",
-                framework="opencode",
-                size=20,
-                page=1,
+                ListInstallersParams(uploaded_by="admin", framework="opencode", size=20, page=1),
             )
 
             # Verify all expected params are forwarded to registry
@@ -176,10 +173,7 @@ class TestListInstallers:
 
             result = await ThirdpartyAgentService.list_installers(
                 AsyncMock(),
-                uploaded_by="admin",
-                framework="",
-                size=2,
-                page=2,
+                ListInstallersParams(uploaded_by="admin", framework="", size=2, page=2),
             )
 
             # Params forwarded to registry
@@ -198,7 +192,7 @@ class TestListInstallers:
     async def test_registry_error_propagates():
         """Non-2xx from registry raises AgentServiceError."""
         from app.services.thirdparty_agent_service import (
-            AgentServiceError, ThirdpartyAgentService)
+            AgentServiceError, ThirdpartyAgentService, ListInstallersParams)
 
         mock_resp = MagicMock(status_code=500, text="internal error")
         mock_resp.json.return_value = []
@@ -214,7 +208,7 @@ class TestListInstallers:
             with pytest.raises(AgentServiceError) as exc:
                 await ThirdpartyAgentService.list_installers(
                     AsyncMock(),
-                    uploaded_by="admin",
+                    ListInstallersParams(uploaded_by="admin"),
                 )
             assert "500" in str(exc.value)
 
@@ -251,7 +245,7 @@ class TestListInstallers:
 
             result = await ThirdpartyAgentService.list_installers(
                 AsyncMock(),
-                uploaded_by="admin",
+                ListInstallersParams(uploaded_by="admin"),
             )
 
             assert result.total == 1
@@ -287,7 +281,7 @@ class TestListInstallers:
 
             result = await ThirdpartyAgentService.list_installers(
                 AsyncMock(),
-                uploaded_by="admin",
+                ListInstallersParams(uploaded_by="admin"),
             )
 
             # Default page=1, size=20 forwarded

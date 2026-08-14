@@ -26,20 +26,6 @@ RUN set -eux; \
     && rm /tmp/node.tar.gz
 ENV PATH="/usr/local/bin:${PATH}"
 
-# agentos user + ssh dir
-RUN useradd -m agentos \
-    && mkdir -p /usr/local/bin /opt/agent-ssh /run/openyuanrong/ssh \
-    && chown -R agentos:agentos /usr/local/bin /opt/agent-ssh /run/openyuanrong/ssh
-ENV HOME_DIR=/home/agentos
-
-# entrypoint — start sshd in background, then exec user command
-RUN echo '#!/bin/sh' > /entrypoint.sh \
-    && echo 'mkdir -p /home/agentos/logs' >> /entrypoint.sh \
-    && echo 'SSHD_IP=$(python3 -c "import socket; print(socket.gethostbyname(socket.gethostname()))")' >> /entrypoint.sh \
-    && echo '/usr/sbin/sshd -D -f /opt/agent-ssh/sshd_config -o "ListenAddress ${SSHD_IP}" -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
-    && echo 'exec "$@"' >> /entrypoint.sh \
-    && chmod +x /entrypoint.sh
-
 # OpenYuanrong SDK (root install); OBS daily URL aligned with build/build.sh
 RUN set -eux; \
     py_arch="$(uname -m)"; \
@@ -78,10 +64,7 @@ RUN set -eux; \
     pip3 install "/tmp/${SDK_WHEEL}" -i https://mirrors.huaweicloud.com/repository/pypi/simple; \
     rm "/tmp/${SDK_WHEEL}"
 
-USER agentos
-WORKDIR ${HOME_DIR}
-
-# sshd_config + host key — non-root, key-only auth on port 2222
+# 在构建最终镜像时改为agentos属主/属组
 RUN mkdir -p /opt/agent-ssh \
     && ssh-keygen -t rsa -f /opt/agent-ssh/ssh_host_rsa_key -N '' \
     && echo 'Port 2222' > /opt/agent-ssh/sshd_config \
@@ -90,6 +73,14 @@ RUN mkdir -p /opt/agent-ssh \
     && echo 'AuthorizedKeysFile /run/openyuanrong/ssh/authorized_keys' >> /opt/agent-ssh/sshd_config \
     && echo 'PidFile /tmp/sshd.pid' >> /opt/agent-ssh/sshd_config \
     && echo 'HostKey /opt/agent-ssh/ssh_host_rsa_key' >> /opt/agent-ssh/sshd_config
+
+# entrypoint — start sshd in background, then exec user command
+RUN echo '#!/bin/sh' > /entrypoint.sh \
+    && echo 'mkdir -p /home/agentos/logs' >> /entrypoint.sh \
+    && echo 'SSHD_IP=$(python3 -c "import socket; print(socket.gethostbyname(socket.gethostname()))")' >> /entrypoint.sh \
+    && echo '/usr/sbin/sshd -D -f /opt/agent-ssh/sshd_config -o "ListenAddress ${SSHD_IP}" -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
+    && echo 'exec "$@"' >> /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sleep", "infinity"]

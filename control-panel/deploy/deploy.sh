@@ -679,6 +679,7 @@ for svc in data.get('services', {}).values():
     img = svc.get('image', '')
     if img:
         print(img)
+print('agent-base:1.0')
 " 2>/dev/null)
 
     # Fallback: 如果 docker compose config 或 python3 不可用，逐个检测已知镜像
@@ -692,6 +693,7 @@ for svc in data.get('services', {}).values():
             "grafana/grafana:12.4.2"
             "grafana/loki:3.6.0"
             "grafana/alloy:v1.18.1"
+            "agent-base:1.0"
         )
         for img in "${fallback_images[@]}"; do
             if ! docker image inspect "$img" &>/dev/null; then
@@ -699,14 +701,6 @@ for svc in data.get('services', {}).values():
                 missing+=("$img")
             fi
         done
-    fi
-
-    # Agent 基础镜像（image-process 构建依赖，不由 compose 管理）
-    if docker image inspect "agent-base:1.0" &>/dev/null; then
-        log "  agent-base:1.0 — 本地已存在"
-    else
-        log "  WARNING: agent-base:1.0 不存在，请先本地构建:"
-        log "    cd control-panel/image_process && docker build -f base.Dockerfile -t agent-base:1.0 ."
     fi
 
     if [ ${#missing[@]} -eq 0 ]; then
@@ -721,6 +715,11 @@ for svc in data.get('services', {}).values():
             docker compose pull agentos 2>/dev/null || {
                 log "  WARNING: $img 拉取失败，请先本地构建:"
                 log "    cd control-panel && docker build -f image/Dockerfile -t agentos ."
+                failed=1
+            }
+        elif [[ "$img" == agent-base:* ]]; then
+            docker pull "$img" 2>/dev/null || {
+                log "  WARNING: $img 拉取失败，请先推送至仓库或 docker load 导入本机"
                 failed=1
             }
         elif [[ "$img" == agentos-image-process:* ]]; then

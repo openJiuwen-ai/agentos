@@ -11,6 +11,7 @@ Usage as CLI::
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 from abc import ABC, abstractmethod
@@ -220,6 +221,8 @@ async def build(params: BuildParams) -> BuildResult:
         "TGZ_FILE": tgz_file,
         "AGENT_NAME": params.agent_name,
         "VERSION": params.version,
+        "AGENTOS_SYS_UID": os.environ.get("AGENTOS_SYS_UID", "1000"),
+        "AGENTOS_SYS_GID": os.environ.get("AGENTOS_SYS_GID", "1000"),
     }
 
     try:
