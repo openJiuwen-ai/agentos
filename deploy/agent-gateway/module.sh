@@ -24,12 +24,14 @@ AGENTREGISTRY_UNIT="/etc/systemd/system/${AGENTREGISTRY_SVC}.service"
 AGENTREGISTRY_DROPIN_DIR="/etc/systemd/system/${AGENTREGISTRY_SVC}.service.d"
 AGENTREGISTRY_DROPIN="${AGENTREGISTRY_DROPIN_DIR}/env.conf"
 
-# ===== nohup 模式常量 =====
-AGENTGW_RUN_DIR="${AGENTGW_RUN_DIR:-/var/run/agent-registry}"
-AGENTGW_LOG_DIR="${AGENTGW_LOG_DIR:-/var/log/agent-registry}"
+# ===== nohup 模式常量 / 日志目录 =====
+# A2X_REGISTRY_LOG_DIR 为空则不写文件日志（仅 journalctl）；设置后按天新建日志文件
+A2X_REGISTRY_RUN_DIR="${A2X_REGISTRY_RUN_DIR:-/var/run/agentos}"
+A2X_REGISTRY_LOG_DIR="${A2X_REGISTRY_LOG_DIR:-/var/log/agentos}"
+A2X_REGISTRY_LOG_RETENTION_DAYS="${A2X_REGISTRY_LOG_RETENTION_DAYS:-7}"
 
-REGISTRY_PID_FILE="${AGENTGW_RUN_DIR}/agent-registry.pid"
-REGISTRY_LOG="${AGENTGW_LOG_DIR}/agent-registry.log"
+REGISTRY_PID_FILE="${A2X_REGISTRY_RUN_DIR}/agent-registry.pid"
+REGISTRY_LOG="${A2X_REGISTRY_LOG_DIR}/agent-registry.log"
 
 # ===== 检测 systemd 是否可用 =====
 _agentgw_has_systemd() {
@@ -126,6 +128,7 @@ agent-gateway_install() {
 
     py=$(command -v "python${YR_PYTHON_VERSION}") || error "python${YR_PYTHON_VERSION} not found"
 
+    mkdir -p "${A2X_REGISTRY_RUN_DIR}" "${A2X_REGISTRY_LOG_DIR}"
     if _agentgw_has_systemd; then
         info "systemd detected, generating unit file..."
         local py_bindir py_libdir
@@ -150,7 +153,6 @@ EOF
         systemctl daemon-reload
     else
         info "systemd not available, using nohup mode..."
-        mkdir -p "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
     fi
 
     success "agent-registry installed"
@@ -190,6 +192,8 @@ Environment=A2X_REGISTRY_BIND=${bind}
 Environment=A2X_REGISTRY_PORT=${port}
 Environment=A2X_REGISTRY_MODE=appliance
 Environment=A2X_REGISTRY_DB_KIND=sqlite
+Environment=A2X_REGISTRY_LOG_DIR=${A2X_REGISTRY_LOG_DIR}
+Environment=A2X_REGISTRY_LOG_RETENTION_DAYS=${A2X_REGISTRY_LOG_RETENTION_DAYS}
 EOF
         if _agentregistry_tls_enabled; then
             cat >> "${AGENTREGISTRY_DROPIN}" <<EOF
@@ -217,8 +221,6 @@ EOF
         py_bindir=$(dirname "${py}")
         py_libdir=$(dirname "${py}")/lib
 
-        mkdir -p "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
-
         if _agentregistry_tls_enabled; then
             export A2X_REGISTRY_TLS_CERTFILE A2X_REGISTRY_TLS_KEYFILE A2X_REGISTRY_TLS_CA_CERTS
         fi
@@ -228,6 +230,8 @@ EOF
         A2X_REGISTRY_PORT="${port}" \
         A2X_REGISTRY_MODE=appliance \
         A2X_REGISTRY_DB_KIND=sqlite \
+        A2X_REGISTRY_LOG_DIR="${A2X_REGISTRY_LOG_DIR}" \
+        A2X_REGISTRY_LOG_RETENTION_DAYS="${A2X_REGISTRY_LOG_RETENTION_DAYS}" \
             _start_bg agent-registry "${REGISTRY_PID_FILE}" "${REGISTRY_LOG}" \
                 "${py}" -m a2x_registry.backend
 
@@ -259,7 +263,7 @@ agent-gateway_uninstall() {
         systemctl daemon-reload
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
-        rm -rf "${AGENTGW_RUN_DIR}" "${AGENTGW_LOG_DIR}"
+        rm -rf "${A2X_REGISTRY_RUN_DIR}"
     fi
     "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
     success "agent-registry uninstalled"
