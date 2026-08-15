@@ -43,8 +43,30 @@ _agentregistry_tls_enabled() {
     [ -n "${A2X_REGISTRY_TLS_CERTFILE}" ] && [ -n "${A2X_REGISTRY_TLS_KEYFILE}" ] && [ -n "${A2X_REGISTRY_TLS_CA_CERTS}" ]
 }
 
-# 监听地址：--hosts 首个 IP，否则本机网卡 IP
+# 监听地址：优先绑定 ingress_virtual_ip（VIP），使注册中心对外可通过统一入口访问；
+# 无 VIP 配置时回退到 --hosts 首个 IP / 本机网卡 IP。
+# 注意：注册中心后端禁止 A2X_REGISTRY_BIND=0.0.0.0，故只能绑定具体 VIP。
+# 触发前提：registry 部署时 yuanrong 已装完（YR python 环境内置 yaml），故用 python+yaml 解析。
 _agentregistry_bind() {
+    local config_file="${HOME:-/root}/.agentos/deploy/config.yaml"
+    if [ -f "${config_file}" ]; then
+        local py="python${YR_PYTHON_VERSION}" vip=""
+        if command -v "${py}" >/dev/null 2>&1 && "${py}" -c 'import yaml' >/dev/null 2>&1; then
+            vip=$("${py}" -c '
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f)
+    print((cfg or {}).get("cluster", {}).get("ingress_virtual_ip", "") or "", end="")
+except Exception:
+    print("", end="")
+' "${config_file}" 2>/dev/null)
+        fi
+        if [ -n "${vip}" ] && echo "${vip}" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+            echo "${vip}"
+            return 0
+        fi
+    fi
     local ip="${CLUSTER_HOSTS:-}"
     ip="${ip%%,*}"
     [ -z "${ip}" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -135,15 +157,27 @@ agent-gateway_install() {
         py_bindir=$(dirname "${py}")
         py_libdir=$(dirname "${py}")/lib
 
+        # 复制 ingress master 检查脚本到 /usr/local/bin（供 systemd ExecStartPre 使用）。
+        # 缺失时显式失败（fail-closed）：否则本机即使非 ingress master 也会被允许启动。
+        local check_script="/usr/local/bin/agentos-check-ingress-master"
+        local check_src="${SCRIPT_DIR}/check-ingress-master.sh"
+        [ -f "${check_src}" ] || error "check-ingress-master.sh not found at ${check_src}; cannot install ${check_script} (ingress gating required)"
+        cp -f "${check_src}" "${check_script}"
+        chmod +x "${check_script}"
+        info "Installed ingress master check script: ${check_script}"
+        local exec_start_pre="ExecStartPre=${check_script}
+"
+
         cat > "${AGENTREGISTRY_UNIT}" <<EOF
 [Unit]
 After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 [Service]
-ExecStart=${py} -m a2x_registry.backend
+${exec_start_pre}ExecStart=${py} -m a2x_registry.backend
 Environment=PATH=${py_bindir}:${PATH}
 Environment=LD_LIBRARY_PATH=${py_libdir}:${LD_LIBRARY_PATH:-}
+Environment=HOME=${HOME:-/root}
 Restart=on-failure
 RestartSec=3
 [Install]
@@ -203,14 +237,26 @@ Environment=A2X_REGISTRY_TLS_CA_CERTS=${A2X_REGISTRY_TLS_CA_CERTS}
 EOF
         fi
         systemctl daemon-reload
-        systemctl enable --now "${AGENTREGISTRY_SVC}" || error "Failed to start ${AGENTREGISTRY_SVC}"
+        # 启动判定完全交给 systemd ExecStartPre（本机是否持有 ingress VIP），
+        # up 钩子只做幂等启动，不做 master 判定。
+        systemctl enable "${AGENTREGISTRY_SVC}" 2>/dev/null || true
+        systemctl start "${AGENTREGISTRY_SVC}" 2>/dev/null || true
 
         for i in $(seq 1 "${HEALTH_CHECK_RETRIES}"); do
-            curl -sf --noproxy '*' "${curl_tls[@]}" -o /dev/null "${scheme}://${bind}:${port}/api/images" \
-                && { success "agent-registry up on ${scheme}://${bind}:${port}"; return 0; }
+            if systemctl is-active --quiet "${AGENTREGISTRY_SVC}"; then
+                curl -sf --noproxy '*' "${curl_tls[@]}" -o /dev/null "${scheme}://${bind}:${port}/api/images" \
+                    && { success "agent-registry up on ${scheme}://${bind}:${port}"; return 0; }
+            fi
             sleep 1
         done
-        error "agent-registry not healthy in 15s, see: journalctl -u ${AGENTREGISTRY_SVC}"
+
+        # 服务未运行：若本机非 ingress master，属预期（systemd ExecStartPre 拦截），跳过；
+        # 若本机是 ingress master 却仍起不来，才是真实故障，报错。
+        if ! /usr/local/bin/agentos-check-ingress-master >/dev/null 2>&1; then
+            info "Ingress vip not found on local host, agent-registry will not start"
+            return 0
+        fi
+        error "agent-registry failed to start on ingress master, see: journalctl -u ${AGENTREGISTRY_SVC}"
     else
         local py py_bindir py_libdir
         if [ -f "${REGISTRY_PID_FILE}" ] && kill -0 "$(cat "${REGISTRY_PID_FILE}" 2>/dev/null)" 2>/dev/null; then
@@ -260,6 +306,7 @@ agent-gateway_uninstall() {
     if _agentgw_has_systemd; then
         systemctl disable --now "${AGENTREGISTRY_SVC}" 2>/dev/null || true
         rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}"
+        rm -f /usr/local/bin/agentos-check-ingress-master
         systemctl daemon-reload
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
