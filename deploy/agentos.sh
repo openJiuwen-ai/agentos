@@ -28,6 +28,9 @@ set -euo >/dev/null 2>&1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# ===== etcd 独立脚本（init/deinit 委托给它，agentos.sh 不重复实现 etcd 逻辑） =====
+ETCD_SH="${SCRIPT_DIR}/etcd.sh"
+
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
 MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
 
@@ -107,7 +110,7 @@ parse_args() {
 
     while [ $i -lt ${#args[@]} ]; do
         case "${args[$i]}" in
-            up|down|restart|install|uninstall)
+            up|down|restart|install|uninstall|init|deinit)
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
@@ -122,7 +125,7 @@ parse_args() {
     done
 
     if [ -z "${CMD}" ]; then
-        error "Command not specified! Use 'up', 'down', 'restart', 'install' or 'uninstall'"
+        error "Command not specified! Use 'install', 'init', 'up', 'down', 'deinit', 'uninstall' or 'restart'"
     fi
 }
 
@@ -147,14 +150,50 @@ ensure_agentos_user() {
         || error "Failed to create agentos user"
 }
 
+# ===== up 前置检查：etcd 集群必须已就绪 =====
+# init 与 up 拆开后，用户可能忘记先 init。这里显式探测 etcd 可达性，
+# 不可达则明确报错引导先 init，而不是让 yuanrong 抛看不懂的连接失败。
+ensure_etcd_ready() {
+    info "Checking etcd availability (run 'agentos.sh init' first if this fails)"
+    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
+    "${ETCD_SH}" check \
+        || error "etcd not reachable. Run './agentos.sh init' on etcd nodes first, then retry 'up'."
+}
+
 # ===== 命令入口 =====
 deploy_up() {
     echo ""
     info "Starting full deployment (up)"
     ensure_agentos_user
+    ensure_etcd_ready
     info "Modules: ${MODULES[*]}"
     run_hooks up
     _print_summary up
+}
+
+# ===== init: bootstrap etcd（委托 etcd.sh clean + up，非 etcd 节点自动跳过） =====
+# etcd 是全集群前置依赖，作为一次性 bootstrap 步骤独立于日常 up/down。
+# 可在所有节点统一执行：仅 etcd_nodes 节点实际启动，其余为 no-op。
+# 自动清理历史 etcd 数据（对齐 yr start 语义：每次 bootstrap 视为干净启动），
+# 修改 etcd_nodes 拓扑后无需用户手动 clean 即可直接重新 bootstrap。
+deploy_init() {
+    echo ""
+    info "Initializing etcd (bootstrap)"
+    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
+    "${ETCD_SH}" clean || error "etcd data clean failed"
+    "${ETCD_SH}" up || error "etcd init failed"
+    success "etcd init completed"
+}
+
+# ===== deinit: 停 etcd + 删 unit（委托 etcd.sh down，保留数据） =====
+# 与 init 互逆。仅停服务、删 unit，保留 /var/lib/agentos/etcd 数据，便于 restart。
+# 彻底清数据由 init（自动 clean）或独立 ./etcd.sh clean 完成。
+deploy_deinit() {
+    echo ""
+    info "Uninitializing etcd (stop + remove unit, data preserved)"
+    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
+    "${ETCD_SH}" down || error "etcd deinit failed"
+    success "etcd deinit completed"
 }
 
 deploy_down() {
@@ -215,20 +254,28 @@ Usage: ./$(basename "$0") <COMMAND> [OPTIONS]
 
 统一部署脚本（可插拔架构），按 MODULES 数组声明的顺序编排各组件部署。
 当前已注册模块: ${MODULES[*]}
-  up:      按声明顺序部署
-  down:    逆序卸载
-  install: 按声明顺序安装 whl 包
-  uninstall: 逆序卸载 whl 包
+
+生命周期（三对互逆操作，嵌套如括号）:
+  install  ↔  uninstall     装/卸 whl（最外层）
+    init   ↔  deinit        bootstrap / 拆 etcd（中层，一次性）
+      up   ↔  down          起/停应用服务（最内层，可反复）
+  拆除顺序天然逆序: down → deinit → uninstall
 
 Commands (Required):
-  up          按顺序部署全部组件
-  down        逆序停止并卸载全部组件
-  restart     重启全部组件（先 down 再 up）
   install     在本机安装全部组件的 whl 包（不启动服务）
+  init        bootstrap etcd（委托 etcd.sh clean + up，非 etcd 节点自动跳过）
+              自动清理历史 etcd 数据（默认 yes，对齐 yr start 语义），无需手动 clean
+  up          按顺序部署全部应用组件（前置检查 etcd 可达，不可达则提示先 init）
+  down        逆序停止全部应用组件（不动 etcd）
+  deinit      停 etcd + 删 unit（委托 etcd.sh down，保留数据）
   uninstall   在本机卸载全部组件的 whl 包
+  restart     重启全部应用组件（先 down 再 up；不含 init/deinit）
 
 Options:
   -h, --help      显示帮助信息
+
+etcd 数据删除（独立操作，不并入 deinit；默认直接清理无交互确认）:
+  ./etcd.sh clean   彻底删除 /var/lib/agentos/etcd 数据（对齐 yr start 语义）
 
 Config:
   moosefs     配置文件: deploy/moosefs/moosefs.conf (端口/目录/副本数/systemd 开关等)
@@ -255,24 +302,38 @@ Prerequisites:
   - 本机需预装指定版本的 Python
   - jiuwenbox 部署前需确保 jiuwenswarm whl 包已安装（jiuwenbox-server 入口随 jiuwenswarm 安装）
   - jiuwenswarm/gateway 部署前需确保 openyuanrong 已在本机安装并启动
+  - IMPORTANT: up 前需先执行 init 启动 etcd（up 会前置检查 etcd 可达性）
 
 Examples:
+  # ---- 单机完整生命周期 ----
   # 1. 本机安装全部 whl 包
   ./agentos.sh install
 
-  # 2. 一键部署全部组件
+  # 2. bootstrap etcd（非 etcd 节点自动跳过）
+  ./agentos.sh init
+
+  # 3. 部署全部应用组件（自动前置检查 etcd 可达）
   ./agentos.sh up
 
-  # 3. 停止并卸载全部组件
+  # 4. 停止应用组件（etcd 保持运行）
   ./agentos.sh down
 
-  # 4. 重启全部组件
+  # 5. 拆除 etcd（保留数据）
+  ./agentos.sh deinit
+
+  # 6. 卸载全部 whl 包
+  ./agentos.sh uninstall
+
+  # ---- 多机部署（etcd 需全集群先就绪）----
+  # 全节点 install → 全 etcd 节点 init（确认 quorum）→ 全节点 up
+
+  # 重启应用组件（不含 etcd）
   ./agentos.sh restart
 
-  # 5. 指定其他 whl 目录安装 yuanrong
+  # 指定其他 whl 目录安装 yuanrong
   YR_PKG_BASE=/data/yr_whls ./agentos.sh install
 
-  # 6. 自定义 agent SSH 直连密钥路径（默认 /root/.ssh/ 下，需用户自行生成）
+  # 8. 自定义 agent SSH 直连密钥路径（默认 /root/.ssh/ 下，需用户自行生成）
   AGENTOS_SSH_KEY=/path/my_key \
   AGENTOS_SSH_BACKEND_PUBLIC_DIR=/path/my_pub \
   ./agentos.sh up
@@ -284,6 +345,10 @@ Examples:
 
 注意:
   - up/restart 不安装 whl 包，请先执行 install
+  - up 前需先执行 init：etcd 作为一次性 bootstrap 独立于 up/down（up 会前置检查可达性）
+  - init 自动清理历史 etcd 数据（对齐 yr start 语义：每次 bootstrap 视为干净启动）
+  - down 不停 etcd，etcd 作为持久基础设施；拆 etcd 用 deinit（保留数据），强制仅清数据用 ./etcd.sh clean
+  - init/deinit 委托 deploy/etcd.sh，etcd 逻辑只在 etcd.sh 一处维护
   - gateway 依赖 jiuwenswarm 部署后产生的 FUNCTION_ID/FRONTEND_PORT，同一进程内自动传递
 EOF
     exit 0
@@ -296,11 +361,13 @@ main() {
     load_modules
     parse_args "$@"
     case "${CMD}" in
+        install)   deploy_install ;;
+        init)      deploy_init ;;
         up)        deploy_up ;;
         down)      deploy_down ;;
-        restart)   deploy_restart ;;
-        install)   deploy_install ;;
+        deinit)    deploy_deinit ;;
         uninstall) deploy_uninstall ;;
+        restart)   deploy_restart ;;
         *)         error "Unknown command: ${CMD}" ;;
     esac
 }

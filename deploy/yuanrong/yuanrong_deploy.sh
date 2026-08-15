@@ -20,15 +20,12 @@ CMD=""
 NO_SYSTEMD=0
 
 # ===== systemd 模式常量 =====
+# etcd 相关常量与逻辑已拆到 deploy/etcd.sh，此处仅保留 executor unit 相关定义
 YR_CONFIG_PY="${SCRIPT_DIR}/../scripts/config.py"
-YR_ETCD_SVC="agentos-etcd"
-YR_ETCD_UNIT="/etc/systemd/system/${YR_ETCD_SVC}.service"
 YR_EXECUTOR_SVC="agentos-executor"
 YR_EXECUTOR_UNIT="/etc/systemd/system/${YR_EXECUTOR_SVC}.service"
 YR_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${YR_EXECUTOR_SVC}.service.d"
 YR_EXECUTOR_DROPIN="${YR_EXECUTOR_DROPIN_DIR}/env.conf"
-# etcd 数据目录（down 保留，便于重装恢复）
-YR_ETCD_DATA_DIR="/var/lib/agentos/etcd"
 YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
 # ===== agent SSH 直连密钥路径（默认 /root/.ssh 下，用户自行生成，部署脚本不生成）=====
@@ -569,88 +566,9 @@ _yr_cfg() {
     "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
 }
 
-# ===== 探测 yr 内置 etcd 二进制路径 =====
-# 优先从 `yr config dump` 的 values.etcd.bin_path 读取；失败则回退到 yr 包内 third_party 路径。
-_yr_etcd_bin_path() {
-    local bin_path yr_pkg
-
-    if command -v yr >/dev/null 2>&1; then
-        bin_path=$(yr config dump 2>/dev/null \
-            | grep -E "bin_path" \
-            | grep -i "etcd" \
-            | head -n1 \
-            | sed -E 's/.*bin_path[[:space:]]*[:=][[:space:]]*"?([^",}]+)"?.*/\1/' \
-            | tr -d '[:space:]')
-        if [ -n "${bin_path}" ] && [ -x "${bin_path}" ]; then
-            echo "${bin_path}"
-            return 0
-        fi
-    fi
-
-    yr_pkg=$("$(_yr_python)" -c "import yr, os; print(os.path.dirname(yr.__file__))" 2>/dev/null)
-    if [ -n "${yr_pkg}" ] && [ -x "${yr_pkg}/third_party/etcd/etcd" ]; then
-        echo "${yr_pkg}/third_party/etcd/etcd"
-        return 0
-    fi
-
-    return 1
-}
-
-# ===== 生成 etcd unit（仅 etcd_nodes 节点调用） =====
-_yr_generate_etcd_unit() {
-    local etcd_bin node_name initial_cluster advertise_ip
-    etcd_bin=$(_yr_etcd_bin_path) \
-        || error "Cannot locate yr built-in etcd binary (yr config dump / third_party/etcd/etcd)"
-    node_name=$(_yr_cfg etcd-name) || error "Failed to derive etcd node name"
-    initial_cluster=$(_yr_cfg initial-cluster) || error "Failed to build initial-cluster"
-
-    # advertise IP = 本机在 etcd_nodes 中匹配到的 config IP（通配匹配时用通配 IP 本身）。
-    # 绝不能用 get_local_ip 的真实 IP，否则 advertise 地址与 initial-cluster 不一致
-    # 导致 bootstrap 失败。
-    advertise_ip=$(_yr_cfg etcd-advertise-ip) \
-        || error "Failed to derive etcd advertise IP"
-
-    info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}"
-
-    cat > "${YR_ETCD_UNIT}" <<EOF
-[Unit]
-Description=AgentOS etcd Service
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-[Service]
-ExecStart=${etcd_bin} \\
-    --name ${node_name} \\
-    --data-dir ${YR_ETCD_DATA_DIR} \\
-    --unsafe-no-fsync=false \\
-    --auto-compaction-mode=revision \\
-    --auto-compaction-retention=100000 \\
-    --quota-backend-bytes=8589934592 \\
-    --snapshot-count=10000 \\
-    --heartbeat-interval=250 \\
-    --election-timeout=2500 \\
-    --pre-vote=true \\
-    --strict-reconfig-check=true \\
-    --listen-client-urls http://0.0.0.0:32379 \\
-    --advertise-client-urls http://${advertise_ip}:32379 \\
-    --listen-peer-urls http://0.0.0.0:32380 \\
-    --initial-advertise-peer-urls http://${advertise_ip}:32380 \\
-    --initial-cluster ${initial_cluster} \\
-    --initial-cluster-state new \\
-    --initial-cluster-token etcd-cluster-1
-Restart=on-failure
-RestartSec=5s
-TimeoutStartSec=0
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
 # ===== 生成 executor unit（所有节点调用；master/agent 变体） =====
+# etcd unit 由 deploy/etcd.sh 独立管理，此处只生成 executor unit；
+# executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 YR_ETCD_SVC）。
 _yr_generate_executor_unit() {
     local host_ip etcd_addr_list py_bindir
     host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
@@ -662,8 +580,8 @@ _yr_generate_executor_unit() {
         cat > "${YR_EXECUTOR_UNIT}" <<EOF
 [Unit]
 Description=AgentOS Executor Service (Master)
-After=${YR_ETCD_SVC}.service
-Wants=${YR_ETCD_SVC}.service
+After=agentos-etcd.service
+Wants=agentos-etcd.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -696,8 +614,8 @@ EOF
         cat > "${YR_EXECUTOR_UNIT}" <<EOF
 [Unit]
 Description=AgentOS Executor Service (Agent)
-After=${YR_ETCD_SVC}.service
-Wants=${YR_ETCD_SVC}.service
+After=agentos-etcd.service
+Wants=agentos-etcd.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -732,29 +650,12 @@ EOF
 }
 
 # ===== systemd up: 角色推导 → 生成 unit → enable --now → 健康检查 =====
+# etcd 启动已拆到 deploy/etcd.sh，需先执行 etcd.sh up
 deploy_yr_up_systemd() {
     [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
     _yr_has_systemd || error "systemd not available; yuanrong up requires systemd (or use --no-systemd)"
 
     local i
-
-    # ---- etcd（仅 etcd_nodes 节点）----
-    if _yr_cfg is-etcd-node; then
-        info "This host is an etcd node, generating ${YR_ETCD_SVC} unit"
-        mkdir -p "${YR_ETCD_DATA_DIR}"
-        _yr_generate_etcd_unit
-        systemctl daemon-reload
-        systemctl enable --now "${YR_ETCD_SVC}" || error "Failed to start ${YR_ETCD_SVC}"
-        for i in $(seq 1 "${YR_HEALTH_CHECK_RETRIES}"); do
-            systemctl is-active --quiet "${YR_ETCD_SVC}" && break
-            sleep 1
-        done
-        systemctl is-active --quiet "${YR_ETCD_SVC}" \
-            || error "${YR_ETCD_SVC} not active, see: journalctl -u ${YR_ETCD_SVC}"
-        success "${YR_ETCD_SVC} up"
-    else
-        info "This host is NOT an etcd node, skipping ${YR_ETCD_SVC}"
-    fi
 
     # ---- executor（所有节点）----
     info "Generating ${YR_EXECUTOR_SVC} unit"
@@ -770,20 +671,16 @@ deploy_yr_up_systemd() {
     success "${YR_EXECUTOR_SVC} up"
 }
 
-# ===== systemd down: disable → 删除 unit（executor 先于 etcd；保留 etcd 数据） =====
+# ===== systemd down: disable → 删除 executor unit =====
+# etcd 停止已拆到 deploy/etcd.sh down，此处不再触碰 etcd
 deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
-    # executor 先停（依赖 etcd）
     systemctl disable --now "${YR_EXECUTOR_SVC}" 2>/dev/null || true
     rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
 
-    # etcd 后停（保留 ${YR_ETCD_DATA_DIR} 数据，便于重装恢复）
-    systemctl disable --now "${YR_ETCD_SVC}" 2>/dev/null || true
-    rm -f "${YR_ETCD_UNIT}"
-
     systemctl daemon-reload 2>/dev/null || true
-    success "yuanrong units stopped (etcd data preserved at ${YR_ETCD_DATA_DIR})"
+    success "yuanrong executor stopped"
 }
 
 # ===== 主流程 =====

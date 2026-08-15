@@ -261,6 +261,7 @@ def main():
     sub.add_parser("etcd-address-list", help="Print yr etcd address list value")
     sub.add_parser("master-ip", help="Print master_nodes[0]")
     sub.add_parser("etcd-advertise-ip", help="Print this host's etcd advertise IP")
+    sub.add_parser("etcd-nodes", help="Print all etcd node IPs, space-separated")
     sub.add_parser("ingress-vip", help="Print ingress_virtual_ip")
     sub.add_parser("all", help="Print all derived values as JSON")
 
@@ -293,6 +294,9 @@ def main():
         return
     if args.cmd == "etcd-advertise-ip":
         _LOGGER.info(get_etcd_advertise_ip(local_ip, cluster))
+        return
+    if args.cmd == "etcd-nodes":
+        _LOGGER.info(" ".join(cluster["etcd_nodes"]))
         return
     if args.cmd == "ingress-vip":
         _LOGGER.info(cluster["ingress_virtual_ip"])
