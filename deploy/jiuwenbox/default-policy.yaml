@@ -32,15 +32,11 @@ filesystem_policy:
 
   # Read-only paths inside the sandbox. These entries grant read permission only;
   # they do not mount host paths by themselves.
+  # "/" is always present (Landlock grant, not a bind). Remaining OS dirs are
+  # filled by generate_policy from host paths that actually exist.
   read_only:
     - "/"
-    - "/bin"
-    - "/sbin"
-    - "/usr"
-    - "/lib"
-    - "/lib64"
-    - "/etc"
-    - "/opt"
+__DYNAMIC_READ_ONLY__
 
   # Read-write paths inside the sandbox. Use directories or bind_mounts to make
   # these paths exist in the sandbox.
@@ -52,31 +48,9 @@ filesystem_policy:
   #   host_path: absolute path on the host
   #   sandbox_path: absolute path visible inside the sandbox
   #   mode: "ro" for read-only or "rw" for read-write
+  # OS binds below are filled by generate_policy; missing host paths are skipped.
   bind_mounts:
-    - host_path: "/bin"
-      sandbox_path: "/bin"
-      mode: "ro"
-    - host_path: "/sbin"
-      sandbox_path: "/sbin"
-      mode: "ro"
-    - host_path: "/usr"
-      sandbox_path: "/usr"
-      mode: "ro"
-    - host_path: "/lib"
-      sandbox_path: "/lib"
-      mode: "ro"
-    - host_path: "/etc"
-      sandbox_path: "/etc"
-      mode: "ro"
-    - host_path: "/opt"
-      sandbox_path: "/opt"
-      mode: "ro"
-    - host_path: "/tmp"
-      sandbox_path: "/tmp"
-      mode: "rw"
-    - host_path: "/lib64"
-      sandbox_path: "/lib64"
-      mode: "rw"
+__DYNAMIC_BIND_MOUNTS__
     - host_path: "__JIUWENSWARM_EXTENSIONS_DIR__"
       sandbox_path: "__JIUWENSWARM_EXTENSIONS_DIR__"
       mode: "ro"

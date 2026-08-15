@@ -3,6 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # jiuwenbox 部署脚本（自包含，对齐 yuanrong_deploy.sh）
+# 优先使用 systemd 托管（Restart=on-failure）；无 systemd 时回退 nohup。
 # 用法:
 #   ./jiuwenbox_deploy.sh up --hosts 192.168.1.1,192.168.1.2
 #   ./jiuwenbox_deploy.sh down --hosts 192.168.1.1
@@ -30,6 +31,15 @@ READY_TIMEOUT_SECONDS="${JIUWENBOX_READY_TIMEOUT:-15}"
 READY_POLL_INTERVAL_SECONDS="${JIUWENBOX_READY_POLL_INTERVAL:-0.5}"
 PGREP_PATTERN='[j]iuwenbox(-server|\.server\.launcher)'
 
+# ===== systemd 模式常量 =====
+JIUWENBOX_SVC="jiuwenbox"
+JIUWENBOX_UNIT="/etc/systemd/system/${JIUWENBOX_SVC}.service"
+JIUWENBOX_DROPIN_DIR="/etc/systemd/system/${JIUWENBOX_SVC}.service.d"
+JIUWENBOX_DROPIN="${JIUWENBOX_DROPIN_DIR}/env.conf"
+# systemd 托管会随机器重启拉起，而 RUN_DIR 默认在 /tmp（重启即清空），
+# 故 policy 另存到持久目录，供开机自启动读取。
+JIUWENBOX_STATE_DIR="${JIUWENBOX_STATE_DIR:-/var/lib/jiuwenbox}"
+
 # ===== 日志 =====
 info()    { echo -e "\033[36m=== $* ===\033[0m"; }
 success() { echo -e "\033[32m✅ $*\033[0m"; }
@@ -55,6 +65,10 @@ Options:
 Environment:
   JIUWENBOX_RUN_DIR / JIUWENBOX_LISTEN / JIUWENBOX_READY_TIMEOUT
   JIUWENBOX_UDS_MODE / JIUWENBOX_SAVE_LOGS_DIR / JIUWENBOX_LOG_LEVEL
+
+Notes:
+  有 systemd 时生成 jiuwenbox.service（Restart=on-failure, RestartSec=3）并 enable；
+  无 systemd 时回退 nohup（被 kill 后不会自动拉起）。
 
 Examples:
   ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2
@@ -184,12 +198,52 @@ resolve_extensions_dir() {
   echo "${ext_dir}"
 }
 
+# Candidate host binds for generate_policy. Order is mount order (bwrap later
+# overrides earlier): parent dirs before children, all ro entries before rw.
+POLICY_RO_PATHS=(/bin /sbin /usr /lib /lib64 /etc /opt)
+POLICY_RW_PATHS=(/tmp)
+
 generate_policy() {
-  local ext_dir="$1" out_file
+  local ext_dir="$1" out_file path
+  local ro_lines="" bind_lines="" mounted="" skipped=""
   mkdir -p "${RUN_DIR}"
   out_file="${RUN_DIR}/jiuwenbox-policy.yaml"
   [ -f "${POLICY_TEMPLATE}" ] || error "policy template not found: ${POLICY_TEMPLATE}"
-  sed "s|__JIUWENSWARM_EXTENSIONS_DIR__|${ext_dir}|g" "${POLICY_TEMPLATE}" >"${out_file}"
+
+  for path in "${POLICY_RO_PATHS[@]}"; do
+    if [[ -e "${path}" ]]; then
+      ro_lines+="    - \"${path}\""$'\n'
+      bind_lines+="    - host_path: \"${path}\""$'\n'
+      bind_lines+="      sandbox_path: \"${path}\""$'\n'
+      bind_lines+="      mode: \"ro\""$'\n'
+      info "policy mount: ${path} (ro)" >&2
+      mounted+="${path}:ro "
+    else
+      warning "skip missing host path: ${path}" >&2
+      skipped+="${path} "
+    fi
+  done
+  for path in "${POLICY_RW_PATHS[@]}"; do
+    if [[ -e "${path}" ]]; then
+      bind_lines+="    - host_path: \"${path}\""$'\n'
+      bind_lines+="      sandbox_path: \"${path}\""$'\n'
+      bind_lines+="      mode: \"rw\""$'\n'
+      info "policy mount: ${path} (rw)" >&2
+      mounted+="${path}:rw "
+    else
+      warning "skip missing host path: ${path}" >&2
+      skipped+="${path} "
+    fi
+  done
+  info "policy mounts: ${mounted:-none}${skipped:+; skipped: ${skipped}}" >&2
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    case "${line}" in
+      __DYNAMIC_READ_ONLY__)  printf '%s' "${ro_lines}" ;;
+      __DYNAMIC_BIND_MOUNTS__) printf '%s' "${bind_lines}" ;;
+      *) printf '%s\n' "${line//__JIUWENSWARM_EXTENSIONS_DIR__/${ext_dir}}" ;;
+    esac
+  done <"${POLICY_TEMPLATE}" >"${out_file}"
   echo "${out_file}"
 }
 
@@ -254,11 +308,23 @@ probe_server_api() {
 }
 
 wait_server_ready() {
-  local base_url="$1" pid="$2"
+  local base_url="$1" pid="${2:-}" restarts=""
   local deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
   info "Waiting for jiuwenbox API ready (base-url=${base_url}, timeout=${READY_TIMEOUT_SECONDS}s)..."
   while (( SECONDS < deadline )); do
-    if ! is_running_pid "${pid}"; then
+    if _jiuwenbox_has_systemd && [ -f "${JIUWENBOX_UNIT}" ]; then
+      # 崩溃后 systemd 会进入 auto-restart，此时 is-failed 尚不成立（要等触发 start limit），
+      # 故用 NRestarts>0 提前判定启动失败，避免白等整个 ready 超时。
+      if systemctl is-failed --quiet "${JIUWENBOX_SVC}" 2>/dev/null; then
+        echo "error: systemd unit ${JIUWENBOX_SVC} failed; see: journalctl -u ${JIUWENBOX_SVC}" >&2
+        return 1
+      fi
+      restarts="$(systemctl show -p NRestarts --value "${JIUWENBOX_SVC}" 2>/dev/null || echo 0)"
+      if [[ "${restarts}" =~ ^[0-9]+$ ]] && (( restarts > 0 )); then
+        echo "error: ${JIUWENBOX_SVC} crashed and was restarted ${restarts} time(s) before becoming ready" >&2
+        return 1
+      fi
+    elif [[ -n "${pid}" && "${pid}" != "0" ]] && ! is_running_pid "${pid}"; then
       echo "error: jiuwenbox process (pid ${pid}) exited before becoming ready" >&2
       return 1
     fi
@@ -270,6 +336,92 @@ wait_server_ready() {
   done
   echo "error: jiuwenbox API not ready within ${READY_TIMEOUT_SECONDS}s" >&2
   return 1
+}
+
+# ===== systemd 托管 =====
+_jiuwenbox_has_systemd() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+# 生成 unit + drop-in 并 enable --now。调用方已完成 policy / 目录 / 前置检查。
+_jiuwenbox_start_systemd() {
+  local server_bin py py_bindir py_libdir log_level exec_start pid
+  local mkdir_bin pre_dirs systemd_ver log_lines
+  server_bin="$(command -v jiuwenbox-server)" || error "jiuwenbox-server not found"
+  py="$(python_bin)"
+  py_bindir="$(dirname "$(command -v "${py}")")"
+  py_libdir="${py_bindir}/lib"
+  log_level="${JIUWENBOX_LOG_LEVEL:-info}"
+  exec_start="${server_bin} --log-level ${log_level}"
+  [[ -n "${SAVE_LOGS_DIR:-}" ]] && exec_start="${exec_start} --save-logs ${SAVE_LOGS_DIR}"
+
+  # 开机自启动时 /tmp、/run 已被清空，需在 ExecStart 前重建日志目录与 UDS 目录
+  mkdir_bin="$(command -v mkdir)" || error "mkdir not found"
+  pre_dirs="${RUN_DIR}"
+  if [[ "${LISTEN_MODE:-}" = "uds" && -n "${LISTEN_SOCKET_PATH:-}" ]]; then
+    pre_dirs="${pre_dirs} $(dirname "${LISTEN_SOCKET_PATH}")"
+  fi
+  [[ -n "${SAVE_LOGS_DIR:-}" ]] && pre_dirs="${pre_dirs} ${SAVE_LOGS_DIR}"
+
+  # StandardOutput=append: 需 systemd >= 240；更老的版本只落 journal
+  systemd_ver="$(systemctl --version 2>/dev/null | awk 'NR==1{print $2}')"
+  if [[ "${systemd_ver}" =~ ^[0-9]+$ ]] && (( systemd_ver >= 240 )); then
+    log_lines="StandardOutput=append:${LOG_FILE}"$'\n'"StandardError=append:${LOG_FILE}"
+  else
+    log_lines="StandardOutput=journal"$'\n'"StandardError=journal"
+    info "systemd ${systemd_ver:-unknown} < 240, logs go to journal (journalctl -u ${JIUWENBOX_SVC})"
+  fi
+
+  info "systemd detected, generating unit ${JIUWENBOX_SVC}..."
+  cat > "${JIUWENBOX_UNIT}" <<EOF
+[Unit]
+Description=Jiuwenbox Sandbox Service
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+ExecStartPre=${mkdir_bin} -p ${pre_dirs}
+ExecStart=${exec_start}
+Restart=on-failure
+RestartSec=3
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=${STOP_TIMEOUT_SECONDS}s
+${log_lines}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  mkdir -p "${JIUWENBOX_DROPIN_DIR}"
+  cat > "${JIUWENBOX_DROPIN}" <<EOF
+[Service]
+Environment=PATH=${py_bindir}:${PATH}
+Environment=LD_LIBRARY_PATH=${py_libdir}:${LD_LIBRARY_PATH:-}
+Environment=JIUWENBOX_LISTEN=${LISTEN_URI}
+Environment=JIUWENBOX_POLICY_PATH=${POLICY_ABS}
+EOF
+  if [[ -n "${UDS_MODE:-}" ]]; then
+    echo "Environment=JIUWENBOX_UDS_MODE=${UDS_MODE}" >> "${JIUWENBOX_DROPIN}"
+  fi
+  if [[ -n "${SAVE_LOGS_DIR:-}" ]]; then
+    echo "Environment=JIUWENBOX_SAVE_LOGS_DIR=${SAVE_LOGS_DIR}" >> "${JIUWENBOX_DROPIN}"
+  fi
+
+  systemctl daemon-reload
+  systemctl reset-failed "${JIUWENBOX_SVC}" 2>/dev/null || true
+  systemctl enable --now "${JIUWENBOX_SVC}" || error "Failed to start ${JIUWENBOX_SVC}"
+
+  pid="$(systemctl show -p MainPID --value "${JIUWENBOX_SVC}" 2>/dev/null || true)"
+  if ! wait_server_ready "${LISTEN_URI}" "${pid}"; then
+    echo "error: server failed to become ready; see: journalctl -u ${JIUWENBOX_SVC} and ${LOG_FILE}" >&2
+    journalctl -u "${JIUWENBOX_SVC}" -n 40 --no-pager >&2 || true
+    tail -n 40 "$LOG_FILE" >&2 || true
+    systemctl stop "${JIUWENBOX_SVC}" 2>/dev/null || true
+    exit 1
+  fi
+  success "Started jiuwenbox (systemd: ${JIUWENBOX_SVC}, pid ${pid:-unknown})"
 }
 
 # ===== 本机启停核心（仅函数，不对外暴露；由 up/down 按 host 调用） =====
@@ -308,6 +460,11 @@ jiuwenbox_status_on_host() {
   local host="$1"
   if is_local_host "${host}"; then
     local pids
+    # 崩溃重启间隙进程可能暂时不在，故 systemd 模式下先看 unit 状态
+    if _jiuwenbox_has_systemd && systemctl is-active --quiet "${JIUWENBOX_SVC}" 2>/dev/null; then
+      echo "jiuwenbox is running (systemd: ${JIUWENBOX_SVC})"
+      return 0
+    fi
     pids="$(find_server_pids)"
     if [[ -n "$pids" ]]; then
       echo "jiuwenbox is running (pid(s): ${pids//$'\n'/ })"
@@ -316,7 +473,8 @@ jiuwenbox_status_on_host() {
     echo "jiuwenbox is not running"
     return 1
   fi
-  if exec_on_host "${host}" "pgrep -f '${PGREP_PATTERN}' >/dev/null 2>&1"; then
+  if exec_on_host "${host}" \
+    "systemctl is-active --quiet ${JIUWENBOX_SVC} 2>/dev/null || pgrep -f '${PGREP_PATTERN}' >/dev/null 2>&1"; then
     echo "jiuwenbox is running on ${host}"
     return 0
   fi
@@ -340,6 +498,15 @@ start_on_this_host() {
   info "generated jiuwenbox policy: ${policy_file}"
   POLICY_ABS="${policy_file}"
 
+  # systemd 托管含开机自启动，而 RUN_DIR 默认在 /tmp（重启即清空），
+  # policy 留在那里会导致重启后服务起不来，故另存一份到持久目录。
+  if _jiuwenbox_has_systemd; then
+    mkdir -p "${JIUWENBOX_STATE_DIR}"
+    cp -f "${policy_file}" "${JIUWENBOX_STATE_DIR}/jiuwenbox-policy.yaml"
+    POLICY_ABS="${JIUWENBOX_STATE_DIR}/jiuwenbox-policy.yaml"
+    info "persisted policy for systemd: ${POLICY_ABS}"
+  fi
+
   check_prerequisites
   parse_listen_uri "$LISTEN_URI"
   remove_stale_uds_socket
@@ -352,6 +519,12 @@ start_on_this_host() {
     SAVE_LOGS_DIR="$(realpath "$SAVE_LOGS_DIR")"
   fi
 
+  if _jiuwenbox_has_systemd; then
+    _jiuwenbox_start_systemd
+    return
+  fi
+
+  info "systemd not available, using nohup mode..."
   py="$(python_bin)"
   log_level="${JIUWENBOX_LOG_LEVEL:-info}"
   start_env=("JIUWENBOX_LISTEN=$LISTEN_URI" "JIUWENBOX_POLICY_PATH=$POLICY_ABS")
@@ -375,19 +548,44 @@ start_on_this_host() {
 }
 
 stop_on_this_host() {
-  stop_server_processes
+  if _jiuwenbox_has_systemd && [ -f "${JIUWENBOX_UNIT}" ]; then
+    if systemctl stop "${JIUWENBOX_SVC}" 2>/dev/null; then
+      success "jiuwenbox stopped (systemd: ${JIUWENBOX_SVC})"
+    else
+      warning "jiuwenbox systemd unit not running"
+    fi
+  fi
+  # 兜底清理 nohup 残留（例如此前无 systemd 拉起的进程）
+  if [[ -n "$(find_server_pids)" ]]; then
+    stop_server_processes
+  else
+    remove_stale_uds_socket
+  fi
 }
 
-# ===== 多机调度：up/down 内区分本机 / 远端 =====
-# 本机：直接 start/stop_on_this_host
-# 远端：scp 后执行同一套 up/down（不带 --hosts → 在对端对本机 IP 启停）
+uninstall_on_this_host() {
+  if _jiuwenbox_has_systemd; then
+    systemctl disable --now "${JIUWENBOX_SVC}" 2>/dev/null || true
+    rm -rf "${JIUWENBOX_UNIT}" "${JIUWENBOX_DROPIN_DIR}"
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reset-failed "${JIUWENBOX_SVC}" 2>/dev/null || true
+    rm -rf "${JIUWENBOX_STATE_DIR}"
+    success "jiuwenbox systemd unit removed"
+  fi
+  stop_server_processes >/dev/null || true
+}
+
+# ===== 多机调度：up/down/uninstall 内区分本机 / 远端 =====
+# 本机：直接 start/stop/uninstall_on_this_host
+# 远端：scp 后执行同一套命令（不带 --hosts → 在对端对本机 IP 启停）
 jiuwenbox_run_on_host() {
   local host="$1" sub="$2"
   if is_local_host "${host}"; then
     case "${sub}" in
-      up)   start_on_this_host ;;
-      down) stop_on_this_host ;;
-      *)    error "unknown local sub: ${sub}" ;;
+      up)         start_on_this_host ;;
+      down)       stop_on_this_host ;;
+      uninstall)  uninstall_on_this_host ;;
+      *)          error "unknown local sub: ${sub}" ;;
     esac
     return $?
   fi
@@ -397,8 +595,8 @@ jiuwenbox_run_on_host() {
   local py
   py="$(python_bin)"
   case "${sub}" in
-    up|down)
-      # 对端跑公开的 up/down；默认 CLUSTER_HOSTS=对端本机 IP，只会走本机分支
+    up|down|uninstall)
+      # 对端跑公开命令；默认 CLUSTER_HOSTS=对端本机 IP，只会走本机分支
       exec_on_host "${host}" \
         "JIUWENBOX_RUN_DIR='${RUN_DIR}' JIUWENBOX_LISTEN='${LISTEN_URI}' bash '${remote_script}' --python '${py}' ${sub}"
       ;;
@@ -563,10 +761,30 @@ deploy_jiuwenbox_install() {
   info "Installing jiuwenbox"
   info "Hosts: ${CLUSTER_HOSTS}"
   info "Python: $(python_bin)"
+  if _jiuwenbox_has_systemd; then
+    info "systemd detected; jiuwenbox will be managed by systemd on up (Restart=on-failure)"
+  else
+    info "systemd not available; jiuwenbox will use nohup on up"
+  fi
 }
+
 deploy_jiuwenbox_uninstall() {
-  info "Uninstalling jiuwenbox"
-  info "Hosts: ${CLUSTER_HOSTS}"
+  local hosts_str="${CLUSTER_HOSTS}" host
+  IFS=',' read -ra JIUWENBOX_HOST_LIST <<< "${hosts_str}"
+  _require_root_if_local_in_hosts "${hosts_str}" uninstall
+
+  info "Uninstalling jiuwenbox on hosts: ${hosts_str}"
+  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
+    host="$(echo "${host}" | tr -d '[:space:]')"
+    [ -z "${host}" ] && continue
+    if ! is_local_host "${host}" && ! jiuwenbox_check_ssh "${host}"; then
+      warning "SSH to ${host} failed, skip"
+      continue
+    fi
+    info "Uninstalling jiuwenbox on ${host}..."
+    jiuwenbox_run_on_host "${host}" uninstall || warning "Failed to uninstall on ${host}"
+    success "jiuwenbox uninstalled on ${host}"
+  done
 }
 
 main() {

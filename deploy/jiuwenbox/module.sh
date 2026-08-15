@@ -30,6 +30,6 @@ jiuwenbox_install() {
     _jiuwenbox_run --python "python${YR_PYTHON_VERSION}" install "$@"
 }
 
-jiuwenbox_install() {
+jiuwenbox_uninstall() {
     _jiuwenbox_run --python "python${YR_PYTHON_VERSION}" uninstall "$@"
 }
