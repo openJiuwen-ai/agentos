@@ -588,7 +588,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=/usr/local/bin/yr start --master \\
+ExecStart=${py_bindir}/yr start --master \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'mode.master.etcd=false' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
@@ -597,7 +597,7 @@ ExecStart=/usr/local/bin/yr start --master \\
     -s 'mode.master.function_scheduler=true' \\
     -s 'mode.master.meta_service=true' \\
     --block=true
-ExecStop=/usr/local/bin/yr stop --force
+ExecStop=${py_bindir}/yr stop --force
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -622,13 +622,13 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=/usr/local/bin/yr start \\
+ExecStart=${py_bindir}/yr start \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.agent.frontend=true' \\
     --block=true
-ExecStop=/usr/local/bin/yr stop --force
+ExecStop=${py_bindir}/yr stop --force
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
