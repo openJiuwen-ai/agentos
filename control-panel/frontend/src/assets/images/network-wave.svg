@@ -1,0 +1,20 @@
+<svg viewBox="0 0 121 76" xmlns="http://www.w3.org/2000/svg" width="121" height="76" fill="none">
+	<defs>
+		<linearGradient id="networkWaveFill" x1="60.5" y1="8" x2="60.5" y2="76" gradientUnits="userSpaceOnUse">
+			<stop stop-color="#6CCD06" stop-opacity="0.4" />
+			<stop offset="0.55" stop-color="#6CCD06" stop-opacity="0.12" />
+			<stop offset="1" stop-color="#6CCD06" stop-opacity="0" />
+		</linearGradient>
+	</defs>
+	<path
+		d="M0 48C8 48 12 28 20 30C30 33 34 12 46 16C56 19 60 40 72 36C84 32 88 8 100 14C110 18 114 34 121 32V76H0V48Z"
+		fill="url(#networkWaveFill)"
+	/>
+	<path
+		d="M0 48C8 48 12 28 20 30C30 33 34 12 46 16C56 19 60 40 72 36C84 32 88 8 100 14C110 18 114 34 121 32"
+		stroke="#64BB5C"
+		stroke-width="3"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
+</svg>

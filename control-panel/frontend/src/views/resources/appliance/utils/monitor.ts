@@ -27,18 +27,46 @@ export function formatUptimeSeconds(seconds: number): string {
   return `${days} 天 ${hours} 小时`;
 }
 
+function byteUnitIndex(bytes: number): number {
+  if (bytes <= 0) {
+    return 0;
+  }
+  return Math.min(Math.floor(Math.log(bytes) / Math.log(BYTES_PER_KIB)), BYTE_UNITS.length - 1);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) {
     return '0 B';
   }
-  const maxUnitIndex = BYTE_UNITS.length - 1;
-  const unitIndex = Math.min(
-    Math.floor(Math.log(bytes) / Math.log(BYTES_PER_KIB)),
-    maxUnitIndex,
-  );
+  const unitIndex = byteUnitIndex(bytes);
   const value = bytes / BYTES_PER_KIB ** unitIndex;
   const digits = unitIndex >= GB_UNIT_INDEX ? BYTE_FRACTION_DIGITS : BYTE_WHOLE_DIGITS;
   return `${value.toFixed(digits)} ${BYTE_UNITS[unitIndex]}`;
+}
+
+export type BytePairLabel = {
+  used: string;
+  total: string;
+  unit: string;
+};
+
+function formatAlignedByteValue(bytes: number, divisor: number): string {
+  const value = bytes <= 0 ? 0 : bytes / divisor;
+  if (value > 0 && value < 1) {
+    return value.toFixed(2);
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1);
+}
+
+export function formatBytePair(usedBytes: number, totalBytes: number): BytePairLabel {
+  const unitIndex = byteUnitIndex(Math.max(usedBytes, totalBytes, 0));
+  const divisor = BYTES_PER_KIB ** unitIndex;
+  return {
+    used: formatAlignedByteValue(usedBytes, divisor),
+    total: formatAlignedByteValue(totalBytes, divisor),
+    unit: BYTE_UNITS[unitIndex] ?? 'B',
+  };
 }
 
 export function formatBytesPerSecParts(bytesPerSec: number): { value: string; unit: string } {
@@ -123,9 +151,11 @@ export interface ApplianceMonitorViewModel {
   memoryUsage: number;
   memoryUsedText: string;
   memoryTotalText: string;
+  memoryCapacity: BytePairLabel;
   diskUsage: number;
   diskUsedText: string;
   diskTotalText: string;
+  diskCapacity: BytePairLabel;
   networkRxBytesPerSec: number;
   networkTxBytesPerSec: number;
 }
@@ -144,9 +174,11 @@ export function mapApplianceMonitorToView(data: ApplianceMonitorData): Appliance
     memoryUsage: roundUsagePercent(data.memory.usage),
     memoryUsedText: formatBytes(data.memory.used_bytes),
     memoryTotalText: formatBytes(data.memory.total_bytes),
+    memoryCapacity: formatBytePair(data.memory.used_bytes, data.memory.total_bytes),
     diskUsage: roundUsagePercent(diskAll?.usage ?? 0),
     diskUsedText: formatBytes(diskAll?.used_bytes ?? 0),
     diskTotalText: formatBytes(diskAll?.total_bytes ?? 0),
+    diskCapacity: formatBytePair(diskAll?.used_bytes ?? 0, diskAll?.total_bytes ?? 0),
     networkRxBytesPerSec: networkAll?.rx_bytes_per_sec ?? 0,
     networkTxBytesPerSec: networkAll?.tx_bytes_per_sec ?? 0,
   };

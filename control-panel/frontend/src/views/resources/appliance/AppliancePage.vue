@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   ElAlert,
   ElButton,
-  ElCard,
   ElDialog,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
   ElProgress,
   ElSkeleton,
-  ElSpace,
   ElTable,
   ElTableColumn,
   ElTag,
   ElText,
 } from 'element-plus';
-import { Bottom, RefreshRight, Top } from '@element-plus/icons-vue';
+import { RefreshRight } from '@element-plus/icons-vue';
 import {
   fetchApplianceMonitor,
   fetchHardwareNodes,
@@ -26,7 +27,17 @@ import npuIcon from '@/assets/images/npu.svg';
 import memoryIcon from '@/assets/images/memory.svg';
 import diskIcon from '@/assets/images/disk.svg';
 import networkIcon from '@/assets/images/network.svg';
-import deviceImage from '@/assets/images/device.png';
+import networkWaveIcon from '@/assets/images/network-wave.svg';
+import originalViewIcon from '@/assets/images/box.svg';
+import translucentViewIcon from '@/assets/images/briefcase.svg';
+import explodedViewIcon from '@/assets/images/boom.svg';
+import checkmarkIcon from '@/assets/images/checkmark.svg';
+import arrowDownIcon from '@/assets/images/arrow-down.svg';
+import arrowUpIcon from '@/assets/images/arrow-up.svg';
+import applianceBackground from '@/assets/images/appliance-background.svg';
+import originalDeviceImage from '@/assets/images/original-device.svg';
+import translucentDeviceImage from '@/assets/images/half-opacity-device.png';
+import explodedDeviceImage from '@/assets/images/boom-device.svg';
 import {
   formatBytes,
   formatBytesPerSecParts,
@@ -40,6 +51,10 @@ import {
 } from './utils/monitor';
 
 const POLL_INTERVAL_MS = 30_000;
+const RING_RADIUS = 34;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+type DeviceViewMode = 'original' | 'translucent' | 'exploded';
 
 const route = useRoute();
 const router = useRouter();
@@ -57,14 +72,58 @@ const nodeOffline = ref(false);
 const nodeOfflineError = ref<string | null>(null);
 const monitorData = ref<ApplianceMonitorData | null>(null);
 const viewModel = ref<ApplianceMonitorViewModel | null>(null);
+const nodeMenuOpen = ref(false);
 const npuDetailVisible = ref(false);
 const diskDetailVisible = ref(false);
+const deviceView = ref<DeviceViewMode>('original');
+const visualRef = ref<HTMLElement | null>(null);
+const devicePhotoRef = ref<HTMLImageElement | null>(null);
+const deviceFrame = ref({ left: 0, top: 0, width: 0, height: 0 });
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let deviceFrameObserver: ResizeObserver | undefined;
 let loadRequestSeq = 0;
 let nodesRequestSeq = 0;
 
 const MASTER_NODE_ID = 'master';
+
+const DEVICE_VIEWS: { key: DeviceViewMode; label: string; icon: string; image: string }[] = [
+  { key: 'original', label: '原始视图', icon: originalViewIcon, image: originalDeviceImage },
+  { key: 'translucent', label: '半透视图', icon: translucentViewIcon, image: translucentDeviceImage },
+  { key: 'exploded', label: '爆炸视图', icon: explodedViewIcon, image: explodedDeviceImage },
+];
+
+const currentDeviceImage = computed(
+  () => DEVICE_VIEWS.find((item) => item.key === deviceView.value)?.image ?? originalDeviceImage,
+);
+
+const deviceFrameStyle = computed(() => ({
+  left: `${deviceFrame.value.left}px`,
+  top: `${deviceFrame.value.top}px`,
+  width: `${deviceFrame.value.width}px`,
+  height: `${deviceFrame.value.height}px`,
+}));
+
+const watermarkStyle = computed(() => ({
+  left: `${deviceFrame.value.left + deviceFrame.value.width / 2}px`,
+  top: `${deviceFrame.value.top + deviceFrame.value.height * 0.08}px`,
+}));
+
+function syncDeviceFrame() {
+  const visual = visualRef.value;
+  const img = devicePhotoRef.value;
+  if (!visual || !img) {
+    return;
+  }
+  const visualRect = visual.getBoundingClientRect();
+  const imageRect = img.getBoundingClientRect();
+  deviceFrame.value = {
+    left: imageRect.left - visualRect.left,
+    top: imageRect.top - visualRect.top,
+    width: imageRect.width,
+    height: imageRect.height,
+  };
+}
 
 function getNodeItemId(item: HardwareNodeSummary): string {
   return item.id || MASTER_NODE_ID;
@@ -144,21 +203,21 @@ async function ensureDefaultNodeSelection(items: HardwareNodeSummary[]) {
 
 const npuDevices = computed(() => (monitorData.value ? listNpuDevices(monitorData.value) : []));
 const diskMounts = computed(() => (monitorData.value ? listDiskMounts(monitorData.value) : []));
-const selectedNode = computed(() =>
-  nodes.value.find((item) => getNodeItemId(item) === nodeId.value),
-);
-const deviceDisplayName = computed(
-  () => viewModel.value?.deviceName ?? selectedNode.value?.host ?? nodeId.value ?? '—',
-);
-const deviceHeadTags = computed(() => {
-  const node = selectedNode.value;
-  const vm = viewModel.value;
-  return [
-    { label: '型号', value: vm?.modelName ?? node?.product_name ?? '—' },
-    { label: 'IP地址', value: node?.host ?? '—' },
-    { label: '运行时长', value: vm?.uptimeText ?? '—' },
-  ];
+const selectedNode = computed(() => nodes.value.find((item) => getNodeItemId(item) === nodeId.value));
+const isNodeOnline = computed(() => {
+  if (nodeOffline.value) {
+    return false;
+  }
+  if (selectedNode.value) {
+    return selectedNode.value.status === 'online';
+  }
+  return Boolean(viewModel.value);
 });
+const modelName = computed(() => viewModel.value?.modelName ?? selectedNode.value?.product_name ?? '—');
+const ipAddress = computed(() => selectedNode.value?.host ?? '—');
+const uptimeText = computed(() => viewModel.value?.uptimeText ?? '—');
+const networkTx = computed(() => formatBytesPerSecParts(viewModel.value?.networkTxBytesPerSec ?? 0));
+const networkRx = computed(() => formatBytesPerSecParts(viewModel.value?.networkRxBytesPerSec ?? 0));
 const usageCards = computed(() => {
   if (!viewModel.value) {
     return [];
@@ -167,42 +226,49 @@ const usageCards = computed(() => {
   return [
     {
       key: 'cpu',
-      title: 'CPU利用率',
+      title: 'CPU',
       icon: cpuIcon,
       percent: vm.cpuUsage,
-      showUsage: false,
+      subtitle: '平均CPU利用率',
+      color: '#0a59f7',
     },
     {
       key: 'npu',
-      title: 'NPU利用率',
+      title: 'NPU',
       icon: npuIcon,
       percent: vm.npuUsage,
-      showUsage: false,
+      subtitle: '平均NPU利用率',
+      color: '#61cfbe',
       showDetail: true,
       detailKey: 'npu',
     },
     {
       key: 'memory',
-      title: '内存利用率',
+      title: '内存',
       icon: memoryIcon,
       percent: vm.memoryUsage,
-      showUsage: true,
-      usedText: vm.memoryUsedText,
-      totalText: vm.memoryTotalText,
+      subtitle: `${vm.memoryUsedText} / ${vm.memoryTotalText}`,
+      capacity: vm.memoryCapacity,
+      color: '#46b1e3',
     },
     {
       key: 'disk',
-      title: '磁盘利用率',
+      title: '磁盘',
       icon: diskIcon,
       percent: vm.diskUsage,
-      showUsage: true,
-      usedText: vm.diskUsedText,
-      totalText: vm.diskTotalText,
+      subtitle: `${vm.diskUsedText} / ${vm.diskTotalText}`,
+      capacity: vm.diskCapacity,
+      color: '#ac49f5',
       showDetail: true,
       detailKey: 'disk',
     },
   ];
 });
+
+function ringDashOffset(percent: number): number {
+  const clamped = Math.min(100, Math.max(0, percent));
+  return RING_CIRCUMFERENCE * (1 - clamped / 100);
+}
 
 async function loadMonitor(isRefresh = false, targetNodeId?: string) {
   const activeNodeId = targetNodeId ?? nodeId.value;
@@ -250,23 +316,37 @@ async function loadMonitor(isRefresh = false, targetNodeId?: string) {
   }
 }
 
-function handleListRefresh() {
-  void loadNodes(true);
-}
-
 function handleDetailRefresh() {
   restartPollTimer();
-  void loadMonitor(true);
+  void pollApplianceData();
 }
 
 async function pollApplianceData() {
   await Promise.all([loadNodes(true), nodeId.value ? loadMonitor(true) : Promise.resolve()]);
 }
 
+function observeDeviceFrame() {
+  deviceFrameObserver?.disconnect();
+  if (typeof ResizeObserver === 'undefined') {
+    return;
+  }
+  deviceFrameObserver = new ResizeObserver(() => {
+    syncDeviceFrame();
+  });
+  if (visualRef.value) {
+    deviceFrameObserver.observe(visualRef.value);
+  }
+  if (devicePhotoRef.value) {
+    deviceFrameObserver.observe(devicePhotoRef.value);
+  }
+  syncDeviceFrame();
+}
+
 onMounted(() => {
   void loadNodes().finally(() => {
     restartPollTimer();
   });
+  window.addEventListener('resize', syncDeviceFrame);
 });
 
 function restartPollTimer() {
@@ -280,7 +360,7 @@ function restartPollTimer() {
   }, POLL_INTERVAL_MS);
 }
 
-function openMetricDetail(key: string) {
+function openMetricDetail(key?: string) {
   if (key === 'npu') {
     npuDetailVisible.value = true;
     return;
@@ -288,6 +368,14 @@ function openMetricDetail(key: string) {
   if (key === 'disk') {
     diskDetailVisible.value = true;
   }
+}
+
+function handleNodeCommand(id: string) {
+  void selectNode(id);
+}
+
+function handleNodeMenuVisible(visible: boolean) {
+  nodeMenuOpen.value = visible;
 }
 
 watch(
@@ -316,24 +404,86 @@ watch(
   { immediate: true },
 );
 
+watch(visualRef, (el) => {
+  if (!el) {
+    return;
+  }
+  void nextTick(() => {
+    observeDeviceFrame();
+  });
+});
+
+watch(deviceView, () => {
+  void nextTick(() => {
+    syncDeviceFrame();
+  });
+});
+
 onUnmounted(() => {
   loadRequestSeq += 1;
   nodesRequestSeq += 1;
   if (pollTimer !== undefined) {
     clearTimeout(pollTimer);
   }
+  deviceFrameObserver?.disconnect();
+  window.removeEventListener('resize', syncDeviceFrame);
 });
 </script>
 
 <template>
   <section class="appliance-page">
+    <div class="appliance-page__bg" aria-hidden="true" :style="{ backgroundImage: `url(${applianceBackground})` }" />
     <header class="appliance-page__header">
-      <h1 class="appliance-page__title">一体机监控</h1>
+      <div class="appliance-page__identity">
+        <ElDropdown
+          v-if="nodes.length > 0"
+          trigger="click"
+          @command="handleNodeCommand"
+          @visible-change="handleNodeMenuVisible"
+        >
+          <button type="button" class="appliance-page__name-btn">
+            <span class="appliance-page__device-name">{{ nodeId || '—' }}</span>
+            <img
+              :src="nodeMenuOpen ? arrowUpIcon : arrowDownIcon"
+              alt=""
+              class="appliance-page__caret"
+              width="16"
+              height="16"
+              aria-hidden="true"
+            />
+          </button>
+          <template #dropdown>
+            <ElDropdownMenu class="appliance-node-menu">
+              <ElDropdownItem
+                v-for="item in nodes"
+                :key="item.id"
+                :command="getNodeItemId(item)"
+                :class="{ 'is-node-active': getNodeItemId(item) === nodeId }"
+              >
+                <span class="appliance-node-menu__id">{{ getNodeItemId(item) }}</span>
+                <img
+                  v-if="getNodeItemId(item) === nodeId"
+                  :src="checkmarkIcon"
+                  alt=""
+                  class="appliance-node-menu__check"
+                  width="16"
+                  height="16"
+                />
+              </ElDropdownItem>
+            </ElDropdownMenu>
+          </template>
+        </ElDropdown>
+        <h1 v-else class="appliance-page__device-name">{{ nodeId || '一体机监控' }}</h1>
+        <span v-if="nodeId" class="appliance-page__online" :class="isNodeOnline ? 'is-online' : 'is-offline'">
+          <i class="appliance-page__online-dot" aria-hidden="true" />
+          {{ isNodeOnline ? '在线' : '离线' }}
+        </span>
+      </div>
       <div class="appliance-page__header-actions">
-        <ElText type="info" class="appliance-page__updated"> 更新时间：{{ viewModel?.updatedAt ?? '—' }} </ElText>
+        <span class="appliance-page__updated">更新时间：{{ viewModel?.updatedAt ?? '—' }}</span>
         <ElButton
           text
-          :loading="refreshing"
+          :loading="refreshing || listRefreshing"
           :icon="RefreshRight"
           aria-label="刷新详情"
           class="appliance-page__refresh-btn"
@@ -342,145 +492,182 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div class="appliance-page__layout">
-      <aside class="appliance-page__sidebar">
-        <div class="appliance-page__sidebar-head">
-          <ElText type="info" size="small">节点列表</ElText>
-          <ElButton
-            text
-            :loading="listRefreshing"
-            :icon="RefreshRight"
-            aria-label="刷新节点列表"
-            class="appliance-page__sidebar-refresh"
-            @click="handleListRefresh"
+    <ElAlert
+      v-if="nodesError"
+      :title="nodesError"
+      type="error"
+      show-icon
+      :closable="false"
+      class="appliance-page__alert"
+    />
+    <ElAlert v-if="error" :title="error" type="error" show-icon :closable="false" class="appliance-page__alert" />
+    <ElAlert
+      v-else-if="nodeOffline"
+      :title="nodeOfflineError ?? '节点不可达'"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="appliance-page__alert"
+    />
+
+    <ElSkeleton
+      v-if="(nodesLoading && nodes.length === 0) || (loading && !viewModel && !nodeOffline)"
+      :rows="10"
+      animated
+    />
+
+    <template v-else-if="nodeId">
+      <div class="appliance-page__stage">
+        <div ref="visualRef" class="appliance-page__visual">
+          <div class="appliance-page__watermark" aria-hidden="true" :style="watermarkStyle">{{ modelName }}</div>
+          <img
+            ref="devicePhotoRef"
+            :src="currentDeviceImage"
+            alt=""
+            class="appliance-page__device-photo"
+            @load="syncDeviceFrame"
           />
+          <div class="appliance-page__callouts" :style="deviceFrameStyle">
+            <div class="appliance-callout appliance-callout--model">
+              <div class="appliance-callout__card">
+                <span class="appliance-callout__label">设备型号</span>
+                <span class="appliance-callout__value">{{ modelName }}</span>
+              </div>
+              <span class="appliance-callout__line" aria-hidden="true" />
+            </div>
+            <div class="appliance-callout appliance-callout--uptime">
+              <div class="appliance-callout__card">
+                <span class="appliance-callout__label">运行时长</span>
+                <span class="appliance-callout__value">{{ uptimeText }}</span>
+              </div>
+              <span class="appliance-callout__line" aria-hidden="true" />
+            </div>
+            <div class="appliance-callout appliance-callout--ip">
+              <span class="appliance-callout__line" aria-hidden="true" />
+              <div class="appliance-callout__card">
+                <span class="appliance-callout__label">IP地址</span>
+                <span class="appliance-callout__value">{{ ipAddress }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <ElAlert
-          v-if="nodesError"
-          :title="nodesError"
-          type="error"
-          show-icon
-          :closable="false"
-          class="appliance-page__alert"
-        />
-        <ElSkeleton v-if="nodesLoading" :rows="4" animated />
-
-        <div v-else class="appliance-page__node-list">
+        <div class="appliance-page__view-switch" role="tablist" aria-label="设备视图">
           <button
-            v-for="item in nodes"
-            :key="item.id"
+            v-for="item in DEVICE_VIEWS"
+            :key="item.key"
             type="button"
-            class="appliance-node"
-            :class="{
-              'appliance-node--active': getNodeItemId(item) === nodeId,
-              'appliance-node--offline': item.status === 'offline',
-            }"
-            @click="selectNode(getNodeItemId(item))"
+            class="appliance-page__view-btn"
+            :class="{ 'is-active': deviceView === item.key }"
+            role="tab"
+            :aria-selected="deviceView === item.key"
+            @click="deviceView = item.key"
           >
-            <span class="appliance-node__role">{{ item.role }}</span>
-            <span class="appliance-node__host">{{ item.host }}</span>
-            <span class="appliance-node__model">{{ item.product_name || '—' }}</span>
             <span
-              class="appliance-node__status"
-              :class="item.status === 'online' ? 'is-online' : 'is-offline'"
-            >
-              {{ item.status === 'online' ? '在线' : '离线' }}
-            </span>
+              class="appliance-page__view-icon"
+              :style="{
+                maskImage: `url(${item.icon})`,
+                WebkitMaskImage: `url(${item.icon})`,
+              }"
+              aria-hidden="true"
+            />
+            {{ item.label }}
           </button>
         </div>
-      </aside>
+      </div>
 
-      <main class="appliance-page__main">
-        <ElAlert v-if="error" :title="error" type="error" show-icon :closable="false" class="appliance-page__alert" />
-        <ElAlert
-          v-else-if="nodeOffline"
-          :title="nodeOfflineError ?? '节点不可达'"
-          type="warning"
-          show-icon
-          :closable="false"
-          class="appliance-page__alert"
-        />
-        <ElSkeleton v-if="loading" :rows="10" animated />
-
-        <template v-else-if="nodeId">
-      <div class="appliance-page__body">
-        <div class="appliance-page__visual">
-          <div class="appliance-page__device-head">
-            <h2 class="appliance-page__device-name">{{ deviceDisplayName }}</h2>
-            <ElSpace wrap :size="12">
-              <ElTag v-for="tag in deviceHeadTags" :key="tag.label" round effect="plain" class="appliance-page__tag">
-                <span class="appliance-page__tag-label">{{ tag.label }}</span>
-                <span class="appliance-page__tag-value">{{ tag.value }}</span>
-              </ElTag>
-            </ElSpace>
+      <div v-if="viewModel" class="appliance-page__metrics">
+        <div
+          v-for="card in usageCards"
+          :key="card.key"
+          class="metric-card"
+          :class="{ 'metric-card--clickable': card.showDetail }"
+          :role="card.showDetail ? 'button' : undefined"
+          :tabindex="card.showDetail ? 0 : undefined"
+          @click="openMetricDetail(card.detailKey)"
+        >
+          <div class="metric-card__header">
+            <span class="metric-card__icon-wrap">
+              <img :src="card.icon" alt="" class="metric-card__icon" width="24" height="24" />
+            </span>
+            <h3 class="metric-card__title">{{ card.title }}</h3>
+            <ElButton
+              v-if="card.showDetail"
+              type="primary"
+              link
+              class="metric-card__detail-btn"
+              @click.stop="openMetricDetail(card.detailKey)"
+            >
+              查看详情
+            </ElButton>
           </div>
-          <div v-if="viewModel" class="appliance-page__device-image" aria-hidden="true">
-            <img :src="deviceImage" alt="" class="appliance-page__device-photo" />
-          </div>
-        </div>
-        <aside v-if="viewModel" class="appliance-page__metrics">
-          <ElCard v-for="card in usageCards" :key="card.key" shadow="never" class="metric-card">
-            <div class="metric-card__header">
-              <img :src="card.icon" alt="" class="metric-card__icon" width="48" height="48" />
-              <h3 class="metric-card__title">{{ card.title }}</h3>
-              <ElButton
-                v-if="card.showDetail"
-                type="primary"
-                link
-                class="metric-card__detail-btn"
-                @click="openMetricDetail(card.detailKey!)"
-              >
-                查看详情
-              </ElButton>
-            </div>
-            <div class="metric-card__body" :class="{ 'metric-card__body--usage': card.showUsage }">
+          <div class="metric-card__body">
+            <div class="metric-card__info">
               <div class="metric-card__value">
                 <span class="metric-card__number">{{ formatUsagePercent(card.percent) }}</span>
                 <span class="metric-card__unit">%</span>
               </div>
-              <div class="metric-card__progress-wrap">
-                <div v-if="card.showUsage" class="metric-card__usage-row">
-                  <ElText type="info" size="small">当前使用量</ElText>
-                  <ElText size="small">{{ card.usedText }}/{{ card.totalText }}</ElText>
-                </div>
-                <ElProgress
-                  :percentage="card.percent"
-                  :show-text="false"
-                  :stroke-width="14"
-                  class="metric-card__progress"
-                />
-              </div>
+              <span v-if="card.capacity" class="metric-card__subtitle metric-card__subtitle--capacity">
+                <span class="metric-card__subtitle-num">{{ card.capacity.used }} / {{ card.capacity.total }}</span>
+                <span class="metric-card__subtitle-unit">{{ card.capacity.unit }}</span>
+              </span>
+              <span v-else class="metric-card__subtitle">{{ card.subtitle }}</span>
             </div>
-          </ElCard>
-          <ElCard shadow="never" class="metric-card">
-            <div class="metric-card__header">
-              <img :src="networkIcon" alt="" class="metric-card__icon" width="48" height="48" />
-              <h3 class="metric-card__title">网络</h3>
-            </div>
-            <div class="metric-card__body metric-card__body--network">
-              <div class="network-stats">
-                <div class="network-stat">
-                  <ElButton circle :icon="Top" class="network-stat__icon" aria-label="上行" />
-                  <span class="network-stat__number">{{ formatBytesPerSecParts(viewModel.networkTxBytesPerSec).value }}</span>
-                  <span class="network-stat__unit">{{ formatBytesPerSecParts(viewModel.networkTxBytesPerSec).unit }}</span>
-                </div>
-                <span class="network-stat__divider" aria-hidden="true" />
-                <div class="network-stat">
-                  <ElButton circle :icon="Bottom" class="network-stat__icon" aria-label="下行" />
-                  <span class="network-stat__number">{{ formatBytesPerSecParts(viewModel.networkRxBytesPerSec).value }}</span>
-                  <span class="network-stat__unit">{{ formatBytesPerSecParts(viewModel.networkRxBytesPerSec).unit }}</span>
-                </div>
-              </div>
-            </div>
-          </ElCard>
-        </aside>
-        <div v-else class="appliance-page__metrics appliance-page__metrics--empty">
-          <ElText type="info">暂无硬件监控数据</ElText>
+            <svg class="metric-ring" viewBox="0 0 80 80" aria-hidden="true">
+              <circle class="metric-ring__track" cx="40" cy="40" :r="RING_RADIUS" :stroke="card.color" />
+              <circle
+                v-if="card.percent > 0"
+                class="metric-ring__bar"
+                cx="40"
+                cy="40"
+                :r="RING_RADIUS"
+                :stroke="card.color"
+                :stroke-dasharray="RING_CIRCUMFERENCE"
+                :stroke-dashoffset="ringDashOffset(card.percent)"
+              />
+            </svg>
+          </div>
         </div>
+        <article class="metric-card metric-card--network">
+          <div class="metric-card__header">
+            <span class="metric-card__icon-wrap">
+              <img :src="networkIcon" alt="" class="metric-card__icon" width="24" height="24" />
+            </span>
+            <h3 class="metric-card__title">网络</h3>
+          </div>
+          <div class="metric-card__body metric-card__body--network">
+            <div class="network-stats">
+              <div class="network-stat">
+                <div class="metric-card__value">
+                  <span class="metric-card__number">{{ networkTx.value }}</span>
+                  <span class="metric-card__unit">{{ networkTx.unit }}</span>
+                </div>
+                <span class="metric-card__subtitle">上行速率</span>
+              </div>
+              <div class="network-stat">
+                <div class="metric-card__value">
+                  <span class="metric-card__number">{{ networkRx.value }}</span>
+                  <span class="metric-card__unit">{{ networkRx.unit }}</span>
+                </div>
+                <span class="metric-card__subtitle">下行速率</span>
+              </div>
+            </div>
+            <img :src="networkWaveIcon" alt="" class="network-wave" width="121" height="76" />
+          </div>
+        </article>
       </div>
-      <template v-if="viewModel">
-      <ElDialog v-model="npuDetailVisible" title="NPU 卡详情" width="720px" destroy-on-close class="npu-detail-dialog">
+      <div v-else class="appliance-page__metrics appliance-page__metrics--empty">
+        <ElText type="info">暂无硬件监控数据</ElText>
+      </div>
+
+      <ElDialog
+        v-model="npuDetailVisible"
+        title="NPU 卡详情"
+        width="720px"
+        append-to-body
+        destroy-on-close
+        class="npu-detail-dialog"
+      >
         <div v-if="npuDevices.length === 0" class="metric-detail-empty">
           <ElText type="info">暂无 NPU 卡数据</ElText>
         </div>
@@ -542,7 +729,14 @@ onUnmounted(() => {
           </ElTableColumn>
         </ElTable>
       </ElDialog>
-      <ElDialog v-model="diskDetailVisible" title="磁盘详情" width="720px" destroy-on-close class="disk-detail-dialog">
+      <ElDialog
+        v-model="diskDetailVisible"
+        title="磁盘详情"
+        width="720px"
+        append-to-body
+        destroy-on-close
+        class="disk-detail-dialog"
+      >
         <div v-if="diskMounts.length === 0" class="metric-detail-empty">
           <ElText type="info">暂无磁盘数据</ElText>
         </div>
@@ -582,25 +776,43 @@ onUnmounted(() => {
           </ElTableColumn>
         </ElTable>
       </ElDialog>
-      </template>
-        </template>
+    </template>
 
-        <div v-else-if="!nodesLoading" class="appliance-page__empty">
-          <ElText type="info">请选择节点查看硬件详情</ElText>
-        </div>
-      </main>
+    <div v-else-if="!nodesLoading" class="appliance-page__empty">
+      <ElText type="info">请选择节点查看硬件详情</ElText>
     </div>
   </section>
 </template>
 
 <style scoped>
 .appliance-page {
+  position: relative;
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 24px;
-  padding: 24px 32px 32px;
-  min-height: 100%;
+  padding: 24px 32px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   box-sizing: border-box;
+  background: #ffffff;
+}
+
+.appliance-page__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: #ffffff;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.appliance-page > :not(.appliance-page__bg):not(.el-overlay) {
+  position: relative;
+  z-index: 1;
 }
 
 .appliance-page__header {
@@ -608,137 +820,75 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-}
-
-.appliance-page__layout {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-}
-
-.appliance-page__sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--bg-1);
-}
-
-.appliance-page__sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.appliance-page__sidebar-refresh {
-  padding: 0;
-  width: 14px;
-  height: 22px;
-}
-
-.appliance-page__node-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.appliance-node {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-2);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.appliance-node:hover {
-  border-color: var(--color-primary);
-}
-
-.appliance-node--active {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
-}
-
-.appliance-node--offline {
-  opacity: 0.85;
-}
-
-.appliance-node__role {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary);
-}
-
-.appliance-node__host {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.appliance-node__model {
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--text-secondary);
-}
-
-.appliance-node__status {
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.appliance-node__status.is-online {
-  color: var(--success);
-}
-
-.appliance-node__status.is-offline {
-  color: var(--text-secondary);
-}
-
-.appliance-page__main {
-  min-width: 0;
-}
-
-.appliance-page__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 320px;
-}
-
-.appliance-page__header-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.appliance-page__back-btn {
-  padding: 0;
   flex-shrink: 0;
 }
 
-.appliance-page__title {
+.appliance-page__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.appliance-page__identity :deep(.el-tooltip__trigger) {
+  display: inline-flex;
+  outline: none;
+}
+
+.appliance-page__name-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.appliance-page__device-name {
   margin: 0;
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
-  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+  color: #191919;
+}
+
+.appliance-page__caret {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.appliance-page__online {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 19px;
+  color: #191919;
+}
+
+.appliance-page__online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9c9c9;
+}
+
+.appliance-page__online.is-online .appliance-page__online-dot {
+  background: #64bb5c;
+}
+
+.appliance-page__online.is-offline {
+  color: var(--text-secondary);
 }
 
 .appliance-page__updated {
   font-size: 14px;
-  line-height: 22px;
+  line-height: 19px;
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .appliance-page__header-actions {
@@ -746,6 +896,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   height: 22px;
+  flex-shrink: 0;
 }
 
 .appliance-page__refresh-btn {
@@ -757,124 +908,285 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  vertical-align: middle;
 }
 
 .appliance-page__refresh-btn :deep(.el-icon) {
   width: 14px;
   height: 14px;
   font-size: 14px;
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .appliance-page__alert {
   margin: 0;
+  flex-shrink: 0;
 }
 
-.appliance-page__body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 530px;
-  gap: 32px;
-  align-items: start;
+.appliance-page__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.appliance-page__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .appliance-page__visual {
   position: relative;
-  min-height: 916px;
-}
-
-.appliance-page__device-head {
-  position: relative;
-  z-index: 1;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 720px;
-}
-
-.appliance-page__device-name {
-  margin: 0;
-  font-size: 32px;
-  font-weight: 500;
-  line-height: 40px;
-  color: var(--text-primary);
-}
-
-.appliance-page__tag {
-  height: 38px;
-  padding: 0 16px;
-  border: none;
-  background: var(--bg-2);
-}
-
-.appliance-page__tag :deep(.el-tag__content) {
-  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: visible;
 }
 
-.appliance-page__tag-label {
-  color: var(--text-secondary);
-}
-
-.appliance-page__tag-value {
-  color: var(--text-primary);
-}
-
-.appliance-page__device-image {
+.appliance-page__watermark {
   position: absolute;
-  inset: 54px 0 0 109px;
+  z-index: 0;
+  transform: translate(-50%, -72%) skewX(-15deg);
+  font-family: 'HarmonyOS Sans', sans-serif;
+  font-size: 144px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
   pointer-events: none;
+  user-select: none;
+  color: #dee0e7;
+  background-image: linear-gradient(180deg, #dee0e7 0%, rgba(222, 224, 231, 0.25) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .appliance-page__device-photo {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 50%;
   display: block;
-  width: 100%;
-  height: 100%;
+  max-height: 90%;
+  max-width: 72%;
+  width: auto;
+  height: auto;
   object-fit: contain;
   object-position: center;
+  transform: translate(-50%, -50%);
+}
+
+.appliance-page__callouts {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.appliance-callout {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.appliance-callout--model {
+  top: 49%;
+  left: calc(10% + 40px);
+  transform: translate(-100%, -50%);
+}
+
+.appliance-callout--uptime {
+  top: 66%;
+  left: calc(8% + 40px);
+  transform: translate(-100%, -50%);
+}
+
+.appliance-callout--ip {
+  top: 53%;
+  left: calc(90% - 40px);
+  transform: translateY(-50%);
+}
+
+.appliance-callout__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #ffffff;
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+.appliance-callout__label {
+  font-size: 14px;
+  line-height: 22px;
+  color: #777777;
+}
+
+.appliance-callout__value {
+  font-size: 14px;
+  line-height: 22px;
+  color: #191919;
+}
+
+.appliance-callout__line {
+  position: relative;
+  width: 128px;
+  height: 2px;
+  background: #e5e5ea;
+  flex-shrink: 0;
+}
+
+.appliance-callout__line::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e5e5ea;
+  transform: translateY(-50%);
+}
+
+.appliance-callout--model .appliance-callout__line::after,
+.appliance-callout--uptime .appliance-callout__line::after {
+  right: 0;
+}
+
+.appliance-callout--ip .appliance-callout__line::after {
+  left: 0;
+}
+
+.appliance-page__view-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 368px;
+  padding: 4px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+.appliance-page__view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 120px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.appliance-page__view-btn.is-active {
+  background: #ffffff;
+  color: rgba(0, 0, 0, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.appliance-page__view-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  background-color: currentColor;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
 }
 
 .appliance-page__metrics {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 16px;
+  align-items: stretch;
+  flex-shrink: 0;
 }
 
 .appliance-page__metrics--empty {
+  display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 240px;
+  min-height: 172px;
   border-radius: 24px;
-  background: var(--el-fill-color-blank);
+  background: #ffffff;
 }
 
 .metric-card {
-  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(16px, 4vh, 44px);
+  width: 100%;
+  min-width: 0;
+  padding: 16px 16px 20px;
   border: none;
+  border-radius: 24px;
+  background: #ffffff;
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
 }
 
-.metric-card :deep(.el-card__body) {
-  padding: 16px 24px 20px;
+.metric-card--clickable {
+  cursor: pointer;
+}
+
+.metric-card--clickable:hover {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+.appliance-page__name-btn:focus-visible,
+.metric-card--clickable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .metric-card__header {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 24px;
+  gap: 12px;
+}
+
+.metric-card__icon-wrap {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #f1f3f5;
 }
 
 .metric-card__icon {
-  flex-shrink: 0;
+  display: block;
+  width: 24px;
+  height: 24px;
 }
 
 .metric-card__title {
-  margin: 0;
   flex: 1;
+  margin: 0;
   font-size: 18px;
   font-weight: 500;
   line-height: 26px;
-  color: var(--text-primary);
+  color: #191919;
 }
 
 .metric-card__detail-btn {
@@ -883,110 +1195,112 @@ onUnmounted(() => {
   height: auto;
   font-size: 14px;
   line-height: 22px;
+  --el-button-text-color: var(--color-primary);
+  --el-button-hover-text-color: var(--color-primary);
+  --el-button-hover-link-text-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .metric-card__body {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  padding: 0 12px;
 }
 
-.metric-card__body--usage {
-  align-items: flex-start;
-}
-
-.metric-card__body--network {
-  align-items: flex-end;
+.metric-card__info,
+.network-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .metric-card__value {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  flex-shrink: 0;
 }
 
 .metric-card__number {
-  font-size: 48px;
+  font-size: 40px;
   font-weight: 500;
   line-height: 56px;
-  color: var(--text-primary);
+  color: #191919;
 }
 
 .metric-card__unit {
-  margin-bottom: 11px;
-  font-size: 28px;
+  margin-bottom: 9px;
+  font-size: 18px;
   font-weight: 500;
-  line-height: 36px;
-  color: var(--text-secondary);
+  line-height: 24px;
+  color: #777777;
+  white-space: nowrap;
 }
 
-.metric-card__progress-wrap {
-  flex: 1;
-  min-width: 0;
-  max-width: 320px;
+.metric-card__subtitle {
+  font-size: 16px;
+  line-height: 21px;
+  color: rgba(0, 0, 0, 0.6);
 }
 
-.metric-card__usage-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
+.metric-card__subtitle--capacity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.metric-card__progress :deep(.el-progress-bar__outer) {
-  border-radius: 100px;
-  background: var(--bg-1);
+.metric-card__subtitle-num {
+  color: #191919;
 }
 
-.metric-card__progress :deep(.el-progress-bar__inner) {
-  border-radius: 100px;
-  background: linear-gradient(90deg, rgba(107, 152, 240, 1) 0%, rgba(140, 175, 244, 1) 100%);
+.metric-card__subtitle-unit {
+  color: #777777;
+}
+
+.metric-ring {
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+
+.metric-ring__track,
+.metric-ring__bar {
+  fill: none;
+  stroke-width: 12;
+}
+
+.metric-ring__track {
+  opacity: 0.15;
+}
+
+.metric-ring__bar {
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease;
+}
+
+.metric-card--network .metric-card__body--network {
+  align-items: flex-start;
+  padding: 0;
 }
 
 .network-stats {
   display: flex;
-  align-items: flex-end;
-  gap: 18px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex: 1;
+  min-width: 0;
 }
 
-.network-stat {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-.network-stat__divider {
+.network-wave {
+  display: block;
+  width: 121px;
+  height: 76px;
   flex-shrink: 0;
-  align-self: flex-end;
-  width: 1px;
-  height: 24px;
-  margin-bottom: 16px;
-  background: var(--border);
-}
-
-.network-stat__icon {
-  margin-bottom: 12px;
-  border: none;
-  background: var(--bg-active);
-  color: var(--color-primary);
-}
-
-.network-stat__number {
-  font-size: 48px;
-  font-weight: 500;
-  line-height: 56px;
-  color: var(--text-primary);
-}
-
-.network-stat__unit {
-  margin-bottom: 11px;
-  font-size: 28px;
-  line-height: 36px;
-  color: var(--text-secondary);
-  white-space: nowrap;
+  object-fit: contain;
 }
 
 .metric-detail-empty {
@@ -1082,31 +1396,60 @@ onUnmounted(() => {
   background: var(--tag-bg-info) !important;
 }
 
-@media (max-width: 1200px) {
-  .appliance-page__layout {
-    grid-template-columns: 1fr;
-  }
+.appliance-node-menu__id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appliance-node-menu__check {
+  width: 16px;
+  height: 16px;
+  margin-left: 12px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 @media (max-width: 1400px) {
-  .appliance-page__body {
-    grid-template-columns: 1fr;
+  .appliance-page {
+    gap: 16px;
+    padding: 16px 24px;
   }
 
-  .appliance-page__visual {
-    min-height: 520px;
+  .appliance-page__metrics {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .appliance-callout--model {
+    left: calc(10% + 24px);
   }
 
-  .appliance-page__device-image {
-    position: relative;
-    inset: auto;
-    margin-top: 24px;
-    min-height: 360px;
+  .appliance-callout--uptime {
+    left: calc(8% + 24px);
+  }
+
+  .appliance-callout--ip {
+    left: calc(90% - 24px);
+  }
+
+  .appliance-callout__line {
+    width: 72px;
+  }
+
+  .appliance-page__device-photo {
+    max-width: 86%;
   }
 }
 
 @media (max-width: 768px) {
   .appliance-page {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
     padding: 16px;
   }
 
@@ -1115,13 +1458,64 @@ onUnmounted(() => {
     align-items: flex-start;
   }
 
-  .metric-card__body {
-    flex-direction: column;
-    align-items: stretch;
+  .appliance-page__metrics {
+    grid-template-columns: 1fr;
   }
 
-  .metric-card__progress-wrap {
-    max-width: none;
+  .metric-card--network {
+    grid-column: auto;
   }
+
+  .appliance-page__view-switch {
+    width: 100%;
+    max-width: 368px;
+  }
+
+  .appliance-callout {
+    position: static;
+    transform: none;
+    margin-top: 8px;
+    pointer-events: auto;
+  }
+
+  .appliance-callout__line {
+    display: none;
+  }
+
+  .appliance-page__visual {
+    flex-direction: column;
+    align-items: center;
+    min-height: 320px;
+  }
+
+  .appliance-page__device-photo {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    max-width: 100%;
+    height: 280px;
+  }
+
+  .appliance-page__callouts {
+    position: static;
+    width: 100% !important;
+    height: auto !important;
+    left: auto !important;
+    top: auto !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+}
+</style>
+
+<style>
+.appliance-node-menu .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 160px;
 }
 </style>

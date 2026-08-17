@@ -23,8 +23,8 @@
 }
 
 :root {
-  --color-primary: #0067d1;
-  --el-color-primary: #0067d1;
+  --color-primary: #0a59f7;
+  --el-color-primary: #0a59f7;
   --el-font-family: 'HarmonyOS Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
  
   /* 文本色 */
@@ -33,7 +33,7 @@
   --text-placeholder: #aeaeae;
   --text-disabled: #c9c9c9;
   --text-inverse: #ffffff; 
-  --text-on: #0067d1;
+  --text-on: #0a59f7;
 
   /* 背景色 */
   --bg-1: #f3f3f3;
@@ -46,7 +46,7 @@
   /* 边框色 */
   --border: #c9c9c9;
   --border-hover: #191919;
-  --border-focus: #0067d1;
+  --border-focus: #0a59f7;
   --border-active: #b8d9f9;
   --border-disabled: #c9c9c9;
   --border-separator: #dfdfdf;
