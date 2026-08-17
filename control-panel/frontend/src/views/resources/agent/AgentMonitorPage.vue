@@ -9,35 +9,20 @@ import {
   ElPopover,
   ElCheckboxGroup,
   ElCheckbox,
-  ElConfigProvider,
   ElMessage,
 } from 'element-plus';
-import zhCn from 'element-plus/es/locale/lang/zh-cn';
-import refreshIcon from '@/assets/images/refresh-icon.svg';
-import searchIcon from '@/assets/images/search-icon.png';
+import { RefreshRight } from '@element-plus/icons-vue';
+import searchIcon from '@/assets/images/search.svg';
 import funnelIcon from '@/assets/images/funnel-icon.png';
-import statusRunningIcon from '@/assets/images/status-running.png';
-import statusAbnormalIcon from '@/assets/images/status-abnormal.png';
-import statusStoppedIcon from '@/assets/images/status-stopped.png';
-import overviewBgIcon from '@/assets/images/overview-bg.png';
-import overviewBgRightIcon from '@/assets/images/overview-bg-right.png';
 import avatarIcon from '@/assets/images/avatar.svg';
+import frameworkDefaultIcon from '@/assets/images/framework-page/default-framework-icon.png';
 import { fetchInstances, type InstanceEntry } from '@/api/agent';
 import { ApiError } from '@/api';
-
-// ── 分页 jumper 文案：去掉默认"前往…页"，后缀改为"…跳转" ──
-const agentLocale = {
-  ...zhCn,
-  el: {
-    ...zhCn.el,
-    pagination: { ...zhCn.el.pagination, goto: '', pageClassifier: '跳转' },
-  },
-};
 
 // ── 状态色（对齐 UI 设计稿） ──
 const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
   运行: { label: '运行中', dot: 'var(--success)' },
-  异常: { label: '异常', dot: '#FCC800' },
+  异常: { label: '异常', dot: 'var(--error)' },
 };
 const STOPPED_CONFIG = { label: '已停止', dot: 'var(--text-placeholder)' };
 
@@ -76,6 +61,30 @@ let instancesAbort: AbortController | null = null;
 // ── 计算属性 ──
 const pageSummary = computed(() => `总计：${total.value}`);
 
+const statusBarSegments = computed(() => {
+  const running = Math.max(0, overviewRunning.value);
+  const abnormal = Math.max(0, overviewAbnormal.value);
+  const stopped = Math.max(0, overviewStopped.value);
+  const max = Math.max(running, abnormal, stopped);
+
+  function barHeight(value: number): string {
+    if (value <= 0 || max <= 0) {
+      return '2px';
+    }
+    const percent = `${(value / max) * 100}%`;
+    if (value === 1 && max > 1) {
+      return `max(4px, ${percent})`;
+    }
+    return percent;
+  }
+
+  return [
+    { key: 'running', label: '运行', value: running, height: barHeight(running) },
+    { key: 'abnormal', label: '异常', value: abnormal, height: barHeight(abnormal) },
+    { key: 'stopped', label: '停止', value: stopped, height: barHeight(stopped) },
+  ];
+});
+
 const emptyText = computed(() => {
   if (listLoading.value) return '加载中...';
   if (unavailableMsg.value) return unavailableMsg.value;
@@ -86,9 +95,7 @@ const emptyText = computed(() => {
   return '暂无实例';
 });
 
-const sortParam = computed(() =>
-  sortField.value && sortOrder.value ? `${sortField.value}:${sortOrder.value}` : '',
-);
+const sortParam = computed(() => (sortField.value && sortOrder.value ? `${sortField.value}:${sortOrder.value}` : ''));
 
 // ── 方法 ──
 function formatUpdateTime() {
@@ -114,7 +121,7 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
         sort: sortParam.value || undefined,
         keyword: keyword.value || undefined,
         // 逗号分隔多选状态，后端 split(",") 逐个匹配，不选=不过滤
-        status: filterStatus.value.length > 0 ? filterStatus.value.join(",") : undefined,
+        status: filterStatus.value.length > 0 ? filterStatus.value.join(',') : undefined,
         framework: filterFramework.value || undefined,
         refresh: refresh ? true : undefined,
       },
@@ -140,7 +147,9 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
     }
     if (e instanceof ApiError && e.status) {
       switch (e.status) {
-        case 503: unavailableMsg.value = '未接入注册中心'; break;
+        case 503:
+          unavailableMsg.value = '未接入注册中心';
+          break;
         case 502:
           unavailableMsg.value = e.message.includes('格式')
             ? '返回数据格式异常'
@@ -148,7 +157,9 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
               ? '注册中心返回错误'
               : '无法连接注册中心';
           break;
-        case 504: unavailableMsg.value = '无法连接注册中心'; break;
+        case 504:
+          unavailableMsg.value = '无法连接注册中心';
+          break;
         default:
           ElMessage.error(e instanceof Error ? e.message : '加载失败');
       }
@@ -171,7 +182,7 @@ function handleRefresh() {
   filterFramework.value = '';
   filterStatus.value = [];
   tableRef.value?.clearSort();
-  loadInstances(true, true);
+  void loadInstances(true, true);
 }
 
 function onFilterChange() {
@@ -228,7 +239,9 @@ function formatDate(iso: string | null) {
 }
 
 // ── 生命周期 ──
-onMounted(() => loadInstances(true));
+onMounted(() => {
+  void loadInstances(true);
+});
 onUnmounted(() => {
   if (instancesAbort) {
     instancesAbort.abort();
@@ -242,68 +255,45 @@ onUnmounted(() => {
     <div class="agent-monitor__header">
       <h1 class="agent-monitor__title">智能体监控</h1>
       <div class="agent-monitor__header-right">
-        <span v-if="lastUpdateTime" class="agent-monitor__update-time">
-          更新时间：{{ lastUpdateTime }}
-        </span>
-        <img
-          :src="refreshIcon"
-          alt="刷新"
-          width="14"
-          height="14"
+        <span v-if="lastUpdateTime" class="agent-monitor__update-time">更新时间：{{ lastUpdateTime }}</span>
+        <ElButton
+          text
+          :loading="listLoading"
+          :icon="RefreshRight"
+          aria-label="刷新"
           class="agent-monitor__refresh"
-          :class="{ 'agent-monitor__refresh--disabled': listLoading }"
-          @click="!listLoading && handleRefresh()"
+          @click="handleRefresh"
         />
       </div>
     </div>
 
     <!-- 概览行 -->
     <div class="overview-row">
-      <div class="overview-card">
-        <img :src="overviewBgIcon" alt="" class="overview-card__bg" />
-        <h2 class="overview-card__title">Agent实例总览</h2>
+      <article class="overview-card">
+        <h2 class="overview-card__title">智能体实例总览</h2>
         <div class="overview-card__body">
           <div class="overview-card__main">
-            <span class="overview-card__label">Agent实例数</span>
+            <span class="overview-card__label">智能体实例数</span>
             <span class="overview-card__big-value">
               {{ firstLoaded ? overviewTotal : '—' }}
               <span class="overview-card__unit">个</span>
             </span>
           </div>
-          <div class="overview-card__statuses">
-            <div class="overview-card__status">
-              <img :src="statusRunningIcon" alt="" class="overview-card__chart" />
-              <div class="overview-card__status-info">
-                <span class="overview-card__status-label">运行</span>
-                <span class="overview-card__status-value" style="color: var(--success)">
-                  {{ firstLoaded ? overviewRunning : '—' }}
-                </span>
+          <div class="overview-card__chart-wrap">
+            <div v-for="seg in statusBarSegments" :key="seg.key" class="status-col">
+              <div class="status-col__track" aria-hidden="true">
+                <span class="status-col__bar" :class="`is-${seg.key}`" :style="{ height: seg.height }" />
               </div>
-            </div>
-            <div class="overview-card__status">
-              <img :src="statusAbnormalIcon" alt="" class="overview-card__chart" />
-              <div class="overview-card__status-info">
-                <span class="overview-card__status-label">异常</span>
-                <span class="overview-card__status-value" style="color: #FCC800">
-                  {{ firstLoaded ? overviewAbnormal : '—' }}
-                </span>
-              </div>
-            </div>
-            <div class="overview-card__status">
-              <img :src="statusStoppedIcon" alt="" class="overview-card__chart" />
-              <div class="overview-card__status-info">
-                <span class="overview-card__status-label">停止</span>
-                <span class="overview-card__status-value" style="color: var(--text-primary)">
-                  {{ firstLoaded ? overviewStopped : '—' }}
-                </span>
-              </div>
+              <span class="status-col__legend">
+                {{ seg.label }}
+                {{ firstLoaded ? seg.value : '—' }}
+              </span>
             </div>
           </div>
         </div>
-      </div>
-      <div class="overview-card overview-card--right">
-        <img :src="overviewBgRightIcon" alt="" class="overview-card__bg" />
-      </div>
+      </article>
+
+      <article class="overview-card overview-card--resource"></article>
     </div>
 
     <!-- 表格区 -->
@@ -319,7 +309,7 @@ onUnmounted(() => {
           @clear="onSearchChange"
         >
           <template #prefix>
-            <img :src="searchIcon" alt="" width="14" height="14" />
+            <img :src="searchIcon" alt="" width="16" height="16" />
           </template>
         </ElInput>
       </div>
@@ -356,12 +346,7 @@ onUnmounted(() => {
                   </span>
                 </template>
                 <div class="filter-popover">
-                  <ElInput
-                    v-model="filterFramework"
-                    placeholder="输入框架名"
-                    clearable
-                    @keyup.enter="onFilterChange"
-                  />
+                  <ElInput v-model="filterFramework" placeholder="输入框架名" clearable @keyup.enter="onFilterChange" />
                   <div class="filter-popover__actions">
                     <ElButton size="small" @click="resetFrameworkFilter">重置</ElButton>
                     <ElButton size="small" type="primary" @click="onFilterChange">查询</ElButton>
@@ -371,7 +356,10 @@ onUnmounted(() => {
             </div>
           </template>
           <template #default="{ row }">
-            <span>{{ row.framework }}</span>
+            <div class="framework-cell">
+              <img :src="frameworkDefaultIcon" alt="" class="framework-cell__icon" />
+              <span>{{ row.framework }}</span>
+            </div>
           </template>
         </ElTableColumn>
 
@@ -379,7 +367,13 @@ onUnmounted(() => {
           <template #header>
             <div class="filter-header">
               <span>运行状态</span>
-              <ElPopover v-model:visible="statusPopoverVisible" trigger="click" placement="bottom" :width="160" @hide="onStatusFilterClose">
+              <ElPopover
+                v-model:visible="statusPopoverVisible"
+                trigger="click"
+                placement="bottom"
+                :width="160"
+                @hide="onStatusFilterClose"
+              >
                 <template #reference>
                   <span class="filter-icon" :class="{ 'filter-icon--active': filterStatus.length > 0 }">
                     <img :src="funnelIcon" alt="" width="12" height="12" />
@@ -486,19 +480,18 @@ onUnmounted(() => {
 
       <div class="pagination-row">
         <span class="pagination-total">{{ pageSummary }}</span>
-        <ElConfigProvider :locale="agentLocale">
-          <ElPagination
-            v-if="total > 0"
-            v-model:current-page="page"
-            v-model:page-size="pageSize"
-            :total="total"
-            :page-sizes="[10, 20, 50]"
-            layout="sizes, prev, pager, next, jumper"
-            background
-            @current-change="onPageChange"
-            @size-change="onSizeChange"
-          />
-        </ElConfigProvider>
+        <ElPagination
+          v-if="total > 0"
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50]"
+          layout="sizes, prev, slot, next"
+          @current-change="onPageChange"
+          @size-change="onSizeChange"
+        >
+          <span class="pagination-page">{{ page }}/{{ totalPages }}</span>
+        </ElPagination>
       </div>
     </div>
   </section>
@@ -510,7 +503,7 @@ onUnmounted(() => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 24px 16px;
+  padding: 24px 32px;
 }
 
 /* ── 操作区 ── */
@@ -535,92 +528,88 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 22px;
+  flex-shrink: 0;
 }
 
 .agent-monitor__update-time {
   font-size: 14px;
   font-weight: 400;
-  color: var(--text-secondary);
+  line-height: 19px;
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .agent-monitor__refresh {
-  cursor: pointer;
-  color: var(--text-primary);
-  transition: opacity 0.2s;
+  padding: 0;
+  margin: 0;
+  width: 14px;
+  height: 22px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.agent-monitor__refresh:hover {
-  opacity: 0.7;
-}
-
-.agent-monitor__refresh--disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+.agent-monitor__refresh :deep(.el-icon) {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.6);
 }
 
 /* ── 概览行 ── */
 .overview-row {
-  display: flex;
-  gap: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
   flex-shrink: 0;
   margin-bottom: 24px;
 }
 
 .overview-card {
-  flex: 0 1 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+  padding: 24px;
   background: var(--bg-2);
-  border-radius: var(--radius-lg);
-  padding: 32px 40px;
-  min-width: 380px;
-  position: relative;
-}
-
-.overview-card--right {
-  flex: 1;
-}
-
-.overview-card__bg {
-  position: absolute;
-  top: 0;
-  right: 24px;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.overview-card > *:not(.overview-card__bg) {
-  position: relative;
-  z-index: 1;
+  border-radius: 24px;
 }
 
 .overview-card__title {
-  margin: 0 0 24px;
-  font-size: 18px;
-  font-weight: 500;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 21px;
   color: var(--text-primary);
 }
 
 .overview-card__body {
   display: flex;
-  align-items: center;
-  gap: 44px;
-  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
 }
 
 .overview-card__main {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 20px;
+  gap: 52px;
   flex-shrink: 0;
 }
 
 .overview-card__label {
-  font-size: 16px;
-  font-weight: 400;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
   color: var(--text-primary);
 }
 
 .overview-card__big-value {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
   font-size: 48px;
   font-weight: 500;
   line-height: 56px;
@@ -630,50 +619,84 @@ onUnmounted(() => {
 .overview-card__unit {
   font-size: 16px;
   font-weight: 500;
-  margin-left: 2px;
+  line-height: 24px;
+  color: var(--text-primary);
 }
 
-.overview-card__statuses {
+.overview-card__chart-wrap {
   display: flex;
-  gap: 61px;
-  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
-.overview-card__status {
+.status-col {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  flex-shrink: 0;
+  gap: 8px;
 }
 
-.overview-card__chart {
-  width: 47px;
-  height: 34px;
-  display: block;
-}
-
-.overview-card__status-info {
+.status-col__track {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-end;
+  flex: 1;
+  width: 72px;
+  min-height: 0;
 }
 
-.overview-card__dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.status-col__bar {
+  display: block;
+  width: 72px;
+  border-radius: 8px 8px 2px 2px;
 }
 
-.overview-card__status-label {
+.status-col__bar.is-running {
+  background: linear-gradient(180deg, #61cfbe 0%, #d8f7f1 100%);
+}
+
+.status-col__bar.is-abnormal {
+  background: linear-gradient(180deg, #e02128 0%, #ffd4d6 100%);
+}
+
+.status-col__bar.is-stopped {
+  background: linear-gradient(180deg, #c9c9c9 0%, #f5f5f5 100%);
+}
+
+.status-col__legend {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-secondary);
+  line-height: 19px;
+  color: rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
 }
 
-.overview-card__status-value {
-  font-size: 20px;
-  font-weight: 500;
+.framework-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.framework-cell__icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+@media (max-width: 1280px) {
+  .overview-row {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-card__body {
+    min-height: 0;
+  }
 }
 
 /* ── 表格卡 ── */
@@ -682,9 +705,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 20px 24px 8px;
+  padding: 24px;
   background: var(--bg-2);
-  border-radius: var(--radius-lg);
+  border-radius: 24px;
 }
 
 .table-header {
@@ -698,13 +721,13 @@ onUnmounted(() => {
 
 .table-header__title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
 .table-header__search {
-  width: 296px;
+  width: 328px;
 }
 
 .agent-table {
@@ -715,7 +738,7 @@ onUnmounted(() => {
 .filter-header {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 
 .filter-icon {
@@ -805,14 +828,50 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-/* ── 表头样式 ── */
-:deep(.agent-table .el-table__header th) {
+.pagination-page {
+  min-width: 40px;
+  padding: 0 8px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 32px;
   color: var(--text-primary);
-  font-weight: 500;
-  background: rgba(25, 25, 25, 0.05);
+  user-select: none;
+}
+
+/* ── 表头样式 ── */
+:deep(.agent-table) {
+  --el-table-header-bg-color: rgba(0, 0, 0, 0.05);
+  --el-table-header-text-color: rgba(0, 0, 0, 0.9);
+  --el-table-border-color: rgba(0, 0, 0, 0.05);
+}
+
+:deep(.agent-table .el-table__header-wrapper) {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+:deep(.agent-table .el-table__header th.el-table__cell) {
   height: 48px;
   padding: 0;
-  border-bottom: 1px solid var(--border-separator);
+  background: rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.9);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
+}
+
+:deep(.agent-table .el-table__header th .cell) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 0 8px 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
+  color: rgba(0, 0, 0, 0.9);
 }
 
 :deep(.agent-table .el-table__body td) {
@@ -827,10 +886,9 @@ onUnmounted(() => {
   background: rgba(25, 25, 25, 0.03);
 }
 
-:deep(.agent-table .el-table__body td .cell),
-:deep(.agent-table .el-table__header th .cell) {
-  padding: 0 4px;
-  font-size: 15px;
+:deep(.agent-table .el-table__body td .cell) {
+  padding: 0 8px 0 12px;
+  font-size: 14px;
 }
 
 /* ── 排序图标 ── */
@@ -839,8 +897,9 @@ onUnmounted(() => {
   background-repeat: no-repeat;
   background-position: center;
   background-size: 12px;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  margin: 0;
   opacity: 0.4;
   transition: opacity 0.2s;
 }
@@ -859,6 +918,28 @@ onUnmounted(() => {
 }
 
 :deep(.table-header__search .el-input__wrapper) {
-  border-radius: var(--radius-base);
+  height: 40px;
+  padding: 0 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 24px;
+  box-shadow: none;
+}
+
+:deep(.table-header__search .el-input__wrapper:hover),
+:deep(.table-header__search .el-input__wrapper.is-focus) {
+  background: rgba(0, 0, 0, 0.05);
+  box-shadow: none;
+}
+
+:deep(.table-header__search .el-input__inner) {
+  height: 40px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 22px;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+:deep(.table-header__search .el-input__inner::placeholder) {
+  color: rgba(0, 0, 0, 0.4);
 }
 </style>
