@@ -460,11 +460,11 @@ yr_start_master() {
         -s 'values.frontend.ssh_backend_public_key_dir=\"${AGENTOS_SSH_BACKEND_PUBLIC_DIR}\"'"
 
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
+    # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程，
     exec_on_host "${master_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --master \
         -s 'values.host_ip=\"${master_host}\"' \
         -s 'mode.master.frontend=true' \
-        -s 'mode.master.function_scheduler=true' \
-        -s 'mode.master.meta_service=true' \
+        --function-proxy-merge-process-enable \
         -s 'frontend.args.enableEvent=true' \
         ${ssh_opts}" 2>&1 | tee "${startup_log}"
 
@@ -514,7 +514,8 @@ yr_start_agent() {
 
     info "Starting openyuanrong agent on ${agent_host}, master_address=${master_address}..."
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
-    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --master_address=http://${master_address}" 2>&1; then
+    # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --function-proxy-merge-process-enable ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
@@ -594,9 +595,8 @@ ExecStart=${py_bindir}/yr start --master \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.master.frontend=true' \\
-    -s 'mode.master.function_scheduler=true' \\
-    -s 'mode.master.meta_service=true' \\
     -s 'frontend.args.enableEvent=true' \\
+    --function-proxy-merge-process-enable \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
@@ -634,6 +634,7 @@ ExecStart=${py_bindir}/yr start \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.agent.frontend=true' \\
     -s 'frontend.args.enableEvent=true' \\
+    --function-proxy-merge-process-enable \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
