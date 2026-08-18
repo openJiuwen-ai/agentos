@@ -19,6 +19,9 @@ fi
 #   sudo bash deploy.sh uninstall            # 卸载（默认保留数据和 .env）
 #   sudo bash deploy.sh uninstall --clean    # 卸载（删除数据卷、.env 和安装目录）
 #   sudo bash deploy.sh up                   # 启动：更新 exporter 配置 → 启动服务
+#   sudo bash deploy.sh up --models '<JSON>' # 启动并手动指定模型配置（含 api_base，自包含）
+#   sudo bash deploy.sh up --models-file /path/to/models.json
+#   # models.json: {"api_base":"http://IP:8000/v1","api_key":"sk-xxx","models":[{"id":"qwen2.5-72b","max_model_len":32768}]}
 #   sudo bash deploy.sh down                 # 停止：docker compose → node/npu_exporter（反序）
 #   sudo bash deploy.sh restart              # 重启：down → up
 #   sudo bash deploy.sh status               # 查看服务状态
@@ -1168,15 +1171,250 @@ PY
     log "  hardware-metrics.json 已生成 (${json_file})"
 }
 
+_sniff_initial_models() {
+    # 配置推理服务模型信息，写入 .env
+    # 参数：$1=命令行 JSON（--models），$2=JSON 文件路径（--models-file）
+    #
+    # 手动模式（传了 --models / --models-file）：
+    #   JSON 格式：{"api_base":"...","api_key":"...","models":[{...},...]}
+    #   - api_base 必填，api_key 可选
+    #   - 用 api_base 嗅探校验：用户填了和嗅探不一致报错，没填的用嗅探补全
+    #   - 写入 .env：INITIAL_MODEL_API_BASE + INITIAL_MODEL_API_KEY + INITIAL_MODELS
+    # 纯嗅探模式（没传参数，.env 也没有 INITIAL_MODELS）：
+    #   - 用 .env 的 INITIAL_MODEL_API_BASE 嗅探，直接用嗅探结果
+    local models_json_arg="${1:-}"
+    local models_file_arg="${2:-}"
+    local env_file="${DEPLOY_DIR}/.env"
+
+    load_env
+
+    local models_input=""
+
+    # ── 判断来源 ──
+    if [ -n "$models_json_arg" ]; then
+        models_input="$models_json_arg"
+        log "  从命令行 --models 读取模型配置"
+    elif [ -n "$models_file_arg" ]; then
+        [ -f "$models_file_arg" ] || fail "模型配置文件不存在: $models_file_arg"
+        models_input=$(cat "$models_file_arg")
+        log "  从文件 --models-file 读取模型配置: $models_file_arg"
+    elif [ -n "${INITIAL_MODELS:-}" ]; then
+        log "  .env 已有 INITIAL_MODELS，跳过"
+        return 0
+    fi
+
+    MODELS_INPUT="$models_input" \
+    ENV_API_BASE="${INITIAL_MODEL_API_BASE:-}" \
+    ENV_API_KEY="${INITIAL_MODEL_API_KEY:-}" \
+    ENV_FILE="$env_file" \
+    python3 <<'PYEOF'
+import json, os, re, urllib.request, urllib.error
+from urllib.parse import urlparse
+
+models_input = os.environ.get("MODELS_INPUT", "")
+env_api_base = os.environ.get("ENV_API_BASE", "")
+env_api_key = os.environ.get("ENV_API_KEY", "")
+env_file = os.environ["ENV_FILE"]
+
+manual_mode = bool(models_input)
+
+# ── 解析手动输入 ──
+manual_items = []
+api_base = ""
+api_key = ""
+
+if manual_mode:
+    try:
+        parsed = json.loads(models_input)
+    except json.JSONDecodeError as e:
+        print(f"[agentos] ERROR: JSON 解析失败: {e}")
+        exit(1)
+
+    if not isinstance(parsed, dict):
+        print("[agentos] ERROR: 手动配置必须是对象 {\"api_base\":...,\"models\":[...]}")
+        exit(1)
+
+    api_base = parsed.get("api_base", "")
+    api_key = parsed.get("api_key", "")
+    if not api_base:
+        print('[agentos] ERROR: 手动配置缺少 api_base 字段')
+        exit(1)
+
+    manual_items = parsed.get("models", [])
+    if not isinstance(manual_items, list):
+        print("[agentos] ERROR: models 字段必须是数组")
+        exit(1)
+    # models 为空 → 嗅探所有模型；有内容 → 只校验+补全列出的模型
+else:
+    # 纯嗅探模式：用 .env 的 INITIAL_MODEL_API_BASE
+    api_base = env_api_base
+    api_key = env_api_key
+    if not api_base:
+        print("[agentos] 无手动配置且无 INITIAL_MODEL_API_BASE，跳过")
+        exit(0)
+
+api_base = api_base.rstrip("/")
+log_prefix = "手动配置校验" if manual_mode else "嗅探"
+print(f"[agentos] {log_prefix}推理服务: {api_base}/models")
+
+# ── 嗅探推理服务 ──
+sniffed_models = []
+try:
+    url = f"{api_base}/models"
+    req = urllib.request.Request(url)
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    sniffed_models = data.get("data", [])
+    if not sniffed_models:
+        print(f"[agentos] WARNING: 推理服务 {url} 返回为空")
+except urllib.error.URLError as e:
+    print(f"[agentos] WARNING: 无法连接推理服务 {api_base}/models: {e}")
+    exit(0)
+except Exception as e:
+    print(f"[agentos] WARNING: 嗅探失败: {e}")
+    exit(0)
+
+# 嗅探结果按 id 索引
+sniffed_map = {}
+for m in sniffed_models:
+    mid = m.get("id", "")
+    if mid:
+        sniffed_map[mid] = m
+
+def merge_field(user_val, sniffed_val, field, model_id):
+    """合并字段：用户填了优先，和嗅探到的不一致报错，没填用嗅探的"""
+    if user_val is not None:
+        if sniffed_val is not None and user_val != sniffed_val:
+            print(f"[agentos] ERROR: 模型 '{model_id}' 的 {field} 不一致：用户填 '{user_val}'，嗅探到 '{sniffed_val}'")
+            exit(1)
+        return user_val
+    return sniffed_val
+
+# ── 构建结果 ──
+result = []
+owned_by = None
+
+if manual_mode and manual_items:
+    # 手动模式 + models 有内容：校验 + 补全列出的模型
+    for m in manual_items:
+        model_id = m.get("id", "")
+        if not model_id:
+            print(f"[agentos] ERROR: 条目缺少 id 字段: {m}")
+            exit(1)
+
+        sniffed = sniffed_map.get(model_id)
+        if sniffed is None:
+            print(f"[agentos] ERROR: 模型 '{model_id}' 在推理服务 {api_base} 中不存在")
+            exit(1)
+
+        # 校验 + 补全
+        item = {"id": model_id}
+        merged_mml = merge_field(
+            m.get("max_model_len"), sniffed.get("max_model_len"), "max_model_len", model_id
+        )
+        if merged_mml is not None:
+            item["max_model_len"] = merged_mml
+        merged_ob = merge_field(
+            m.get("owned_by"), sniffed.get("owned_by"), "owned_by", model_id
+        )
+        if merged_ob:
+            item["owned_by"] = merged_ob
+            if owned_by is None:
+                owned_by = merged_ob
+
+        result.append(item)
+
+    print(f"[agentos] 手动配置校验通过，{len(result)} 个模型")
+
+else:
+    # 纯嗅探模式 或 手动模式 models 为空：直接用嗅探结果
+    for m in sniffed_models:
+        model_id = m.get("id", "")
+        if not model_id:
+            continue
+        item = {"id": model_id}
+        if m.get("max_model_len") is not None:
+            item["max_model_len"] = m["max_model_len"]
+        if m.get("owned_by"):
+            item["owned_by"] = m["owned_by"]
+            if owned_by is None:
+                owned_by = m["owned_by"]
+        result.append(item)
+    print(f"[agentos] 嗅探到 {len(result)} 个模型: {[m['id'] for m in result]}")
+
+if not result:
+    print("[agentos] WARNING: 未获取到任何模型信息")
+    exit(0)
+
+# ── 推导 inference_engine 和 metrics_url ──
+models_json = json.dumps(result, ensure_ascii=False)
+
+parsed = urlparse(api_base)
+api_ip = parsed.hostname or "127.0.0.1"
+
+inference_engine = ""
+metrics_url = ""
+if owned_by == "motor":
+    inference_engine = "vllm"
+    metrics_url = f"http://{api_ip}:1029"
+elif owned_by == "local":
+    inference_engine = "sglang"
+    metrics_url = f"http://{api_ip}:1025"
+elif owned_by == "sglang":
+    inference_engine = "sglang"
+    metrics_url = f"http://{api_ip}:8003"
+
+# ── 写入 .env ──
+with open(env_file, "r", encoding="utf-8") as f:
+    content = f.read()
+
+def update_env(content, key, value):
+    pattern = r"^" + key + r"=.*$"
+    replacement = f"{key}={value}"
+    if re.search(pattern, content, re.MULTILINE):
+        return re.sub(pattern, replacement, content, count=1, flags=re.MULTILINE)
+    else:
+        return content + f"\n{replacement}\n"
+
+# 手动模式：写入 api_base 和 api_key（供后端注册到 LiteLLM 用）
+if manual_mode:
+    content = update_env(content, "INITIAL_MODEL_API_BASE", api_base)
+    if api_key:
+        content = update_env(content, "INITIAL_MODEL_API_KEY", api_key)
+
+# 写入 INITIAL_MODELS
+content = update_env(content, "INITIAL_MODELS", f"'{models_json}'")
+
+# 写入 INITIAL_INFERENCE_ENGINE
+if inference_engine:
+    content = update_env(content, "INITIAL_INFERENCE_ENGINE", inference_engine)
+
+# 写入 INITIAL_MODEL_METRICS_URL
+if metrics_url:
+    content = update_env(content, "INITIAL_MODEL_METRICS_URL", metrics_url)
+
+with open(env_file, "w", encoding="utf-8") as f:
+    f.write(content)
+
+print(f"[agentos] 已写入 INITIAL_MODELS 到 {env_file}")
+if inference_engine:
+    print(f"[agentos] owned_by={owned_by}, INITIAL_INFERENCE_ENGINE={inference_engine}, INITIAL_MODEL_METRICS_URL={metrics_url}")
+PYEOF
+}
+
 do_up() {
     need_root
     need_install_dir
     log "========== up =========="
 
-    log "[1/5] 更新 exporter 配置"
+    # --models / --models-file 由全局参数解析存入 UP_MODELS_JSON / UP_MODELS_FILE
+
+    log "[1/7] 更新 exporter 配置"
     update_exporter_configs
 
-    log "[2/5] 启动 node_exporter"
+    log "[2/7] 启动 node_exporter"
     if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
         log "  node_exporter 已在运行"
     elif systemctl cat "$SERVICE_NAME" &>/dev/null; then
@@ -1189,7 +1427,7 @@ do_up() {
         && log "  node_exporter: running" \
         || log "  WARNING: node_exporter 未运行"
 
-    log "[3/5] 启动 npu_exporter"
+    log "[3/7] 启动 npu_exporter"
     if systemctl cat "$NPU_SERVICE" &>/dev/null; then
         systemctl start "$NPU_SERVICE" 2>/dev/null || true
         systemctl start "$NPU_TIMER" 2>/dev/null || true
@@ -1200,7 +1438,7 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[4/6] 启动 Alloy"
+    log "[4/7] 启动 Alloy"
     if is_worker; then
         if docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
             docker start "$ALLOY_CONTAINER" 2>/dev/null || true
@@ -1212,7 +1450,7 @@ do_up() {
         log "  master 节点：Alloy 由 docker compose 管理"
     fi
 
-    log "[5/6] 生成 hardware-metrics.json"
+    log "[5/7] 生成 hardware-metrics.json"
     if is_master; then
         sync_worker_nodes_env
         generate_hardware_metrics_json
@@ -1220,7 +1458,14 @@ do_up() {
         log "  跳过：worker 节点无需生成"
     fi
 
-    log "[6/6] 启动 Docker 服务"
+    log "[6/7] 配置推理服务模型"
+    if is_master; then
+        _sniff_initial_models "$UP_MODELS_JSON" "$UP_MODELS_FILE"
+    else
+        log "  跳过：worker 节点无需配置"
+    fi
+
+    log "[7/7] 启动 Docker 服务"
     if is_master; then
         cd "$DEPLOY_DIR"
         docker compose up -d
@@ -1419,6 +1664,8 @@ INSTALL_ROLE_CLI=""
 INSTALL_MODE=""
 INSTALL_WORKERS=""
 INSTALL_MASTER_IP=""
+UP_MODELS_JSON=""
+UP_MODELS_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1448,6 +1695,16 @@ while [ $# -gt 0 ]; do
         --master-ip)
             [ -n "${2:-}" ] || fail "--master-ip 需要 master 节点 IP 地址"
             INSTALL_MASTER_IP="$2"
+            shift 2
+            ;;
+        --models)
+            [ -n "${2:-}" ] || fail "--models 需要 JSON 字符串参数"
+            UP_MODELS_JSON="$2"
+            shift 2
+            ;;
+        --models-file)
+            [ -n "${2:-}" ] || fail "--models-file 需要文件路径参数"
+            UP_MODELS_FILE="$2"
             shift 2
             ;;
         *)
@@ -1501,14 +1758,59 @@ case "$ACTION" in
         echo "install 拓扑参数（非交互，与 -i 互斥）:"
         echo "  --role master|worker   节点角色，默认 master"
         echo "  --mode single|multi    仅 master；默认 single；仅传 --workers 时自动设为 multi"
- 	    echo "  --workers ip1,ip2,...  master 多机 worker IPv4；可单独传参，或 --mode multi 时必填"
+  	    echo "  --workers ip1,ip2,...  master 多机 worker IPv4；可单独传参，或 --mode multi 时必填"
         echo "  --master-ip <ip>       仅 --role worker；master 节点 IP（用于 Alloy 日志上报）"
+        echo ""
+        echo "up 选项:"
+        echo "  --models '<JSON>'      手动指定模型配置 JSON（含 api_base，自包含，无需配 .env）"
+        echo "  --models-file <path>   从文件读取模型配置 JSON"
+        echo ""
+        echo "手动配置 JSON 格式:"
+        echo '  {"api_base":"http://IP:PORT/v1","api_key":"sk-xxx","models":[{...},...]}'
+        echo "  字段说明:"
+        echo "    api_base      必填，推理服务地址（含 /v1）"
+        echo "    api_key       可选，推理服务鉴权 Key"
+        echo "    models        必填，模型列表"
+        echo "      为空时嗅探该推理服务所有模型"
+        echo "      有内容时只校验+补全列出的模型，每项含："
+        echo "        id            可选，模型标识名（填了校验该模型存在，不填无意义）"
+        echo "        max_model_len 可选，上下文长度（填了与嗅探值校验，不填用嗅探值补全）"
+        echo "        owned_by      可选，部署框架（填了与嗅探值校验，不填用嗅探值补全）"
+        echo "  手动模式会用 api_base 嗅探校验，没填的字段用嗅探值补全，填了的不一致会报错"
         echo ""
         echo "install 示例:"
         echo "  sudo bash $0 install                                          # 单机 master"
         echo "  sudo bash $0 install --workers 192.168.1.11,192.168.1.12"
         echo "  sudo bash $0 install --mode multi --workers 192.168.1.11,192.168.1.12"
         echo "  sudo bash $0 install --role worker --master-ip 192.168.1.10"
+        echo ""
+        echo "up 示例:"
+        echo "  # 1. 用 .env 已有配置或嗅探"
+        echo "  sudo bash $0 up"
+        echo ""
+        echo "  # 2. 命令行传 JSON（单引号包裹，内部双引号转义）"
+        echo "  #    嗅探所有模型"
+        echo "  sudo bash $0 up --models '{\"api_base\":\"http://192.168.1.10:8000/v1\",\"models\":[]}'"
+        echo ""
+        echo "  #    指定模型 + 补全字段"
+        echo "  sudo bash $0 up --models '{\"api_base\":\"http://192.168.1.10:8000/v1\",\"api_key\":\"sk-xxx\",\"models\":[{\"id\":\"qwen2.5-72b\",\"max_model_len\":32768}]}'"
+        echo ""
+        echo "  # 3. 从文件读 JSON（推荐，无需转义）"
+        echo "  sudo bash $0 up --models-file /path/to/models.json"
+        echo ""
+        echo "models.json 文件示例:"
+        echo '  {'
+        echo '    "api_base": "http://192.168.1.10:8000/v1",'
+        echo '    "api_key": "sk-xxx",'
+        echo '    "models": ['
+        echo '      {"id": "qwen2.5-72b", "max_model_len": 32768, "owned_by": "vllm"},'
+        echo '      {"id": "glm5.2", "max_model_len": 1048576, "owned_by": "sglang"},'
+        echo '      {"id": "deepseek-v3"}'
+        echo '    ]'
+        echo '  }'
+        echo ""
+        echo '  # models 为空 → 嗅探所有模型'
+        echo '  {"api_base": "http://192.168.1.10:8000/v1", "models": []}'
         exit 1
         ;;
 esac

@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     LITELLM_REQUEST_TIMEOUT: float = 30.0
     LITELLM_DATABASE_URL: str = ""
 
+    # ── 初始模型（deploy 脚本嗅探后写入；留空则跳过模型注册）──
+    # INITIAL_MODELS: deploy 脚本从推理服务嗅探后写入的模型信息 JSON 字符串
+    # INITIAL_MODEL_API_BASE: 推理服务地址（写全，含或不含 /v1），管理面注册到 LiteLLM 时用
+    # INITIAL_MODEL_API_KEY: 推理服务的 API Key（可选，推理服务开启了鉴权时需填）
+    # INITIAL_MODEL_METRICS_URL: 监控采集地址（deploy 脚本用，后端不读）
+    # INITIAL_INFERENCE_ENGINE: 部署框架名称如 vllm/sglang（deploy 脚本用，后端不读）
+    INITIAL_MODELS: str = ""
+    INITIAL_MODEL_API_BASE: str = ""
+    INITIAL_MODEL_API_KEY: str = ""
+    INITIAL_MODEL_METRICS_URL: str = ""
+    INITIAL_INFERENCE_ENGINE: str = ""
+
     # ── Hardware monitoring ──
     NPU_EXPORTER_HOST: str = "host.docker.internal"
     NPU_EXPORTER_PORT: int = 8092

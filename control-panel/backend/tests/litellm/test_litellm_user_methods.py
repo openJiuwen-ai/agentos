@@ -115,11 +115,14 @@ class TestDeleteUserMethod:
         """
 
         await LitellmUserKey.create(
-            db_session, "userToDelete", "key1", encrypt_key("pk1"))
+            db_session, "userToDelete", "key1", encrypt_key("pk1"),
+            extras=CreateKeyExtras(key_name="key-1"))
         await LitellmUserKey.create(
-            db_session, "userToDelete", "key2", encrypt_key("pk2"))
+            db_session, "userToDelete", "key2", encrypt_key("pk2"),
+            extras=CreateKeyExtras(key_name="key-2"))
         await LitellmUserKey.create(
-            db_session, "otherUser", "key3", encrypt_key("pk3"))
+            db_session, "otherUser", "key3", encrypt_key("pk3"),
+            extras=CreateKeyExtras(key_name="key-3"))
 
         assert await LitellmUserKey.count_by_uid(db_session, "userToDelete") == 2
 
@@ -138,7 +141,8 @@ class TestDeleteUserMethod:
         预期: 返回 ok, 本地 Key 仍被清除 (幂等处理)
         """
         await LitellmUserKey.create(
-            db_session, "ghost", "k1", encrypt_key("pk1"))
+            db_session, "ghost", "k1", encrypt_key("pk1"),
+            extras=CreateKeyExtras(key_name="ghost-key"))
 
         async def mock_404(*args, **kwargs):
             raise LitellmUpstreamError(404, "Not Found")
@@ -167,7 +171,8 @@ class TestDeleteUserMethod:
         预期: 抛出 LitellmUpstreamError, 本地 Key 不被清除
         """
         await LitellmUserKey.create(
-            db_session, "user1", "k1", encrypt_key("pk1"))
+            db_session, "user1", "k1", encrypt_key("pk1"),
+            extras=CreateKeyExtras(key_name="user1-key"))
 
         with patch.object(
             svc, "request",
@@ -196,6 +201,7 @@ class TestDeleteKeyMethod:
         encrypted = encrypt_key("sk-raw-key-for-delete-test")
         await LitellmUserKey.create(
             db_session, "user-del", "alias-del", encrypted,
+            extras=CreateKeyExtras(key_name="test-key"),
         )
         assert await LitellmUserKey.count_by_uid(db_session, "user-del") == 1
 
@@ -229,6 +235,7 @@ class TestDeleteKeyMethod:
 
         await LitellmUserKey.create(
             db_session, "alice", "my-key", encrypt_key("sk-alice"),
+            extras=CreateKeyExtras(key_name="alice-key"),
         )
         with pytest.raises(KeyNotFoundError):
             await svc.delete_key(db_session, "bob", "my-key")
@@ -243,6 +250,7 @@ class TestDeleteKeyMethod:
         encrypted = encrypt_key("sk-ghost-key")
         await LitellmUserKey.create(
             db_session, "ghost", "ghost-alias", encrypted,
+            extras=CreateKeyExtras(key_name="ghost-alias-key"),
         )
 
         with patch.object(

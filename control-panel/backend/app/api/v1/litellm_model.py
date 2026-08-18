@@ -5,6 +5,7 @@
 认证：使用 IAM ``require_admin``（JWT 验证 + 角色检查）。
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -38,6 +39,33 @@ from app.schemas.litellm import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/litellm/model", tags=["模型管理"])
+
+_sync_timer_task: asyncio.Task | None = None
+_SYNC_DELAY = 300  # 5 分钟防抖窗口
+
+
+def _fire_agentos_sync() -> None:
+    """模型变更后防抖同步：5 分钟内的多次变更只同步一次。"""
+    global _sync_timer_task
+    if _sync_timer_task is not None and not _sync_timer_task.done():
+        return  # 定时器已在运行，到期后会查最新模型列表
+    _sync_timer_task = asyncio.create_task(_delayed_agentos_sync())
+
+
+async def _delayed_agentos_sync() -> None:
+    """延迟 5 分钟后执行全量同步，用最新模型列表重建所有用户 agentos。"""
+    global _sync_timer_task
+    from app.services.local_users.backend import _sync_all_users_agentos
+
+    try:
+        await asyncio.sleep(_SYNC_DELAY)
+        await _sync_all_users_agentos()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.warning("延迟同步 agentos 失败", exc_info=True)
+    finally:
+        _sync_timer_task = None
 
 
 def _mask_model_for_user(data: dict | None, is_admin: bool) -> dict | None:
@@ -141,6 +169,7 @@ async def create_model(
                 inference_engine=body.inference_engine,
             ),
         )
+        _fire_agentos_sync()
         return ApiResponse(data=data)
     except LitellmConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -182,6 +211,7 @@ async def update_model(
                 inference_engine=body.inference_engine,
             ),
         )
+        _fire_agentos_sync()
         return ApiResponse(data=data)
     except LitellmConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -205,6 +235,7 @@ async def delete_model(
 ):
     try:
         data = await svc.delete_model(db, model_id)
+        _fire_agentos_sync()
         return ApiResponse(data=data)
     except LitellmConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e

@@ -654,6 +654,9 @@ class LitellmService:
                 extras.instance_url,
                 extras.inference_engine,
             )
+            extra_params = dict(metrics_extra) if metrics_extra else {}
+            if extras.model_info:
+                extra_params["model_info"] = extras.model_info
             row = await LitellmModelParams.upsert(
                 db,
                 model_id,
@@ -662,7 +665,7 @@ class LitellmService:
                     instance_url=extras.instance_url,
                     max_concurrent=extras.max_concurrent,
                     inference_engine=extras.inference_engine,
-                    extra_params=metrics_extra,
+                    extra_params=extra_params if extra_params else None,
                 ),
             )
         except Exception:
@@ -756,6 +759,10 @@ class LitellmService:
                 extras.instance_url,
                 extras.inference_engine,
             )
+            merged = _merge_extra_params(local, metrics_extra)
+            if extras.model_info:
+                merged = dict(merged) if merged else {}
+                merged["model_info"] = extras.model_info
             row = await LitellmModelParams.upsert(
                 db,
                 model_id,
@@ -764,7 +771,7 @@ class LitellmService:
                     instance_url=extras.instance_url,
                     max_concurrent=extras.max_concurrent,
                     inference_engine=extras.inference_engine,
-                    extra_params=_merge_extra_params(local, metrics_extra),
+                    extra_params=merged,
                 ),
             )
         except Exception:
@@ -889,13 +896,20 @@ class LitellmService:
 
     async def list_keys(self, db: AsyncSession, uid: str) -> dict:
         """查询用户 Key 列表（直查本地，不调 LiteLLM）。"""
+        from app.models.user_default_key import UserDefaultKey
+
         records = await LitellmUserKey.list_by_uid(db, uid)
+        default_key_id = None
+        default_row = await UserDefaultKey.get_by_uid(db, uid)
+        if default_row:
+            default_key_id = default_row.key_id
         keys = [
             {
                 "uid": r.uid,
                 "key_preview": _mask_key(decrypt_key(r.key)),
                 "key_alias": r.key_alias,
                 "key_name": r.key_name,
+                "is_default": r.id == default_key_id,
                 "bound_model": r.bound_model,
                 "created_at": r.created_at,
                 "expires_at": r.expires_at,
@@ -927,6 +941,11 @@ class LitellmService:
         record = await LitellmUserKey.get_by_alias(db, key_alias)
         if record is None or record.uid != uid:
             raise KeyNotFoundError("KEY_NOT_FOUND")
+
+        from app.models.user_default_key import UserDefaultKey
+
+        if await UserDefaultKey.is_default_key(db, uid, record.id):
+            raise LitellmServiceError("DEFAULT_KEY_CANNOT_DELETE: 默认 Key 不可删除")
 
         try:
             raw_key = decrypt_key(record.key)
@@ -993,6 +1012,8 @@ class LitellmService:
         body: dict[str, Any] = {"user_id": uid}
         if model:
             body["models"] = [model]
+        if key_name:
+            body["key_alias"] = key_name
 
         llm_result = await self.request(
             "POST",
@@ -1022,12 +1043,12 @@ class LitellmService:
             raise LitellmServiceError("LiteLLM returned an empty key")
 
         if not key_alias:
-            key_alias = key[:20]
+            key_alias = key_name or key[:20]
 
         # 5. 加密后写本地映射
         encrypted = encrypt_key(key)
         try:
-            await LitellmUserKey.create(
+            record = await LitellmUserKey.create(
                 db,
                 uid=uid,
                 key_alias=key_alias,
@@ -1054,6 +1075,7 @@ class LitellmService:
 
         return {
             "key": key,
+            "key_id": record.id,
             "key_alias": key_alias,
             "key_name": key_name,
             "uid": uid,

@@ -5,6 +5,7 @@
 测试数据从 test_data.json 加载。
 """
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -35,6 +36,38 @@ async def test_seed_initial_admin_idempotent(backend):
         ListUsersParams(page=1, page_size=100)
     )
     assert result.total == 1
+
+
+@pytest.mark.asyncio
+async def test_seed_initial_admin_recreates_missing_home(backend, test_data):
+    """DB 中已存在 admin 但家目录整体缺失 → seed 重建 home 和 .jiuwenswarm。"""
+    username = test_data["admin"]["username"]
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    shutil.rmtree(home, ignore_errors=True)
+    assert not os.path.isdir(home)
+
+    await backend.seed_initial_admin()
+
+    assert os.path.isdir(home)
+    assert os.path.isdir(os.path.join(home, ".jiuwenswarm"))
+    assert os.path.isfile(os.path.join(home, ".jiuwenswarm", "config", "config.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_seed_initial_admin_home_exists_untouched(backend, test_data):
+    """家目录已存在 → seed 不改动已有内容。"""
+    username = test_data["admin"]["username"]
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    os.makedirs(home, exist_ok=True)
+    jwswarm = os.path.join(home, ".jiuwenswarm")
+    os.makedirs(jwswarm, exist_ok=True)
+    marker = os.path.join(jwswarm, "config", "user-extra.yaml")
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    Path(marker).write_text("user: data", encoding="utf-8")
+
+    await backend.seed_initial_admin()
+
+    assert Path(marker).read_text(encoding="utf-8") == "user: data"
 
 
 # ── 认证 ────────────────────────────────────────────────────────────

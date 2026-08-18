@@ -1,5 +1,6 @@
 """FastAPI entry point — wires backend, IAM, LiteLLM, and API routes together."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -39,7 +40,6 @@ async def lifespan(fastapi_app: FastAPI):
     # 2. Start the user-system backend (uses the shared engine).
     backend = get_user_backend()
     await backend.on_startup()
-    await backend.seed_initial_admin()
 
     # 3. Create IAM and thirdparty_agent tables on the same engine.
     engine = backend.get_engine()
@@ -58,8 +58,11 @@ async def lifespan(fastapi_app: FastAPI):
     register_litellm_svc(litellm_svc)
     logger.info("LitellmService attached to app.state")
 
-    # 4.5 确保 admin 已同步到 LiteLLM（best-effort，失败不阻断启动）
-    await _ensure_admin_in_litellm(backend, litellm_svc)
+    # 4.5 嗅探推理服务并自动注册模型
+    await _seed_initial_model(litellm_svc)
+
+    # 4.6 初始化管理员（建用户 + 同步 LiteLLM + 申请 Key + 建目录 + 写 config）
+    await backend.seed_initial_admin()
 
     # 5. Hardware monitoring service
     from app.services.hardware_service import HardwareService
@@ -74,6 +77,14 @@ async def lifespan(fastapi_app: FastAPI):
     yield
 
     # ── 清理 ──────────────────────────────────────────────────────────────
+    from app.api.v1.litellm_model import _sync_timer_task as _agentos_timer
+    if _agentos_timer is not None and not _agentos_timer.done():
+        _agentos_timer.cancel()
+        try:
+            await _agentos_timer
+        except asyncio.CancelledError:
+            pass
+
     await hw_svc.close()
     await stop_log_services()
     await litellm_svc.close()
@@ -85,39 +96,136 @@ async def lifespan(fastapi_app: FastAPI):
 async def _create_log_tables(engine):
     from app.models.base import Base
     from app.models.log import LogComponent, LogExportTask  # noqa: F401
+    from app.models.user_default_key import UserDefaultKey  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def _ensure_admin_in_litellm(backend, litellm_svc) -> None:
-    """启动时确保 admin 已在 LiteLLM 侧创建（best-effort）。
+async def _seed_initial_model(litellm_svc: LitellmService) -> None:
+    """注册初始模型到 LiteLLM。
 
-    - admin 在本地 users 表已存在（seed_initial_admin 保证）
-    - 如果 LiteLLM 侧尚未创建，则调 /user/new 同步
-    - 已存在（400）或 LiteLLM 不可达均不阻断启动
+    优先读 INITIAL_MODELS（JSON 字符串，deploy 脚本嗅探后写入）。
+    INITIAL_MODELS 为空时，回退到管理面嗅探推理服务。
+    部署框架和监控地址由 deploy 脚本处理，后端只注册模型和 context_window。
     """
+    import json
     from app.config import settings
-    from app.services.litellm_service import LitellmUpstreamError, LitellmConnectionError
 
-    try:
-        admin = await backend.get_user_by_username(settings.AGENTOS_ADMIN_USERNAME)
-        if admin is None:
-            logger.warning("Admin user not found in local DB, skip LiteLLM sync")
+    # 获取模型列表：优先 INITIAL_MODELS，回退到嗅探
+    if settings.INITIAL_MODELS:
+        try:
+            models_str = settings.INITIAL_MODELS.strip().strip("'").strip('"')
+            model_list = json.loads(models_str)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"INITIAL_MODELS JSON 解析失败: {e}。"
+                f"请检查 .env 中 INITIAL_MODELS 的格式"
+            ) from e
+        if not isinstance(model_list, list) or not model_list:
+            raise RuntimeError(
+                "INITIAL_MODELS 为空或格式异常，未找到可注册的模型。"
+                "请检查 deploy 脚本是否正确嗅探并写入了模型信息"
+            )
+        logger.info("从 INITIAL_MODELS 读取到 %d 个模型: %s", len(model_list), [m.get("id") for m in model_list])
+    else:
+        # 回退：管理面嗅探推理服务
+        api_base = settings.INITIAL_MODEL_API_BASE
+        if not api_base:
+            logger.info("未配置 INITIAL_MODELS 和 INITIAL_MODEL_API_BASE，跳过初始模型注册")
             return
 
+        api_base = api_base.rstrip("/")
+
+        import httpx
+        headers = {}
+        if settings.INITIAL_MODEL_API_KEY:
+            headers["Authorization"] = f"Bearer {settings.INITIAL_MODEL_API_KEY}"
+
         try:
-            await litellm_svc.create_user(uid=str(admin.user_id))
-            logger.info("Admin user synced to LiteLLM (uid=%s)", admin.user_id)
-        except LitellmUpstreamError as e:
-            if e.status_code == 400:
-                logger.info("Admin user already exists in LiteLLM, skip sync")
-            else:
-                logger.warning("LiteLLM upstream error creating admin user: %s %s", e.status_code, e.detail)
-        except LitellmConnectionError:
-            logger.warning("LiteLLM unreachable, skip admin user sync")
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{api_base}/models", headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"推理服务 {api_base}/models 返回错误状态码 {e.response.status_code}。"
+                f"请检查 INITIAL_MODEL_API_KEY 是否正确"
+            ) from e
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as e:
+            raise RuntimeError(
+                f"无法连接推理服务 {api_base}/models: {e}。"
+                f"请检查 INITIAL_MODEL_API_BASE 是否正确、推理服务是否已启动"
+            ) from e
+
+        model_list = data.get("data") if isinstance(data, dict) else None
+        if not model_list or not isinstance(model_list, list):
+            raise RuntimeError(
+                f"推理服务 {api_base}/models 返回为空或格式异常，未找到可注册的模型。"
+                f"请检查推理服务是否已加载模型"
+            )
+        logger.info("嗅探到 %d 个模型: %s", len(model_list), [m.get("id") for m in model_list])
+
+    from app.database import async_session_maker
+    from app.services.litellm_service import CreateModelExtras
+
+    # 查 LiteLLM 已有模型列表
+    try:
+        llm_data = await litellm_svc.request("GET", "/model/info")
+        llm_names = set()
+        if isinstance(llm_data, dict) and "data" in llm_data:
+            llm_names = {m.get("model_name") for m in llm_data["data"] if m.get("model_name")}
+        elif isinstance(llm_data, list):
+            llm_names = {m.get("model_name") for m in llm_data if m.get("model_name")}
     except Exception:
-        logger.warning("Failed to ensure admin in LiteLLM", exc_info=True)
+        logger.warning("查询 LiteLLM 已有模型失败，将注册所有模型", exc_info=True)
+        llm_names = set()
+
+    # api_base 用于注册到 LiteLLM（LiteLLM 转发推理请求用）
+    if not settings.INITIAL_MODEL_API_BASE:
+        logger.info("未配置 INITIAL_MODEL_API_BASE，跳过初始模型注册")
+        return
+    api_base = settings.INITIAL_MODEL_API_BASE.rstrip("/")
+
+    async with async_session_maker() as session:
+        for m in model_list:
+            model_name = m.get("id", "")
+            if not model_name:
+                continue
+
+            if model_name in llm_names:
+                logger.info("模型 '%s' 在 LiteLLM 已存在，跳过", model_name)
+                continue
+
+            # context_window：优先从模型信息取
+            context_window = m.get("context_window")
+            if context_window is None:
+                context_window = m.get("max_model_len")
+            model_info = {}
+            if context_window is not None:
+                model_info["context_window"] = int(context_window)
+
+            litellm_params: dict = {
+                "model": f"openai/{model_name}",
+                "api_base": api_base,
+                # LiteLLM 对 openai/* 模型强制要求 api_key 字段，未配置时用占位符
+                "api_key": settings.INITIAL_MODEL_API_KEY or "sk-1234",
+            }
+
+            try:
+                await litellm_svc.create_model(
+                    session,
+                    model_name=model_name,
+                    litellm_params=litellm_params,
+                    extras=CreateModelExtras(
+                        model_info=model_info if model_info else None,
+                    ),
+                )
+                await session.commit()
+                logger.info("模型 '%s' 注册成功", model_name)
+            except Exception:
+                await session.rollback()
+                logger.warning("注册模型 '%s' 失败", model_name, exc_info=True)
 
 
 app = FastAPI(

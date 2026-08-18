@@ -71,6 +71,35 @@ class LitellmModelParams(Base):
         return result.scalars().one_or_none()
 
     @staticmethod
+    async def list_all_model_names(db: AsyncSession) -> list[str]:
+        """查询所有已注册模型的 model_name（去重）。"""
+        result = await db.execute(
+            select(LitellmModelParams.model_name).distinct()
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_all_models_with_context(db: AsyncSession) -> list[tuple[str, int | None]]:
+        """查询所有模型的 (model_name, context_window)，用于 agentos 去重。
+
+        context_window 从 extra_params.model_info.context_window 取，缺失返回 None。
+        """
+        result = await db.execute(
+            select(LitellmModelParams.model_name, LitellmModelParams.extra_params)
+        )
+        rows = []
+        for model_name, extra_params in result.all():
+            ctx = None
+            if extra_params and isinstance(extra_params, dict):
+                model_info = extra_params.get("model_info")
+                if isinstance(model_info, dict):
+                    raw = model_info.get("context_window")
+                    if raw is not None:
+                        ctx = int(raw)
+            rows.append((model_name, ctx))
+        return rows
+
+    @staticmethod
     async def get_first_model_name(db: AsyncSession) -> str | None:
         result = await db.execute(
             select(LitellmModelParams.model_name)

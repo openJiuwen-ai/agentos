@@ -15,6 +15,7 @@ from app.services.litellm_service import (
     LitellmService,
     LitellmConnectionError,
     LitellmUpstreamError,
+    LitellmServiceError,
     MaxKeysReachedError,
     KeyNotFoundError,
 )
@@ -51,22 +52,25 @@ async def list_keys(
     description="为当前用户生成一个新的 API Key。调 LiteLLM，加密写入本地。",
 )
 async def apply_key(
-    body: KeyApplyRequest = KeyApplyRequest(),
+    body: KeyApplyRequest,
     db: AsyncSession = Depends(get_session),
     svc: LitellmService = Depends(get_litellm_svc),
     user: TokenData = Depends(get_current_user),
 ):
     try:
-        data = await svc.apply_key(
+        key_info = await svc.apply_key(
             db, uid=user.user_id, model=body.model, key_name=body.key_name,
         )
-        return ApiResponse(data=data)
+        await db.commit()
+        return ApiResponse(data=key_info)
     except LitellmUpstreamError as e:
         raise HTTPException(status_code=502, detail=e.detail) from e
     except LitellmConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     except MaxKeysReachedError as e:
         raise HTTPException(status_code=403, detail="Key数量已达上限") from e
+    except LitellmServiceError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
 
 
 @router.delete(
@@ -90,3 +94,5 @@ async def delete_key(
         raise HTTPException(status_code=502, detail=str(e)) from e
     except KeyNotFoundError as e:
         raise HTTPException(status_code=404, detail="Key not found") from e
+    except LitellmServiceError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e

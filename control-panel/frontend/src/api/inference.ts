@@ -72,6 +72,7 @@ export interface ApiKeyItem {
   key_name?: string;
   key_preview: string;
   key_alias: string;
+  is_default?: boolean;
   bound_model?: string;
   created_at: string;
   expires_at?: string;

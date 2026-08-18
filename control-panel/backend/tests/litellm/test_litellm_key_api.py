@@ -1,6 +1,6 @@
 """测试 Key 管理 API 端点"""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,6 +10,15 @@ from app.services.litellm_service import (
     MaxKeysReachedError,
     KeyNotFoundError,
 )
+
+
+def _mock_record(uid="test-user-001", key_name="test-key"):
+    """构造一个 mock Key record，用于 delete_key 路由的前置查询。"""
+    record = MagicMock()
+    record.uid = uid
+    record.key_name = key_name
+    record.key = "encrypted-key"
+    return record
 
 
 class TestListKeysAPI:
@@ -78,7 +87,7 @@ class TestApplyKeyAPI:
         ):
             resp = await client.post(
                 "/api/v1/litellm/key/generate",
-                json={"model": None},
+                json={"model": None, "key_name": "test-key"},
             )
             assert resp.status_code == 200
             assert resp.json()["data"]["key"] == "sk-abc123xyz"
@@ -94,7 +103,7 @@ class TestApplyKeyAPI:
             new=AsyncMock(side_effect=MaxKeysReachedError("MAX_KEYS_REACHED")),
         ):
             resp = await client.post(
-                "/api/v1/litellm/key/generate", json={},
+                "/api/v1/litellm/key/generate", json={"key_name": "test-key"},
             )
             assert resp.status_code == 403
 
@@ -109,7 +118,7 @@ class TestApplyKeyAPI:
             new=AsyncMock(side_effect=LitellmUpstreamError(500, "Error")),
         ):
             resp = await client.post(
-                "/api/v1/litellm/key/generate", json={},
+                "/api/v1/litellm/key/generate", json={"key_name": "test-key"},
             )
             assert resp.status_code == 502
 
@@ -124,7 +133,7 @@ class TestApplyKeyAPI:
             new=AsyncMock(side_effect=LitellmConnectionError("timeout")),
         ):
             resp = await client.post(
-                "/api/v1/litellm/key/generate", json={},
+                "/api/v1/litellm/key/generate", json={"key_name": "test-key"},
             )
             assert resp.status_code == 502
 
@@ -141,6 +150,12 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(return_value={"ok": True}),
+        ), patch(
+            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
+            new=AsyncMock(return_value=_mock_record()),
+        ), patch(
+            "app.api.v1.litellm_key.decrypt_key",
+            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 200
@@ -168,6 +183,12 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(side_effect=LitellmUpstreamError(500, "Error")),
+        ), patch(
+            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
+            new=AsyncMock(return_value=_mock_record()),
+        ), patch(
+            "app.api.v1.litellm_key.decrypt_key",
+            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 502
@@ -181,6 +202,12 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(side_effect=LitellmConnectionError("timeout")),
+        ), patch(
+            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
+            new=AsyncMock(return_value=_mock_record()),
+        ), patch(
+            "app.api.v1.litellm_key.decrypt_key",
+            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 502

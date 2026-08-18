@@ -16,6 +16,7 @@ dependencies = [
     "watchfiles>=1.0.0",
     "apscheduler>=3.10.0",
     "python-multipart>=0.0.32",
+    "ruamel.yaml>=0.18.0",
 ]
 
 [project.optional-dependencies]

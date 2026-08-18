@@ -42,6 +42,11 @@ services:
       VICTORIAMETRICS_URL: http://victoriametrics:8428
       AGENTOS_NODE_ROLE: ${AGENTOS_NODE_ROLE:-master}
       AGENT_REGISTER_URL: ${AGENT_REGISTER_URL}
+      INITIAL_MODELS: ${INITIAL_MODELS}
+      INITIAL_MODEL_API_BASE: ${INITIAL_MODEL_API_BASE}
+      INITIAL_MODEL_API_KEY: ${INITIAL_MODEL_API_KEY}
+      INITIAL_MODEL_METRICS_URL: ${INITIAL_MODEL_METRICS_URL}
+      INITIAL_INFERENCE_ENGINE: ${INITIAL_INFERENCE_ENGINE}
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
       # agentos 不再挂 docker.sock；构建由 image-process 服务负责
@@ -51,7 +56,7 @@ services:
       - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
       - /root:/home/agentos/host_root:ro
-      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
+      - ${YR_LOG_DIR:-/tmp/yr_sessions}:/tmp/yr_sessions:ro
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -184,7 +189,7 @@ services:
     volumes:
       - /root:/home/agentos/host_root:ro
       - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs:ro
-      - ${YR_LOG_DIR:-/tmp/yr_sessions/latest/logs}:/tmp/yr_sessions/latest/logs:ro
+      - ${YR_LOG_DIR:-/tmp/yr_sessions}:/tmp/yr_sessions:ro
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy_data:/etc/alloy/data

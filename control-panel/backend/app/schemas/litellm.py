@@ -164,7 +164,12 @@ class KeyApplyRequest(BaseModel):
     """申请 Key 请求"""
 
     model: str | None = Field(None, description="绑定的模型，None=所有模型可用")
-    key_name: str | None = Field(None, description="Key 别名（自定义名称）")
+    key_name: str | None = Field(
+        None,
+        max_length=256,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Key 名称（可选，仅允许字母/数字/下划线/连字符）",
+    )
 
 
 class KeyItem(BaseModel):
@@ -174,6 +179,7 @@ class KeyItem(BaseModel):
     key_preview: str = Field(..., description="Key 掩码（前 8 位 + '***'），用于辨识")
     key_alias: str
     key_name: str | None = None
+    is_default: bool = False
     bound_model: str | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None

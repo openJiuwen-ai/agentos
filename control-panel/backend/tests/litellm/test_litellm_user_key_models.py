@@ -18,7 +18,7 @@ class TestLitellmUserKeyCreate:
         encrypted = encrypt_key("sk-test-key-abc123")
         record = await LitellmUserKey.create(
             db_session, "user-1", "sk-alias-1", encrypted,
-            extras=CreateKeyExtras(model="deepseek"),
+            extras=CreateKeyExtras(model="deepseek", key_name="key-1"),
         )
         assert record.uid == "user-1"
         assert record.key_alias == "sk-alias-1"
@@ -36,6 +36,7 @@ class TestLitellmUserKeyCreate:
         encrypted = encrypt_key("sk-no-model")
         record = await LitellmUserKey.create(
             db_session, "user-2", "sk-alias-2", encrypted,
+            extras=CreateKeyExtras(key_name="key-2"),
         )
         assert record.bound_model is None
 
@@ -52,10 +53,12 @@ class TestLitellmUserKeyQuery:
         for i in range(3):
             await LitellmUserKey.create(
                 db_session, "alice", f"ak{i}", encrypt_key(f"pk{i}"),
+                extras=CreateKeyExtras(key_name=f"ak-name-{i}"),
             )
         for i in range(2):
             await LitellmUserKey.create(
                 db_session, "bob", f"bk{i}", encrypt_key(f"pk{i}"),
+                extras=CreateKeyExtras(key_name=f"bk-name-{i}"),
             )
         assert await LitellmUserKey.count_by_uid(db_session, "alice") == 3
         assert await LitellmUserKey.count_by_uid(db_session, "bob") == 2
@@ -70,6 +73,7 @@ class TestLitellmUserKeyQuery:
         for i in [1, 2, 3]:
             await LitellmUserKey.create(
                 db_session, "alice", f"k{i}", encrypt_key(f"pk{i}"),
+                extras=CreateKeyExtras(key_name=f"k-name-{i}"),
             )
         records = await LitellmUserKey.list_by_uid(db_session, "alice")
         assert len(records) == 3
@@ -83,6 +87,7 @@ class TestLitellmUserKeyQuery:
         """
         await LitellmUserKey.create(
             db_session, "alice", "my-key", encrypt_key("pk"),
+            extras=CreateKeyExtras(key_name="my-key-name"),
         )
         found = await LitellmUserKey.get_by_alias(db_session, "my-key")
         assert found is not None
@@ -99,9 +104,11 @@ class TestLitellmUserKeyQuery:
         """
         await LitellmUserKey.create(
             db_session, "alice", "shared-key", encrypt_key("pk-a"),
+            extras=CreateKeyExtras(key_name="shared-key-name-a"),
         )
         await LitellmUserKey.create(
             db_session, "bob", "shared-key", encrypt_key("pk-b"),
+            extras=CreateKeyExtras(key_name="shared-key-name-b"),
         )
 
         alice_key = await LitellmUserKey.get_by_uid_and_alias(
@@ -125,6 +132,7 @@ class TestLitellmUserKeyQuery:
         assert await LitellmUserKey.exists_by_uid(db_session, "nobody") is False
         await LitellmUserKey.create(
             db_session, "alice", "k1", encrypt_key("pk"),
+            extras=CreateKeyExtras(key_name="k1-name"),
         )
         assert await LitellmUserKey.exists_by_uid(db_session, "alice") is True
 
@@ -141,9 +149,11 @@ class TestLitellmUserKeyDelete:
         for i in range(2):
             await LitellmUserKey.create(
                 db_session, "alice", f"ak{i}", encrypt_key(f"pk{i}"),
+                extras=CreateKeyExtras(key_name=f"del-ak-name-{i}"),
             )
         await LitellmUserKey.create(
             db_session, "bob", "bk0", encrypt_key("pk"),
+            extras=CreateKeyExtras(key_name="del-bk-name-0"),
         )
 
         deleted = await LitellmUserKey.delete_by_uid(db_session, "alice")
@@ -168,9 +178,11 @@ class TestLitellmUserKeyDelete:
         """
         await LitellmUserKey.create(
             db_session, "alice", "k1", encrypt_key("pk1"),
+            extras=CreateKeyExtras(key_name="del-k1-name"),
         )
         await LitellmUserKey.create(
             db_session, "alice", "k2", encrypt_key("pk2"),
+            extras=CreateKeyExtras(key_name="del-k2-name"),
         )
 
         result = await LitellmUserKey.delete_by_uid_and_alias(
@@ -203,10 +215,12 @@ class TestLitellmUserKeyUnique:
         from sqlalchemy.exc import IntegrityError
         await LitellmUserKey.create(
             db_session, "alice", "dup-key", encrypt_key("pk1"),
+            extras=CreateKeyExtras(key_name="dup-name-1"),
         )
         with pytest.raises(IntegrityError):
             await LitellmUserKey.create(
                 db_session, "alice", "dup-key", encrypt_key("pk2"),
+                extras=CreateKeyExtras(key_name="dup-name-2"),
             )
             await db_session.flush()
 
@@ -218,9 +232,11 @@ class TestLitellmUserKeyUnique:
         """
         await LitellmUserKey.create(
             db_session, "alice", "shared-alias", encrypt_key("pk-a"),
+            extras=CreateKeyExtras(key_name="shared-alias-name-a"),
         )
         await LitellmUserKey.create(
             db_session, "bob", "shared-alias", encrypt_key("pk-b"),
+            extras=CreateKeyExtras(key_name="shared-alias-name-b"),
         )
         assert await LitellmUserKey.count_by_uid(db_session, "alice") == 1
         assert await LitellmUserKey.count_by_uid(db_session, "bob") == 1

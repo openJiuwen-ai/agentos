@@ -170,6 +170,7 @@ onMounted(() => {
         <ElTableColumn label="操作" width="100" align="right">
           <template #default="{ row }">
             <ElButton
+              v-if="!row.is_default"
               type="danger"
               link
               title="删除"
@@ -196,7 +197,7 @@ onMounted(() => {
       width="400px"
       :close-on-click-modal="false"
     >
-      <ElForm ref="createFormRef" :model="createForm" :rules="createFormRules" label-position="top">
+      <ElForm ref="createFormRef" :model="createForm" :rules="createFormRules" label-position="top" @submit.prevent="handleCreateKey">
         <ElFormItem label="名称" prop="name">
           <ElInput
             v-model="createForm.name"
