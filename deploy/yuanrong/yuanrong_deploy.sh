@@ -596,6 +596,12 @@ ExecStart=${py_bindir}/yr start --master \\
     -s 'mode.master.frontend=true' \\
     -s 'mode.master.function_scheduler=true' \\
     -s 'mode.master.meta_service=true' \\
+    -s 'frontend.args.enableEvent=true' \\
+    -s 'values.frontend.ssh_enable=true' \\
+    -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
+    -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
+    -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
+    -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
 ExecStop=${py_bindir}/yr stop --force
 Restart=on-failure
@@ -627,6 +633,12 @@ ExecStart=${py_bindir}/yr start \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.agent.frontend=true' \\
+    -s 'frontend.args.enableEvent=true' \\
+    -s 'values.frontend.ssh_enable=true' \\
+    -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
+    -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
+    -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
+    -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
 ExecStop=${py_bindir}/yr stop --force
 Restart=on-failure
@@ -656,6 +668,9 @@ deploy_yr_up_systemd() {
     _yr_has_systemd || error "systemd not available; yuanrong up requires systemd (or use --no-systemd)"
 
     local i
+
+    # SSH 直连密钥校验（frontend 启用需要私钥/公钥/authorized_keys 齐备）
+    yr_check_ssh_keys "$(get_local_ip)"
 
     # ---- executor（所有节点）----
     info "Generating ${YR_EXECUTOR_SVC} unit"

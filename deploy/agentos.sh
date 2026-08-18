@@ -155,8 +155,8 @@ ensure_agentos_user() {
 # 不可达则明确报错引导先 init，而不是让 yuanrong 抛看不懂的连接失败。
 ensure_etcd_ready() {
     info "Checking etcd availability (run 'agentos.sh init' first if this fails)"
-    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
-    "${ETCD_SH}" check \
+    [ -r "${ETCD_SH}" ] || error "etcd script not found or not readable: ${ETCD_SH}"
+    bash "${ETCD_SH}" check \
         || error "etcd not reachable. Run './agentos.sh init' on etcd nodes first, then retry 'up'."
 }
 
@@ -179,9 +179,9 @@ deploy_up() {
 deploy_init() {
     echo ""
     info "Initializing etcd (bootstrap)"
-    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
-    "${ETCD_SH}" clean || error "etcd data clean failed"
-    "${ETCD_SH}" up || error "etcd init failed"
+    [ -r "${ETCD_SH}" ] || error "etcd script not found or not readable: ${ETCD_SH}"
+    bash "${ETCD_SH}" clean || error "etcd data clean failed"
+    bash "${ETCD_SH}" up || error "etcd init failed"
     success "etcd init completed"
 }
 
@@ -191,8 +191,8 @@ deploy_init() {
 deploy_deinit() {
     echo ""
     info "Uninitializing etcd (stop + remove unit, data preserved)"
-    [ -x "${ETCD_SH}" ] || error "etcd script not found or not executable: ${ETCD_SH}"
-    "${ETCD_SH}" down || error "etcd deinit failed"
+    [ -r "${ETCD_SH}" ] || error "etcd script not found or not readable: ${ETCD_SH}"
+    bash "${ETCD_SH}" down || error "etcd deinit failed"
     success "etcd deinit completed"
 }
 
