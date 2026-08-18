@@ -66,7 +66,15 @@ function toggleSection(key: keyof typeof sections.value) {
 }
 
 function handleSave() {
-  emit('save', { ...formData.value });
+  emit('save', {
+    ...formData.value,
+    name: formData.value.name.trim(),
+    description: formData.value.description.trim(),
+    deployName: formData.value.deployName.trim(),
+    apiKey: formData.value.apiKey?.trim(),
+    serviceUrl: formData.value.serviceUrl.trim(),
+    metricsUrl: formData.value.metricsUrl.trim(),
+  });
   emit('close');
 }
 </script>

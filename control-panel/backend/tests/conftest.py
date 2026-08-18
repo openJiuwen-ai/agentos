@@ -56,6 +56,25 @@ def _cleanup_test_home() -> None:
         shutil.rmtree(TEST_SWARM_TEMPLATE, ignore_errors=True)
 
 
+def _register_litellm_svc_stub() -> None:
+    """注册 LitellmService stub：mock 掉上游 HTTP，让 Key 申请写入本地内存库。
+
+    生产环境由 main.py lifespan 调用 register_litellm_svc；测试 fixture 不触发
+    lifespan，需手动注册，否则 LocalUsersBackend.create_user 因 svc=None 失败。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.services import register_litellm_svc
+    from app.services.litellm_service import LitellmService
+
+    svc = LitellmService()
+    svc.request = AsyncMock(return_value={
+        "key": "sk-test-" + "k" * 44,
+        "key_name": "default-key",
+    })
+    register_litellm_svc(svc)
+
+
 # ── 后端 fixture（直接测试 backend 接口） ─────────────────────────────
 
 
@@ -68,6 +87,12 @@ async def backend():
     data = load_test_data()
     _configure_for_test(data)
     _cleanup_test_home()
+    _register_litellm_svc_stub()
+
+    # 预导入所有 ORM 模型，确保 on_startup 的 create_all 覆盖全部表（首次 fixture 不遗漏）
+    import app.models.litellm_model_params  # noqa: F401
+    import app.models.litellm_user_key      # noqa: F401
+    import app.models.user_default_key      # noqa: F401
 
     # 创建 swarm 模板目录及示例文件
     os.makedirs(os.path.join(TEST_SWARM_TEMPLATE, "config"), exist_ok=True)
@@ -118,6 +143,12 @@ async def client():
     data = load_test_data()
     _configure_for_test(data)
     _cleanup_test_home()
+    _register_litellm_svc_stub()
+
+    # 预导入所有 ORM 模型，确保 on_startup 的 create_all 覆盖全部表
+    import app.models.litellm_model_params  # noqa: F401
+    import app.models.litellm_user_key      # noqa: F401
+    import app.models.user_default_key      # noqa: F401
 
     # 创建 swarm 模板目录及示例文件
     os.makedirs(os.path.join(TEST_SWARM_TEMPLATE, "config"), exist_ok=True)

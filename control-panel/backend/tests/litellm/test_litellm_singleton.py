@@ -17,6 +17,22 @@ import pytest
 from app.services.litellm_service import LitellmService
 from app.services.local_users.backend import LocalUsersBackend
 
+# 注册 user_default_key 模型，使 backend.on_startup() 的 create_all 建齐全部表
+import app.models.user_default_key  # noqa: F401
+
+
+def _make_working_svc() -> AsyncMock:
+    """构造能完成 LocalUsersBackend.create_user 全流程的 mock svc。
+
+    create_user 会同步 LiteLLM 用户 + 申请默认 Key（apply_key）。
+    mock 需为 apply_key 返回合法 dict，否则 key_id 会是 MagicMock 被塞进 SQL。
+    """
+    mock_svc = AsyncMock(spec=LitellmService)
+    mock_svc.apply_key.return_value = {
+        "key_id": 1, "key": "sk-test", "key_name": "default-key",
+    }
+    return mock_svc
+
 
 class TestLitellmServiceRegistry:
     """register_litellm_svc / get_litellm_svc — 全局单例注册与获取"""
@@ -110,11 +126,11 @@ class _HookTestBase:
 class TestCreateUserHook(_HookTestBase):
     """LocalUsersBackend.create_user — LiteLLM 同步钩子"""
 
-    async def test_hook_skipped_when_svc_not_registered(self, backend):
+    async def test_create_user_fails_when_svc_not_registered(self, backend):
         """
         场景: LitellmService 未注册时创建用户.
 
-        预期: 用户正常创建，LiteLLM 同步跳过不报错
+        预期: LiteLLM 同步被跳过；但 key 申请强依赖 svc，创建回滚并抛 RuntimeError
         """
         import app.services as _mod
 
@@ -125,8 +141,9 @@ class TestCreateUserHook(_HookTestBase):
             await backend.on_startup()
             await backend.seed_initial_admin()
 
-            record, pwd = await backend.create_user("testuser1", "TestPass123")
-            assert record.username == "testuser1"
+            with pytest.raises(RuntimeError):
+                await backend.create_user("testuser1", "TestPass123")
+            assert await backend.get_user_by_username("testuser1") is None
         finally:
             _mod._litellm_svc = original
             await backend.on_shutdown()
@@ -140,7 +157,7 @@ class TestCreateUserHook(_HookTestBase):
         import app.services as _mod
 
         original = _mod._litellm_svc
-        mock_svc = AsyncMock(spec=LitellmService)
+        mock_svc = _make_working_svc()
         _mod._litellm_svc = mock_svc
 
         try:
@@ -154,23 +171,24 @@ class TestCreateUserHook(_HookTestBase):
             _mod._litellm_svc = original
             await backend.on_shutdown()
 
-    async def test_hook_does_not_block_on_failure(self, backend):
+    async def test_create_user_rolls_back_on_sync_failure(self, backend):
         """
-        场景: LiteLLM 同步失败时.
+        场景: LiteLLM 同步失败（非已存在）时.
 
-        预期: 面板用户仍创建成功，异常被吞下不传播
+        预期: create_user 抛 ValueError，面板用户被回滚删除
         """
         import app.services as _mod
 
         original = _mod._litellm_svc
-        mock_svc = AsyncMock(spec=LitellmService)
+        mock_svc = _make_working_svc()
         mock_svc.create_user.side_effect = RuntimeError("LiteLLM down")
         _mod._litellm_svc = mock_svc
 
         try:
             await backend.on_startup()
-            record, pwd = await backend.create_user("testuser3", "TestPass123")
-            assert record.username == "testuser3"
+            with pytest.raises(ValueError):
+                await backend.create_user("testuser3", "TestPass123")
+            assert await backend.get_user_by_username("testuser3") is None
             mock_svc.create_user.assert_called_once()
         finally:
             _mod._litellm_svc = original
@@ -182,18 +200,20 @@ class TestDeleteUserHook(_HookTestBase):
 
     async def test_hook_skipped_when_svc_not_registered(self, backend):
         """
-        场景: LitellmService 未注册时删除用户.
+        场景: 创建用户后取消注册 LitellmService，再删除用户.
 
-        预期: 用户正常删除，不报错
+        预期: delete_user 的 LiteLLM 清理被跳过，用户正常删除
         """
         import app.services as _mod
 
         original = _mod._litellm_svc
-        _mod._litellm_svc = None
+        mock_svc = _make_working_svc()
+        _mod._litellm_svc = mock_svc
 
         try:
             await backend.on_startup()
             record, _ = await backend.create_user("deluser1", "TestPass123")
+            _mod._litellm_svc = None  # 创建完成后置空，测删除时跳过 LiteLLM 清理
             uid = _uuid.UUID(record.user_id)
             await backend.delete_user(uid)
             assert await backend.get_user_by_id(uid) is None
@@ -210,7 +230,7 @@ class TestDeleteUserHook(_HookTestBase):
         import app.services as _mod
 
         original = _mod._litellm_svc
-        mock_svc = AsyncMock(spec=LitellmService)
+        mock_svc = _make_working_svc()
         _mod._litellm_svc = mock_svc
 
         try:
@@ -236,7 +256,7 @@ class TestDeleteUserHook(_HookTestBase):
         import app.services as _mod
 
         original = _mod._litellm_svc
-        mock_svc = AsyncMock(spec=LitellmService)
+        mock_svc = _make_working_svc()
         mock_svc.delete_user.side_effect = RuntimeError("LiteLLM down")
         _mod._litellm_svc = mock_svc
 

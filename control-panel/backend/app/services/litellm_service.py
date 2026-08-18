@@ -95,6 +95,19 @@ class KeyNotFoundError(LitellmServiceError):
     """Key 不存在或不属于当前用户"""
 
 
+# ─── LiteLLM 状态码语义 ────────────────────────────────────────────
+# 创建类接口：目标已存在。LiteLLM 实测返回 409，保留 400 兼容旧版本。
+USER_ALREADY_EXISTS_STATUS_CODES = (400, 409)
+# 删除类接口：目标不存在 → 幂等成功。
+RESOURCE_NOT_FOUND_STATUS_CODE = 404
+# 模型删除：已删除/不存在的模型可能返回 404 或 400，均视为幂等成功。
+MODEL_DELETE_IDEMPOTENT_STATUS_CODES = (RESOURCE_NOT_FOUND_STATUS_CODE, 400)
+# 上游响应无内容（空 body）时的状态码。
+NO_CONTENT_STATUS_CODE = 204
+# 上游返回错误响应的状态码阈值（>= 该值视为错误）。
+ERROR_RESPONSE_STATUS_THRESHOLD = 400
+
+
 # ─── Key 加密工具 ──────────────────────────────────────────────────────────────
 
 
@@ -461,7 +474,7 @@ class LitellmService:
         except httpx.NetworkError as e:
             raise LitellmConnectionError(f"Network error: {e}") from e
 
-        if response.status_code == 204 or not response.content:
+        if response.status_code == NO_CONTENT_STATUS_CODE or not response.content:
             return {}
 
         try:
@@ -473,7 +486,7 @@ class LitellmService:
                 detail=f"Non-JSON response: {text_content}",
             ) from e
 
-        if response.status_code >= 400:
+        if response.status_code >= ERROR_RESPONSE_STATUS_THRESHOLD:
             detail = ""
             if isinstance(data, dict):
                 detail = data.get("error", data.get("detail", str(data)[:500]))
@@ -820,7 +833,7 @@ class LitellmService:
                 json_data={"id": model_id},
             )
         except LitellmUpstreamError as e:
-            if e.status_code not in (404, 400):
+            if e.status_code not in MODEL_DELETE_IDEMPOTENT_STATUS_CODES:
                 raise
             # 404/400 视为幂等成功
         except Exception:
@@ -884,7 +897,7 @@ class LitellmService:
                 json_data={"user_ids": [uid]},
             )
         except LitellmUpstreamError as e:
-            if e.status_code != 404:
+            if e.status_code != RESOURCE_NOT_FOUND_STATUS_CODE:
                 raise
 
         await LitellmUserKey.delete_by_uid(db, uid)
@@ -960,7 +973,7 @@ class LitellmService:
                 json_data={"keys": [raw_key]},
             )
         except LitellmUpstreamError as e:
-            if e.status_code != 404:
+            if e.status_code != RESOURCE_NOT_FOUND_STATUS_CODE:
                 raise
 
         await db.delete(record)
@@ -1012,8 +1025,6 @@ class LitellmService:
         body: dict[str, Any] = {"user_id": uid}
         if model:
             body["models"] = [model]
-        if key_name:
-            body["key_alias"] = key_name
 
         llm_result = await self.request(
             "POST",
@@ -1043,7 +1054,7 @@ class LitellmService:
             raise LitellmServiceError("LiteLLM returned an empty key")
 
         if not key_alias:
-            key_alias = key_name or key[:20]
+            key_alias = key[:20]
 
         # 5. 加密后写本地映射
         encrypted = encrypt_key(key)

@@ -140,21 +140,23 @@ function copyModelName() {
 }
 
 function handleSave() {
-  const modelIdentifier = `openai/${formData.value.deployName}`;
+  const deployName = formData.value.deployName.trim();
+  const apiKey = formData.value.litellm_params.api_key?.trim();
+  const modelIdentifier = `openai/${deployName}`;
 
   const saveData: Partial<ModelDetail> = {
-    model_name: formData.value.model_name,
+    model_name: formData.value.model_name.trim(),
     litellm_params: {
       model: modelIdentifier,
-      api_base: formData.value.litellm_params.api_base,
-      ...(formData.value.litellm_params.api_key ? { api_key: formData.value.litellm_params.api_key } : {}),
+      api_base: formData.value.litellm_params.api_base.trim(),
+      ...(apiKey ? { api_key: apiKey } : {}),
     },
     model_info: {
       id: formData.value.model_info.id,
-      description: formData.value.model_info.description,
+      description: formData.value.model_info.description.trim(),
       context_window: formData.value.model_info.context_window,
     } as any,
-    instance_url: formData.value.instance_url,
+    instance_url: formData.value.instance_url?.trim(),
     max_concurrent: formData.value.max_concurrent,
     inference_engine: formData.value.deployFramework,
   };

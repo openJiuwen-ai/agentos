@@ -37,6 +37,7 @@ NE_BINARY="/usr/bin/node_exporter"
 NPU_BINARY="/usr/local/bin/npu-exporter"
 NPU_RUN_USER="hwMindX"
 NPU_RUN_GROUP="hwMindX"
+NPU_DEVICE_GROUP="HwHiAiUser"
 ALLOY_DIR="${DEPLOY_DIR}/alloy"
 ALLOY_CONTAINER="agentos-alloy"
 ALLOY_IMAGE="grafana/alloy:v1.18.1"
@@ -848,12 +849,24 @@ install_npu_exporter() {
         log "  已创建用户组 '$NPU_RUN_GROUP'"
     fi
     if ! id "$NPU_RUN_USER" &>/dev/null; then
-        if ! useradd -r -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER" 2>/dev/null; then
-            if ! useradd -g "$NPU_RUN_GROUP" -s /sbin/nologin "$NPU_RUN_USER" 2>/dev/null; then
+        # 检测操作系统类型，选择对应的 nologin 路径
+ 	    local nologin_shell="/sbin/nologin"
+ 	    if [ -f "/usr/sbin/nologin" ]; then
+ 	        nologin_shell="/usr/sbin/nologin"
+ 	    fi
+        if ! useradd -r -g "$NPU_RUN_GROUP" -s "$nologin_shell" "$NPU_RUN_USER" 2>/dev/null; then
+            if ! useradd -g "$NPU_RUN_GROUP" -s "$nologin_shell" "$NPU_RUN_USER" 2>/dev/null; then
                 fail "创建用户 '$NPU_RUN_USER' 失败，请检查系统权限或是否存在同名冲突"
             fi
         fi
         log "  已创建用户 '$NPU_RUN_USER'"
+    fi
+
+    if getent group "$NPU_DEVICE_GROUP" >/dev/null 2>&1; then
+        usermod -aG "$NPU_DEVICE_GROUP" "$NPU_RUN_USER"
+        log "  已将 $NPU_RUN_USER 加入组 $NPU_DEVICE_GROUP"
+    else
+        log "  跳过：组 $NPU_DEVICE_GROUP 不存在，npu-exporter 可能无法访问 NPU 设备"
     fi
 
     # 创建日志目录结构

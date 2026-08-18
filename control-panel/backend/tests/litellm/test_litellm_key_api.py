@@ -1,6 +1,6 @@
 """测试 Key 管理 API 端点"""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -10,15 +10,6 @@ from app.services.litellm_service import (
     MaxKeysReachedError,
     KeyNotFoundError,
 )
-
-
-def _mock_record(uid="test-user-001", key_name="test-key"):
-    """构造一个 mock Key record，用于 delete_key 路由的前置查询。"""
-    record = MagicMock()
-    record.uid = uid
-    record.key_name = key_name
-    record.key = "encrypted-key"
-    return record
 
 
 class TestListKeysAPI:
@@ -150,12 +141,6 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(return_value={"ok": True}),
-        ), patch(
-            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
-            new=AsyncMock(return_value=_mock_record()),
-        ), patch(
-            "app.api.v1.litellm_key.decrypt_key",
-            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 200
@@ -183,12 +168,6 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(side_effect=LitellmUpstreamError(500, "Error")),
-        ), patch(
-            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
-            new=AsyncMock(return_value=_mock_record()),
-        ), patch(
-            "app.api.v1.litellm_key.decrypt_key",
-            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 502
@@ -202,12 +181,6 @@ class TestDeleteKeyAPI:
         with patch(
             "app.api.v1.litellm_key.LitellmService.delete_key",
             new=AsyncMock(side_effect=LitellmConnectionError("timeout")),
-        ), patch(
-            "app.api.v1.litellm_key.LitellmUserKey.get_by_uid_and_alias",
-            new=AsyncMock(return_value=_mock_record()),
-        ), patch(
-            "app.api.v1.litellm_key.decrypt_key",
-            return_value="sk-test",
         ):
             resp = await client.delete("/api/v1/litellm/key/sk-abc")
             assert resp.status_code == 502

@@ -18,6 +18,8 @@ import avatarIcon from '@/assets/images/avatar.svg';
 import frameworkDefaultIcon from '@/assets/images/framework-page/default-framework-icon.png';
 import { fetchInstances, type InstanceEntry } from '@/api/agent';
 import { ApiError } from '@/api';
+import { usePolling } from '@/composables/usePolling';
+import { formatDateTime } from '@/utils/datetime';
 
 // ── 状态色（对齐 UI 设计稿） ──
 const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
@@ -57,6 +59,10 @@ const lastUpdateTime = ref('');
 const unavailableMsg = ref('');
 
 let instancesAbort: AbortController | null = null;
+
+// ── 30s 自动刷新：与 Appliance 硬件监控一致的 setTimeout 递归轮询 ──
+const AUTO_REFRESH_INTERVAL = 30 * 1000;
+const { restart: restartPollTimer, stop: stopPollTimer } = usePolling(AUTO_REFRESH_INTERVAL);
 
 // ── 计算属性 ──
 const pageSummary = computed(() => `总计：${total.value}`);
@@ -104,14 +110,16 @@ function formatUpdateTime() {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
-async function loadInstances(updateOverview: boolean, refresh = false) {
+async function loadInstances(updateOverview: boolean, refresh = false, silent = false) {
   if (instancesAbort) {
     instancesAbort.abort();
   }
   const controller = new AbortController();
   instancesAbort = controller;
 
-  listLoading.value = true;
+  if (!silent) {
+    listLoading.value = true;
+  }
   unavailableMsg.value = '';
   try {
     const data = await fetchInstances(
@@ -161,11 +169,11 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
           unavailableMsg.value = '无法连接注册中心';
           break;
         default:
-          ElMessage.error(e instanceof Error ? e.message : '加载失败');
+          if (!silent) ElMessage.error(e instanceof Error ? e.message : '加载失败');
       }
       if (e.status === 502 || e.status === 503 || e.status === 504) return;
     } else {
-      ElMessage.error(e instanceof Error ? e.message : '加载失败');
+      if (!silent) ElMessage.error(e instanceof Error ? e.message : '加载失败');
     }
   } finally {
     if (instancesAbort === controller) {
@@ -173,6 +181,8 @@ async function loadInstances(updateOverview: boolean, refresh = false) {
     }
   }
 }
+
+const pollTask = () => loadInstances(true, true, true);
 
 function handleRefresh() {
   page.value = 1;
@@ -182,6 +192,8 @@ function handleRefresh() {
   filterFramework.value = '';
   filterStatus.value = [];
   tableRef.value?.clearSort();
+  // 手动刷新后重置 30s 倒计时（对齐 Appliance 的 handleDetailRefresh）
+  restartPollTimer(pollTask);
   void loadInstances(true, true);
 }
 
@@ -230,19 +242,15 @@ function resetFrameworkFilter() {
   onFilterChange();
 }
 
-function formatDate(iso: string | null) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
 // ── 生命周期 ──
 onMounted(() => {
-  void loadInstances(true);
+  // 首次加载完成后才开始 30s 轮询（对齐 Appliance onMounted 的 restartPollTimer）
+  void loadInstances(true).finally(() => {
+    restartPollTimer(pollTask);
+  });
 });
 onUnmounted(() => {
+  stopPollTimer();
   if (instancesAbort) {
     instancesAbort.abort();
   }
@@ -460,7 +468,7 @@ onUnmounted(() => {
           :sort-orders="['ascending', 'descending']"
         >
           <template #default="{ row }">
-            <span>{{ formatDate(row.created_at) }}</span>
+            <span>{{ formatDateTime(row.created_at) }}</span>
           </template>
         </ElTableColumn>
 
@@ -473,7 +481,7 @@ onUnmounted(() => {
           :sort-orders="['ascending', 'descending']"
         >
           <template #default="{ row }">
-            <span>{{ formatDate(row.last_active_at) }}</span>
+            <span>{{ formatDateTime(row.last_active_at) }}</span>
           </template>
         </ElTableColumn>
       </ElTable>

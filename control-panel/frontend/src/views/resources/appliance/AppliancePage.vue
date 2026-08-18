@@ -22,6 +22,7 @@ import {
   type ApplianceMonitorData,
   type HardwareNodeSummary,
 } from '@/api/appliance';
+import { usePolling } from '@/composables/usePolling';
 import cpuIcon from '@/assets/images/cpu.svg';
 import npuIcon from '@/assets/images/npu.svg';
 import memoryIcon from '@/assets/images/memory.svg';
@@ -80,7 +81,8 @@ const visualRef = ref<HTMLElement | null>(null);
 const devicePhotoRef = ref<HTMLImageElement | null>(null);
 const deviceFrame = ref({ left: 0, top: 0, width: 0, height: 0 });
 
-let pollTimer: ReturnType<typeof setTimeout> | undefined;
+const pollTask = () => pollApplianceData();
+const { restart: restartPollTimer, stop: stopPollTimer } = usePolling(POLL_INTERVAL_MS);
 let deviceFrameObserver: ResizeObserver | undefined;
 let loadRequestSeq = 0;
 let nodesRequestSeq = 0;
@@ -317,7 +319,7 @@ async function loadMonitor(isRefresh = false, targetNodeId?: string) {
 }
 
 function handleDetailRefresh() {
-  restartPollTimer();
+  restartPollTimer(pollTask);
   void pollApplianceData();
 }
 
@@ -344,21 +346,10 @@ function observeDeviceFrame() {
 
 onMounted(() => {
   void loadNodes().finally(() => {
-    restartPollTimer();
+    restartPollTimer(pollTask);
   });
   window.addEventListener('resize', syncDeviceFrame);
 });
-
-function restartPollTimer() {
-  if (pollTimer !== undefined) {
-    clearTimeout(pollTimer);
-  }
-  pollTimer = setTimeout(() => {
-    void pollApplianceData().finally(() => {
-      restartPollTimer();
-    });
-  }, POLL_INTERVAL_MS);
-}
 
 function openMetricDetail(key?: string) {
   if (key === 'npu') {
@@ -398,7 +389,7 @@ watch(
     nodeOffline.value = false;
     nodeOfflineError.value = null;
     void loadMonitor(false, id).finally(() => {
-      restartPollTimer();
+      restartPollTimer(pollTask);
     });
   },
   { immediate: true },
@@ -422,9 +413,7 @@ watch(deviceView, () => {
 onUnmounted(() => {
   loadRequestSeq += 1;
   nodesRequestSeq += 1;
-  if (pollTimer !== undefined) {
-    clearTimeout(pollTimer);
-  }
+  stopPollTimer();
   deviceFrameObserver?.disconnect();
   window.removeEventListener('resize', syncDeviceFrame);
 });

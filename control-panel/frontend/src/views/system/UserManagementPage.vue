@@ -28,6 +28,7 @@ import {
   type UserItem,
   type BatchCreateResult,
 } from '@/api/users';
+import { formatDateTime } from '@/utils/datetime';
 import userAvatar from '@/assets/images/person.svg';
 import docIcon from '@/assets/images/doc.svg';
 import keyIcon from '@/assets/images/key.svg';
@@ -43,7 +44,6 @@ const page = ref(1);
 const pageSize = ref(10);
 const search = ref('');
 const listLoading = ref(false);
-const selectedRows = ref<UserItem[]>([]);
 
 const sortKey = ref('created_at');
 const sortOrder = ref<'asc' | 'desc'>('desc');
@@ -183,7 +183,6 @@ async function loadUsers() {
     });
     users.value = data.items;
     total.value = data.total;
-    selectedRows.value = [];
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载用户列表失败');
   } finally {
@@ -211,10 +210,6 @@ function handleSearch() {
 function handleRoleFilter() {
   page.value = 1;
   loadUsers();
-}
-
-function handleSelectionChange(rows: UserItem[]) {
-  selectedRows.value = rows;
 }
 
 function handleJumpPage() {
@@ -402,11 +397,6 @@ async function handleDelete(user: UserItem) {
 function roleLabel(role: string) {
   return role === 'admin' ? '管理员' : '普通用户';
 }
-
-function formatDate(iso: string | null) {
-  if (!iso) return '—';
-  return iso.slice(0, 19).replace('T', ' ');
-}
 </script>
 
 <template>
@@ -441,10 +431,8 @@ function formatDate(iso: string | null) {
           row-key="user_id"
           class="user-mgmt__table"
           empty-text="暂无数据"
-          @selection-change="handleSelectionChange"
           @sort-change="handleSortChange"
         >
-          <ElTableColumn type="selection" width="48" />
           <ElTableColumn label="用户名" min-width="180" prop="username" sortable="custom">
             <template #default="{ row }">
               <div class="user-cell">
@@ -503,7 +491,7 @@ function formatDate(iso: string | null) {
           </ElTableColumn>
           <ElTableColumn label="创建时间" min-width="180" prop="created_at" sortable="custom">
             <template #default="{ row }">
-              <span class="cell-muted">{{ formatDate(row.created_at) }}</span>
+              <span class="cell-muted">{{ formatDateTime(row.created_at) }}</span>
             </template>
           </ElTableColumn>
           <ElTableColumn label="操作" width="120" fixed="right">
@@ -805,7 +793,7 @@ function formatDate(iso: string | null) {
       <template v-if="!createdUser">
         <p class="create-dialog__desc">请输入用户名，提交后系统将生成用户 ID 和初始密码。</p>
 
-        <ElForm label-position="top" class="create-dialog__form">
+        <ElForm label-position="top" class="create-dialog__form" @submit.prevent="handleCreateUser">
           <ElFormItem label="用户名" class="create-dialog__field">
             <ElInput
               v-model="createUsername"
@@ -1595,11 +1583,6 @@ function formatDate(iso: string | null) {
 
 :deep(.user-mgmt__table .el-table__cell) {
   padding: 9px 8px;
-}
-
-:deep(.user-mgmt__table .el-checkbox__input.is-checked .el-checkbox__inner) {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary);
 }
 
 :deep(.user-mgmt__pager .el-pager li.is-active) {

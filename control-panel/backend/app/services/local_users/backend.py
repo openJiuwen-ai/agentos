@@ -198,6 +198,38 @@ def _filter_models_by_context(models: list[tuple[str, int | None]]) -> list[tupl
     return list(best.items())
 
 
+async def _ensure_user_default_key(
+    session: AsyncSession, uid: str, username: str
+) -> str | None:
+    """默认 Key 缺失时，经 LiteLLM 新建一条并设为默认。
+
+    返回明文 Key；LiteLLM 服务不可用或申请失败返回 None（调用方跳过该用户）。
+    注意：必须在调用方关闭 session 前 commit —— 每用户独立 session 关闭时会
+    自动 rollback，不 commit 的话刚设的默认标记会丢失。
+    """
+    from app.models.user_default_key import UserDefaultKey
+    from app.services import get_litellm_svc
+
+    svc = get_litellm_svc()
+    if svc is None:
+        logger.warning("LiteLLM 服务不可用，无法为用户 %s 新建默认 Key", username)
+        return None
+
+    try:
+        key_info = await svc.apply_key(
+            session, uid=uid, model=None, key_name="default-key"
+        )
+    except Exception:
+        logger.warning("为用户 %s 新建默认 Key 失败", username, exc_info=True)
+        return None
+
+    key_id = key_info.get("key_id")
+    if key_id:
+        await UserDefaultKey.set_default(session, uid, key_id)
+    await session.commit()
+    return key_info.get("key")
+
+
 async def _rebuild_user_agentos(session, username: str, filtered_models: list[tuple[str, int | None]]) -> None:
     """单用户全量重建 agentos：从 DB 查默认 Key，用最新模型列表整体替换。
 
@@ -213,40 +245,40 @@ async def _rebuild_user_agentos(session, username: str, filtered_models: list[tu
         return
     uid = str(user.id)
 
-    # 从 DB 查默认 Key
+    # 查默认 Key（key_id 即 litellm_user_key.id）；缺失则经 LiteLLM 新建并设为默认
     default_row = await UserDefaultKey.get_by_uid(session, uid)
-    if not default_row:
-        return
-    if default_row.key_id:
-        key_record = await LitellmUserKey.get_by_uid_and_alias(
-            session, uid, default_row.key_id
-        )
-    else:
-        key_record = None
-    if not key_record:
-        # key_id 可能是 litellm_user_key.id，直接查
-        from sqlalchemy import select as sa_select
+    api_key_plain = None
+    if default_row and default_row.key_id:
         result = await session.execute(
-            sa_select(LitellmUserKey).where(LitellmUserKey.id == default_row.key_id)
+            select(LitellmUserKey).where(LitellmUserKey.id == default_row.key_id)
         )
         key_record = result.scalars().first()
-    if not key_record:
+        if key_record:
+            api_key_plain = decrypt_key(key_record.key)
+    if not api_key_plain:
+        api_key_plain = await _ensure_user_default_key(session, uid, username)
+    if not api_key_plain:
+        logger.warning(
+            "用户 %s agentos 重建跳过：无可用默认 Key（新建失败或 LiteLLM 不可用）",
+            username,
+        )
         return
-
-    api_key_plain = decrypt_key(key_record.key)
     api_base = _derive_api_base()
 
     # 读 config.yaml
     config_path = _home_path(username) / ".jiuwenswarm" / "config" / "config.yaml"
     if not config_path.is_file():
+        logger.warning("用户 %s agentos 重建跳过：config.yaml 不存在", username)
         return
 
     ryaml, data = _load_config_yaml(config_path)
     if data is None:
+        logger.warning("用户 %s agentos 重建跳过：config.yaml 为空", username)
         return
 
     models_data = data.get("models")
     if not isinstance(models_data, dict):
+        logger.warning("用户 %s agentos 重建跳过：config.yaml 缺少 models 配置", username)
         return
 
     # 整体替换 agentos
@@ -263,7 +295,11 @@ async def _rebuild_user_agentos(session, username: str, filtered_models: list[tu
 
 
 async def _sync_all_users_agentos() -> None:
-    """后台任务：模型变更后全量重建所有用户的 agentos。异常隔离。"""
+    """后台任务：模型变更后全量重建所有用户的 agentos。
+
+    每个用户使用独立 session 处理：单个用户重建失败时，其事务被回滚/关闭，
+    不会把共享事务置为 abort，导致后续用户全部报 InFailedSQLTransactionError。
+    """
     try:
         from app.database import async_session_maker
         from app.models.litellm_model_params import LitellmModelParams
@@ -275,13 +311,14 @@ async def _sync_all_users_agentos() -> None:
             result = await session.execute(select(User.username))
             usernames = list(result.scalars().all())
 
-            for username in usernames:
-                try:
+        for username in usernames:
+            try:
+                async with async_session_maker() as session:
                     await _rebuild_user_agentos(session, username, filtered_models)
-                except Exception:
-                    logger.warning("重建用户 %s agentos 失败", username, exc_info=True)
+            except Exception:
+                logger.warning("重建用户 %s agentos 失败", username, exc_info=True)
 
-            logger.info("模型变更同步完成，已处理 %d 个用户", len(usernames))
+        logger.info("模型变更同步完成，已处理 %d 个用户", len(usernames))
     except Exception:
         logger.warning("模型变更同步 agentos 失败", exc_info=True)
 
@@ -372,6 +409,7 @@ class LocalUsersBackend(AbstractUserBackend):
         from app.services import get_litellm_svc
         from app.services.litellm_service import (
             LitellmUpstreamError, LitellmConnectionError,
+            USER_ALREADY_EXISTS_STATUS_CODES,
         )
 
         async with self._session_maker() as session:
@@ -407,7 +445,7 @@ class LocalUsersBackend(AbstractUserBackend):
                 await svc.create_user(uid=uid)
                 logger.info("管理员已同步到 LiteLLM")
             except LitellmUpstreamError as e:
-                if e.status_code == 400:
+                if e.status_code in USER_ALREADY_EXISTS_STATUS_CODES:
                     logger.info("管理员在 LiteLLM 已存在，跳过")
                 else:
                     logger.warning("LiteLLM 同步管理员失败: %s %s", e.status_code, e.detail)
@@ -491,12 +529,12 @@ class LocalUsersBackend(AbstractUserBackend):
     ) -> tuple[UserRecord, str | None]:
         username = _validate_username(username)
         async with self._session_maker() as session:
-            # ② 查重
+            # Step 1. 查重
             existing = await _get_user_by_username(session, username)
             if existing:
                 raise ValueError("USERNAME_ALREADY_EXISTS")
 
-            # ③ 入库 commit
+            # Step 2. 入库 commit
             generated = None
             if password is None:
                 password = generate_random_password()
@@ -507,20 +545,21 @@ class LocalUsersBackend(AbstractUserBackend):
             await session.refresh(user)
             record = self._to_record(user)
 
-            # ④ 创建 LiteLLM 用户（400=已存在跳过，其他失败回滚用户）
+            # Step 3. 创建 LiteLLM 用户（400/409=已存在跳过，其他失败回滚用户）
             uid = str(user.id)
             svc = None
             try:
                 from app.services import get_litellm_svc
                 from app.services.litellm_service import (
                     LitellmUpstreamError, LitellmConnectionError,
+                    USER_ALREADY_EXISTS_STATUS_CODES,
                 )
 
                 svc = get_litellm_svc()
                 if svc is not None:
                     await svc.create_user(uid=uid)
             except LitellmUpstreamError as e:
-                if e.status_code == 400:
+                if e.status_code in USER_ALREADY_EXISTS_STATUS_CODES:
                     pass  # 已存在，继续
                 else:
                     await self._rollback_user(session, uid, username)
@@ -529,7 +568,17 @@ class LocalUsersBackend(AbstractUserBackend):
                 await self._rollback_user(session, uid, username)
                 raise ValueError(f"创建 LiteLLM 用户失败") from e
 
-            # ⑤ 申请 Key + 写 config（失败回滚用户）
+            # Step 4. 若家目录已存在（旧用户残留），先删除再从模板重建，避免旧数据污染
+            home = _home_path(username)
+            if home.is_dir():
+                logger.warning("用户 %s 家目录已存在，删除后从模板重建", username)
+                _remove_home(username)
+                if home.is_dir():
+                    logger.error("用户 %s 家目录删除失败，中止创建", username)
+                    await self._rollback_user(session, uid, username)
+                    raise ValueError(f"用户 {username} 家目录删除失败")
+
+            # Step 5. 申请 Key + 写 config（失败回滚用户）
             await self._setup_user_key_and_config(
                 session, svc, uid, username, rollback_on_failure=True
             )
@@ -706,32 +755,36 @@ class LocalUsersBackend(AbstractUserBackend):
             try:
                 _remove_home(user.username)
             except Exception as e:
+                logger.warning("删除用户 %s 家目录异常: %s", user.username, e)
+            if _home_path(user.username).is_dir():
+                logger.warning("用户 %s 家目录删除失败，残留目录将保留", user.username)
+
+            # ── 默认 Key 标记清理（best-effort，独立事务；先删子表避免 FK 冲突）──
+            try:
+                from app.models.user_default_key import UserDefaultKey
+
+                async with self._session_maker() as key_session:
+                    await UserDefaultKey.delete_by_uid(key_session, str(user.id))
+                    await key_session.commit()
+            except Exception:
                 logger.warning(
-                    "Failed to remove home directory for user %s: %s", user.username, e
+                    "Failed to delete default key mark for %s",
+                    user.username,
+                    exc_info=True,
                 )
 
-            # ── LiteLLM 用户清理（best-effort，提前执行确保 session 仍可用）──
+            # ── LiteLLM 用户清理（best-effort，独立事务，避免污染主事务）──
             try:
                 from app.services import get_litellm_svc
 
                 svc = get_litellm_svc()
                 if svc is not None:
-                    await svc.delete_user(session, uid=str(user.id))
+                    async with self._session_maker() as ll_session:
+                        await svc.delete_user(ll_session, uid=str(user.id))
+                        await ll_session.commit()
             except Exception:
                 logger.warning(
                     "Failed to delete LiteLLM user for %s",
-                    user.username,
-                    exc_info=True,
-                )
-
-            # ── 默认 Key 标记清理（best-effort）──
-            try:
-                from app.models.user_default_key import UserDefaultKey
-
-                await UserDefaultKey.delete_by_uid(session, str(user.id))
-            except Exception:
-                logger.warning(
-                    "Failed to delete default key mark for %s",
                     user.username,
                     exc_info=True,
                 )

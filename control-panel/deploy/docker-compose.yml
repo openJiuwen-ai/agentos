@@ -29,7 +29,7 @@ services:
       LITELLM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       AGENTOS_HOME_BASE: /home/agentos/users
       LOG_DIR: /home/agentos/logs
-      AGENTOS_SWARM_TEMPLATE_DIR: /home/agentos/host_root/.jiuwenswarm
+      AGENTOS_SWARM_TEMPLATE_DIR: ${AGENTOS_SWARM_TEMPLATE_DIR:-/home/agentos/host_root/.jiuwenswarm}
       AGENTOS_SYS_UID: ${AGENTOS_SYS_UID:-1000}
       AGENTOS_SYS_GID: ${AGENTOS_SYS_GID:-1000}
       IMAGE_PROCESS_URL: http://image-process:8091
@@ -121,6 +121,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       STORE_MODEL_IN_DB: "True"
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      DISABLE_ADMIN_UI: "True"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command: ["--config=/app/config.yaml"]
@@ -188,6 +190,7 @@ services:
     image: grafana/alloy:v1.18.1
     volumes:
       - /root:/home/agentos/host_root:ro
+      - ${AGENTOS_BASE:-/home/agentos}/users:/home/agentos/users:ro
       - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs:ro
       - ${YR_LOG_DIR:-/tmp/yr_sessions}:/tmp/yr_sessions:ro
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro

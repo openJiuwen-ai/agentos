@@ -11,14 +11,23 @@ const props = defineProps<{
 
 const activeTab = ref('params');
 
-function copyToClipboard(text: string, label: string) {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const item = new ClipboardItem({ 'text/plain': blob });
-  navigator.clipboard.write([item]).then(() => {
+async function copyToClipboard(text: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(text);
     ElMessage.success(`${label} 已复制到剪贴板`);
-  }).catch(() => {
-    ElMessage.error('复制失败，请手动复制');
-  });
+  } catch {
+    // 非安全上下文（HTTP/IP 访问）或低版本浏览器没有 ClipboardItem / navigator.clipboard，
+    // 回退到 execCommand('copy')。
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    ElMessage.success(`${label} 已复制到剪贴板`);
+  }
 }
 
 const gatewayBase = computed(() => props.gatewayUrl || 'http://<your-gateway>');

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 # ── 注册模型 ──────────────────────────────────────────────────────────────
 import app.models.litellm_model_params   # noqa: F401
 import app.models.litellm_user_key       # noqa: F401
+import app.models.user_default_key       # noqa: F401
 from app.models.base import Base
 
 # ── 数据库引擎（TEST_DB_URL 环境变量切换 PostgreSQL，默认 SQLite 内存）─────

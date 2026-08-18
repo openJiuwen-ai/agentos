@@ -406,8 +406,8 @@ onMounted(() => {
 .inference-dashboard {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  /* 允许内容超出视口时整页滚动，而不是压缩“可用推理模型”区域 */
+  flex: 1 0 auto;
   box-sizing: border-box;
 }
 

@@ -70,6 +70,40 @@ async def test_seed_initial_admin_home_exists_untouched(backend, test_data):
     assert Path(marker).read_text(encoding="utf-8") == "user: data"
 
 
+@pytest.mark.asyncio
+async def test_seed_initial_admin_litellm_409_already_exists(
+    backend, test_data, monkeypatch
+):
+    """LiteLLM 对已存在用户返回 409 → seed 视为已存在跳过，仍继续重建家目录。
+
+    回归：此前只认 400，409 会走进 else 提前 return，家目录/Key/config
+    的自愈逻辑永远不执行（实测 LiteLLM 返回 409 "User with id xxx already exists"）。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.services.litellm_service import LitellmUpstreamError
+
+    username = test_data["admin"]["username"]
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    shutil.rmtree(home, ignore_errors=True)
+    assert not os.path.isdir(home)
+
+    mock_svc = AsyncMock()
+    mock_svc.create_user = AsyncMock(
+        side_effect=LitellmUpstreamError(409, "User with id xxx already exists")
+    )
+
+    import app.services as services_module
+
+    monkeypatch.setattr(services_module, "get_litellm_svc", lambda: mock_svc)
+
+    await backend.seed_initial_admin()
+
+    assert os.path.isdir(home)
+    assert os.path.isdir(os.path.join(home, ".jiuwenswarm"))
+    assert os.path.isfile(os.path.join(home, ".jiuwenswarm", "config", "config.yaml"))
+
+
 # ── 认证 ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -237,6 +271,89 @@ async def test_delete_user_not_found(backend):
         await backend.delete_user(uuid.uuid4())
 
 
+@pytest.mark.asyncio
+async def test_delete_user_with_default_key_cleans_up_keys(backend, monkeypatch):
+    """删除带默认 Key 标记的用户 → 成功，且 litellm_user_key / user_default_key 全部清理。
+
+    复现生产 500 根因：delete_user 先删 litellm_user_key，会因 user_default_key 的
+    外键引用（key_id → litellm_user_key.id）而失败（NO ACTION）。PostgreSQL 下该语句
+    失败会把事务打入 aborted 状态，后续 commit 抛 InFailedSQLTransactionError。
+    修复要求：先删子表 user_default_key，且 best-effort 清理不得污染主事务。
+    """
+    from sqlalchemy import func, select
+
+    # 需在 backend fixture 初始化引擎之后导入（模块级导入会拿到 None）
+    from app.database import async_session_maker
+    from app.models.base import Base
+    from app.models.litellm_user_key import LitellmUserKey
+    from app.models.user_default_key import UserDefaultKey
+    from app.services.local_users.models import User
+    from app.services.local_users.password import hash_password
+
+    engine = backend.get_engine()
+    assert engine is not None
+
+    # 启用外键约束，复现生产 PostgreSQL 的 FK 行为（内存 SQLite 默认不启用）
+    async with engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+    # 确保 litellm_user_key / user_default_key 表已建
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # 直接造数据：用户 + 一条 litellm_user_key + 指向它的默认 Key 标记
+    async with async_session_maker() as s:
+        user = User(
+            username="fkdel_user", hashed_password=hash_password("TestPass123")
+        )
+        s.add(user)
+        await s.flush()
+        key = LitellmUserKey(
+            uid=str(user.id),
+            key_alias="default",
+            key_name="default",
+            key="encrypted-placeholder",
+        )
+        s.add(key)
+        await s.flush()
+        s.add(UserDefaultKey(uid=str(user.id), key_id=key.id))
+        await s.commit()
+        user_id = user.id
+        uid = str(user_id)
+
+    # 让 get_litellm_svc 返回只做本地 Key 清理的假服务（跳过真实 LiteLLM 上游）
+    import app.services as svc_mod
+
+    class _FakeLiteLLMSvc:
+        async def delete_user(self, db, uid):
+            await LitellmUserKey.delete_by_uid(db, uid)
+
+    monkeypatch.setattr(svc_mod, "get_litellm_svc", lambda: _FakeLiteLLMSvc())
+
+    # 执行删除
+    await backend.delete_user(user_id)
+
+    # 断言：用户、litellm_user_key、user_default_key 全部清理
+    assert await backend.get_user_by_id(user_id) is None
+    async with async_session_maker() as s:
+        n_keys = (
+            await s.execute(
+                select(func.count())
+                .select_from(LitellmUserKey)
+                .where(LitellmUserKey.uid == uid)
+            )
+        ).scalar()
+        n_marks = (
+            await s.execute(
+                select(func.count())
+                .select_from(UserDefaultKey)
+                .where(UserDefaultKey.uid == uid)
+            )
+        ).scalar()
+    assert n_keys == 0
+    assert n_marks == 0
+
+
 # ── 密码管理 ────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -322,6 +439,31 @@ async def test_home_directory_removed_on_user_delete(backend, test_data):
 
 
 @pytest.mark.asyncio
+async def test_delete_user_home_removal_failure_logs_warning(
+    backend, monkeypatch, caplog
+):
+    """删除用户时 home 删除失败 → 记 warning，DB 用户仍被删除，家目录残留。"""
+    import app.services.local_users.backend as backend_module
+
+    username = "delwarn"
+    record, _ = await backend.create_user(username)
+    user_id = uuid.UUID(record.user_id)
+    home = os.path.join(settings.AGENTOS_HOME_BASE, username)
+    assert os.path.isdir(home)
+
+    # 模拟 home 删除失败（不执行真实删除）
+    monkeypatch.setattr(backend_module, "_remove_home", lambda username: None)
+
+    with caplog.at_level("WARNING", logger="app.services.local_users.backend"):
+        await backend.delete_user(user_id)
+
+    # DB 用户已删除，家目录残留 + warning 日志
+    assert await backend.get_user_by_id(user_id) is None
+    assert os.path.isdir(home)
+    assert any("家目录删除失败" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_jwswarm_config_copied_on_user_create(backend, test_data):
     """创建用户 → 自动复制 .jiuwenswarm 目录及内容。"""
     username = test_data["users"]["auto_password"][6]
@@ -335,28 +477,33 @@ async def test_jwswarm_config_copied_on_user_create(backend, test_data):
 
 
 @pytest.mark.asyncio
-async def test_create_user_home_already_exists(backend, test_data):
-    """家目录已存在（如重装后重建同名用户）→ 仍然成功，.jiuwenswarm 被覆盖写入，非模板文件保留。"""
+async def test_create_user_home_already_exists(backend, test_data, caplog):
+    """家目录已存在（如删除用户时残留）→ 整目录删除后从模板全新重建，遗留文件被清掉并记 warning。"""
     username = test_data["users"]["auto_password"][7]
     home = os.path.join(settings.AGENTOS_HOME_BASE, username)
     os.makedirs(home, exist_ok=True)
-    # 模拟已有 .jiuwenswarm
+    # 模拟残留旧 .jiuwenswarm
     old_jwswarm = os.path.join(home, ".jiuwenswarm")
     os.makedirs(os.path.join(old_jwswarm, "config"), exist_ok=True)
     Path(old_jwswarm, "config", "config.yaml").write_text("old: true", encoding="utf-8")
-    # 模拟一个非模板的用户自定义文件，应保留
+    # 模拟旧的非模板用户文件（整目录重建后应被清除）
     Path(old_jwswarm, "config", "user-extra.yaml").write_text("user: data", encoding="utf-8")
 
-    await backend.create_user(username)
+    with caplog.at_level("WARNING", logger="app.services.local_users.backend"):
+        await backend.create_user(username)
 
-    # .jiuwenswarm 中模板文件应已更新为模板内容
-    new_content = Path(old_jwswarm, "config", "config.yaml").read_text(encoding="utf-8")
+    # 整目录已重建：config.yaml 为全新模板内容
+    new_config = os.path.join(home, ".jiuwenswarm", "config", "config.yaml")
+    assert os.path.isfile(new_config)
+    new_content = Path(new_config).read_text(encoding="utf-8")
     assert "models:" in new_content
     assert "defaults" in new_content
-    # 非模板的用户自定义文件应保留
-    extra = Path(old_jwswarm, "config", "user-extra.yaml")
-    assert extra.is_file()
-    assert extra.read_text(encoding="utf-8") == "user: data"
+    # 旧的非模板用户文件已被清除
+    assert not os.path.exists(
+        os.path.join(home, ".jiuwenswarm", "config", "user-extra.yaml")
+    )
+    # 删除前已记录 warning
+    assert any("家目录已存在" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -443,3 +590,172 @@ class TestListUsersRoleFilter:
         admin_result = await backend.list_users(ListUsersParams(role="admin"))
         user_result = await backend.list_users(ListUsersParams(role="user"))
         assert all_result.total == admin_result.total + user_result.total
+
+
+class TestSyncAllUsersAgentos:
+    """agentos 全量同步：单用户失败必须隔离，不影响其他用户。"""
+
+    async def test_single_user_failure_does_not_block_others(self, backend, monkeypatch):
+        """回归：一个用户重建失败（事务失效）不影响后续用户。
+
+        此前所有用户共用一个 session，某用户重建异常后事务进入 abort 状态，
+        后续用户的所有 SQL 都会抛 InFailedSQLTransactionError（PG）/
+        PendingRollbackError（SQLAlchemy 通用），整个同步被单个用户拖垮。
+        现在每个用户独立 session，失败只影响其自身事务。
+        """
+        import app.services.local_users.backend as backend_module
+        from app.models.litellm_user_key import LitellmUserKey
+        from app.services.local_users.backend import _sync_all_users_agentos
+        from sqlalchemy import select
+
+        await backend.create_user("syncuser1")
+        await backend.create_user("syncuser2")
+
+        processed = []
+        first = True
+
+        async def fake_rebuild(session, username, filtered_models):
+            nonlocal first
+            if first:
+                # 第一个被处理的用户：在本 session 触发 flush 失败，
+                # 事务失效（等效 PG 的 abort），后续同 session SQL 全部报错
+                first = False
+                session.add(LitellmUserKey(uid="x", key_alias="dup", key=None))
+                await session.flush()
+                return
+            # 其余用户：必须能正常执行 SQL
+            await session.execute(select(LitellmUserKey))
+            processed.append(username)
+
+        monkeypatch.setattr(backend_module, "_rebuild_user_agentos", fake_rebuild)
+
+        await _sync_all_users_agentos()
+
+        # 共 3 个用户（admin + 2 新建），首个失败，其余 2 个必须仍被处理
+        assert len(processed) == 2
+
+    async def test_rebuild_user_agentos_writes_default_key(self, backend):
+        """重建 agentos：用默认 Key（litellm_user_key.id）写入 config.yaml。
+
+        回归：此前先按 key_alias 查默认 Key（传入的是 int id），再按 id 兜底；
+        现在直接按 id 查，避免类型不匹配。
+        """
+        from app.database import async_session_maker
+        from app.services.local_users.backend import _rebuild_user_agentos
+
+        await backend.create_user("rebuildkey")
+
+        async with async_session_maker() as session:
+            await _rebuild_user_agentos(session, "rebuildkey", [("test-model", 4096)])
+
+        config_path = (
+            Path(settings.AGENTOS_HOME_BASE)
+            / "rebuildkey"
+            / ".jiuwenswarm"
+            / "config"
+            / "config.yaml"
+        )
+        text = config_path.read_text(encoding="utf-8")
+        assert "test-model" in text
+        assert "sk-test" in text  # conftest 的 stub Key 前缀
+
+    async def test_rebuild_creates_missing_default_key(self, backend, monkeypatch):
+        """默认 Key 缺失时：经 LiteLLM 新建并设为默认，写入 config.yaml。"""
+        from unittest.mock import AsyncMock
+
+        import app.services as svc_mod
+        from app.database import async_session_maker
+        from app.models.litellm_user_key import LitellmUserKey
+        from app.models.user_default_key import UserDefaultKey
+        from app.services.local_users.backend import _rebuild_user_agentos
+        from app.services.local_users.models import User
+        from sqlalchemy import delete, select
+
+        await backend.create_user("rebuildnokey")
+
+        # 删掉 Key + 默认标记，模拟默认 Key 缺失
+        async with async_session_maker() as s:
+            user = (
+                await s.execute(select(User).where(User.username == "rebuildnokey"))
+            ).scalar_one()
+            uid = str(user.id)
+            await s.execute(delete(LitellmUserKey).where(LitellmUserKey.uid == uid))
+            await s.execute(delete(UserDefaultKey).where(UserDefaultKey.uid == uid))
+            await s.commit()
+
+        # mock LiteLLM svc：apply_key 真正落一条 Key 记录，并返回新 Key
+        async def fake_apply_key(db, uid, model=None, key_name=None):
+            rec = LitellmUserKey(
+                uid=uid, key_alias="default-key", key="sk-new-" + "n" * 40
+            )
+            db.add(rec)
+            await db.flush()
+            return {"key": "sk-new-" + "n" * 40, "key_id": rec.id}
+
+        mock_svc = AsyncMock()
+        mock_svc.apply_key = fake_apply_key
+        monkeypatch.setattr(svc_mod, "get_litellm_svc", lambda: mock_svc)
+
+        async with async_session_maker() as s:
+            await _rebuild_user_agentos(s, "rebuildnokey", [("rebuild-model", 2048)])
+
+        # 默认标记已重建，config.yaml 写入新 Key
+        async with async_session_maker() as s:
+            assert await UserDefaultKey.get_by_uid(s, uid) is not None
+        config_path = (
+            Path(settings.AGENTOS_HOME_BASE)
+            / "rebuildnokey"
+            / ".jiuwenswarm"
+            / "config"
+            / "config.yaml"
+        )
+        text = config_path.read_text(encoding="utf-8")
+        assert "rebuild-model" in text
+        assert "sk-new-" in text
+
+    async def test_rebuild_missing_default_key_without_litellm_skips(
+        self, backend, monkeypatch, caplog
+    ):
+        """默认 Key 缺失且 LiteLLM 不可用时：跳过、不新建、config 不变，且日志告警。"""
+        import logging
+
+        import app.services as svc_mod
+        from app.database import async_session_maker
+        from app.models.litellm_user_key import LitellmUserKey
+        from app.models.user_default_key import UserDefaultKey
+        from app.services.local_users.backend import _rebuild_user_agentos
+        from app.services.local_users.models import User
+        from sqlalchemy import delete, select
+
+        await backend.create_user("rebuildskip")
+
+        async with async_session_maker() as s:
+            user = (
+                await s.execute(select(User).where(User.username == "rebuildskip"))
+            ).scalar_one()
+            uid = str(user.id)
+            await s.execute(delete(LitellmUserKey).where(LitellmUserKey.uid == uid))
+            await s.execute(delete(UserDefaultKey).where(UserDefaultKey.uid == uid))
+            await s.commit()
+
+        monkeypatch.setattr(svc_mod, "get_litellm_svc", lambda: None)
+
+        with caplog.at_level(logging.WARNING):
+            async with async_session_maker() as s:
+                await _rebuild_user_agentos(s, "rebuildskip", [("skip-model", 2048)])
+
+        # 跳过必须留下告警，能定位到具体用户
+        assert "rebuildskip" in caplog.text
+        assert "重建跳过" in caplog.text
+
+        async with async_session_maker() as s:
+            assert await UserDefaultKey.get_by_uid(s, uid) is None
+        config_path = (
+            Path(settings.AGENTOS_HOME_BASE)
+            / "rebuildskip"
+            / ".jiuwenswarm"
+            / "config"
+            / "config.yaml"
+        )
+        text = config_path.read_text(encoding="utf-8")
+        assert "skip-model" not in text
