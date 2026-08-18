@@ -218,13 +218,13 @@ resolve_yr_schedule_time() {
 configure_daily() {
   local jiuwen_schedule_time yr_schedule_time
 
-  jiuwen_schedule_time="$(date +%Y%m%d)02"
+  jiuwen_schedule_time="$(date +%Y%m%d)17"
   yr_schedule_time="$(resolve_yr_schedule_time)"
   echo "  yuanrong daily build: ${yr_schedule_time}, version: ${YUANRONG_DAILY_VERSION}"
 
   JIUWENSWARM_VERSION="${jiuwen_schedule_time}"
   MANAGER_VERSION="$(date +%Y%m%d)"
-  JIUWENSWARM_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm/package/daily/dist/${jiuwen_schedule_time}"
+  JIUWENSWARM_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm_agent_os/package/daily/dist/${jiuwen_schedule_time}"
 
   JIUWENSWARM_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
@@ -265,7 +265,7 @@ configure_daily() {
     "${OPENYUANRONG_PACKAGES[@]}"
   )
 
-  JIUWENSWARM_GIT_TAG="develop"
+  JIUWENSWARM_GIT_TAG="agent_os"
 }
 
 configure_release() {
