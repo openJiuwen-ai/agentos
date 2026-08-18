@@ -20,6 +20,7 @@ filesystem_policy:
   # by the directory permissions and Landlock.
   directories:
     - "/root/logs"
+    - "/logs"
 
   # Lifecycle files to create for the sandbox and bind into the sandbox path.
   # Items may be either:
@@ -42,6 +43,7 @@ __DYNAMIC_READ_ONLY__
   # these paths exist in the sandbox.
   read_write: 
     - "/root/logs"
+    - "/logs"
 
   # Extra bind mounts from host into sandbox.
   # Each item uses:
