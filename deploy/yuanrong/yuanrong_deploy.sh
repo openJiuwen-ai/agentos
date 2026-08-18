@@ -251,6 +251,7 @@ yr_install_packages() {
         "openyuanrong_datasystem"
         "openyuanrong_functionsystem"
         "openyuanrong_faas"
+        "agent_dx_executor"
     )
     # 每个包对应的 wheel 文件名 glob 模式
     local pkg_globs=(
@@ -260,6 +261,7 @@ yr_install_packages() {
         "openyuanrong_datasystem-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
         "openyuanrong_functionsystem-*-py3-none-manylinux_2_34_${arch}.whl"
         "openyuanrong_faas-*-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl"
+        "agent_dx_executor-*-py3-none-any.whl"
     )
 
     # 判断 pkg_base 是远程URL还是本地路径
@@ -301,6 +303,7 @@ yr_install_packages() {
         packages+=("openyuanrong_datasystem-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
         packages+=("openyuanrong_functionsystem-${yr_version}-py3-none-manylinux_2_34_${arch}.whl")
         packages+=("openyuanrong_faas-${yr_version}-${cp_tag}-${cp_tag}-manylinux_2_34_${arch}.whl")
+        packages+=("agent_dx_executor-${yr_version}-py3-none-any.whl")
     fi
 
     # 本地路径且目标主机非本机时,先把whl拷贝到目标主机
@@ -361,6 +364,7 @@ yr_uninstall_packages() {
         "openyuanrong_datasystem"
         "openyuanrong_functionsystem"
         "openyuanrong_faas"
+        "agent_dx_executor"
     )
 
     info "Uninstalling openyuanrong packages on ${host}..."

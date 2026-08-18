@@ -244,6 +244,7 @@ configure_daily() {
     "openyuanrong_datasystem-${OPENYUANRONG_VERSION}-${CP_TAG}-${CP_TAG}-manylinux_2_34_${ARCH}.whl"
     "openyuanrong_functionsystem-${OPENYUANRONG_VERSION}-py3-none-manylinux_2_34_${ARCH}.whl"
     "openyuanrong_faas-${OPENYUANRONG_VERSION}-${CP_TAG}-${CP_TAG}-manylinux_2_34_${ARCH}.whl"
+    "agent_dx_executor-${OPENYUANRONG_VERSION}-py3-none-any.whl"
   )
 
   CLIENT_TUI_PACKAGES=(
@@ -295,6 +296,7 @@ configure_release() {
     "openyuanrong_datasystem-${OPENYUANRONG_VERSION}-${CP_TAG}-${CP_TAG}-manylinux_2_34_${ARCH}.whl"
     "openyuanrong_functionsystem-${OPENYUANRONG_VERSION}-py3-none-manylinux_2_34_${ARCH}.whl"
     "openyuanrong_faas-${OPENYUANRONG_VERSION}-${CP_TAG}-${CP_TAG}-manylinux_2_34_${ARCH}.whl"
+    "agent_dx_executor-${OPENYUANRONG_VERSION}-py3-none-any.whl"
   )
 
   CLIENT_TUI_PACKAGES=(
