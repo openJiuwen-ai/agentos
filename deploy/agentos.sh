@@ -284,6 +284,7 @@ Config:
               systemd 可选: MOOSEFS_USE_SYSTEMD=auto/yes/no (默认 auto 自动检测)
               角色判断: 本机 IP 匹配 MOOSEFS_MASTER_HOST 为 master，否则为 agent
               生命周期: install(配置+unit生成) → up(enable --now) → down(disable --now) → uninstall(停止+清理)
+              数据保留: MOOSEFS_PURGE_DATA=no(默认保留数据,重新install+up可恢复) / yes(彻底清理)
   jiuwenbox   配置文件: deploy/jiuwenbox/default-policy.yaml (含 extensions 目录占位符)
               jiuwenbox-server 随 jiuwenswarm whl 包安装，无需单独 install
   yuanrong    环境变量直接通过命令行/环境变量传入（见 yuanrong_deploy.sh -h）

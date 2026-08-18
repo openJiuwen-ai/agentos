@@ -163,6 +163,7 @@ _mfs_load_config() {
     local _env_chunk_dir="${MFS_CHUNK_DIR:-}"
     local _env_mount_point="${MFS_MOUNT_POINT:-}"
     local _env_goal="${MFS_GOAL:-}"
+    local _env_purge_data="${MOOSEFS_PURGE_DATA:-}"
 
     # 1. 读取 deploy/config.yaml 获取 master IP（最低优先级）
     _mfs_load_config_yaml
@@ -189,6 +190,7 @@ _mfs_load_config() {
     [ -n "${_env_chunk_dir}" ]    && MFS_CHUNK_DIR="${_env_chunk_dir}"
     [ -n "${_env_mount_point}" ]  && MFS_MOUNT_POINT="${_env_mount_point}"
     [ -n "${_env_goal}" ]         && MFS_GOAL="${_env_goal}"
+    [ -n "${_env_purge_data}" ]   && MOOSEFS_PURGE_DATA="${_env_purge_data}"
 
     # 设置默认值
     : "${MOOSEFS_MASTER_HOST:=""}"
@@ -200,6 +202,7 @@ _mfs_load_config() {
     : "${MFS_CHUNK_DIR:="/data/mfschunks"}"
     : "${MFS_MOUNT_POINT:="/home/agentos/users"}"
     : "${MFS_GOAL:="2"}"
+    : "${MOOSEFS_PURGE_DATA:="no"}"
 }
 
 # ===== 二进制路径查找 =====
@@ -541,6 +544,15 @@ EOF
         # Master 节点：初始化 metadata 模板（启动前准备）
         if [ "${is_master}" = "true" ]; then
             if [ ! -f /var/lib/mfs/metadata.mfs ]; then
+                # 检测角色互换：本机有 chunkserver 数据但无 master metadata，
+                # 说明之前是 agent 节点，现在被配置为 master，原有数据无法继承
+                if [ -d "${MFS_CHUNK_DIR}" ] && [ -n "$(ls -A "${MFS_CHUNK_DIR}" 2>/dev/null)" ]; then
+                    warning "This node has chunkserver data but no master metadata."
+                    warning "If this was previously an agent node and master role has changed,"
+                    warning "  existing chunk data will become orphaned (new master = empty filesystem)."
+                    warning "To use old data, copy /var/lib/mfs/metadata.mfs from the old master node."
+                    warning "To start fresh, set MOOSEFS_PURGE_DATA=yes during uninstall to clear old data."
+                fi
                 info "Initializing master metadata template..."
                 if [ -f /etc/mfs/metadata.mfs.empty ]; then
                     cp /etc/mfs/metadata.mfs.empty /var/lib/mfs/metadata.mfs
@@ -896,12 +908,24 @@ deploy_mfs_uninstall() {
 
     # RPM 包由上游安装，uninstall 不负责卸载
 
-    # 清理存储数据和配置（保留目录结构和 RPM 自带模板，install 时可重新初始化）
-    info "Cleaning up data and configuration..."
-    rm -rf "${MFS_CHUNK_DIR:?}"/* 2>/dev/null || true
-    # 清理运行时数据，保留 metadata.mfs.empty 模板
-    find /var/lib/mfs -type f ! -name 'metadata.mfs.empty' -delete 2>/dev/null || true
+    # 清理配置文件（每次 uninstall 都清理，install 时重新生成）
+    info "Cleaning up configuration files..."
     rm -f /etc/mfs/mfsmaster.cfg /etc/mfs/mfsexports.cfg /etc/mfs/mfschunkserver.cfg /etc/mfs/mfshdd.cfg 2>/dev/null || true
+
+    # 数据清理：默认保留数据，MOOSEFS_PURGE_DATA=yes 时彻底清理
+    if [ "${MOOSEFS_PURGE_DATA}" = "yes" ]; then
+        info "MOOSEFS_PURGE_DATA=yes, purging all data..."
+        # 注意：rm -rf dir/* 不匹配隐藏文件（.开头），需用 find 清理全部内容
+        find "${MFS_CHUNK_DIR}" -mindepth 1 -delete 2>/dev/null || true
+        find /var/lib/mfs -type f -delete 2>/dev/null || true
+        success "All data purged"
+    else
+        info "MOOSEFS_PURGE_DATA=no, preserving data for reinstall recovery"
+        # 删除 chunkserver 运行时状态文件，避免重新注册时 ID/索引/锁冲突
+        # chunkserver 启动时会重新从 master 获取 ID 并扫描已有 chunk 数据上报
+        find "${MFS_CHUNK_DIR}" \( -name '.metaid' -o -name '.chunkdb' -o -name '.lock' \) -delete 2>/dev/null || true
+        success "Data preserved (chunkserver chunks + master metadata), runtime state files cleared"
+    fi
 
     success "MooseFS uninstall completed!"
 }
