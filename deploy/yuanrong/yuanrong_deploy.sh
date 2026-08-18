@@ -41,6 +41,12 @@ YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 AGENTOS_SSH_KEY="${AGENTOS_SSH_KEY:-/root/.ssh/agent_key}"
 AGENTOS_SSH_BACKEND_PUBLIC_DIR="${AGENTOS_SSH_BACKEND_PUBLIC_DIR:-/root/.ssh/agent_pub}"
 
+# ===== yr 会话与日志输出前缀 =====
+# yr start 通过 --log-dir-prefix 把会话目录、latest 软链、session.json、
+# yr_current_master_info、组件日志整体迁到此前缀下；本脚本读取这些产物时
+# 必须用同一个前缀，否则 agent 加入时读不到 master 信息。两边共用此变量保证一致。
+YR_LOG_DIR_PREFIX="${YR_LOG_DIR_PREFIX:-/var/log/agentos/yr_sessions}"
+
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # ===== 日志函数 =====
@@ -460,8 +466,10 @@ yr_start_master() {
         -s 'values.frontend.ssh_backend_public_key_dir=\"${AGENTOS_SSH_BACKEND_PUBLIC_DIR}\"'"
 
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
+    # --log-dir-prefix 把会话/日志迁到 ${YR_LOG_DIR_PREFIX}，与下方读取路径保持一致
     # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程，
     exec_on_host "${master_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --master \
+        --log-dir-prefix '${YR_LOG_DIR_PREFIX}' \
         -s 'values.host_ip=\"${master_host}\"' \
         -s 'mode.master.frontend=true' \
         --function-proxy-merge-process-enable \
@@ -476,7 +484,7 @@ yr_start_master() {
     fi
 
     local session_dir
-    session_dir=$(exec_on_host "${master_host}" "readlink /tmp/yr_sessions/latest 2>/dev/null || echo ''" | tr -d '\r')
+    session_dir=$(exec_on_host "${master_host}" "readlink ${YR_LOG_DIR_PREFIX}/latest 2>/dev/null || echo ''" | tr -d '\r')
     info "Session dir on ${master_host}: ${session_dir}"
 }
 
@@ -485,10 +493,10 @@ yr_start_agent() {
     local master_host="$2"
     local master_address
 
-    # 从 master 节点 /tmp/yr_sessions/latest/session.json 读取 function_master 地址
+    # 从 master 节点 ${YR_LOG_DIR_PREFIX}/latest/session.json 读取 function_master 地址
     # for-join 中的 key 是带点号的字面量字符串（如 "function_master.ip"），必须用 ["..."] 访问
     local session_dir
-    session_dir=$(exec_on_host "${master_host}" "readlink /tmp/yr_sessions/latest 2>/dev/null || echo ''" | tr -d '\r')
+    session_dir=$(exec_on_host "${master_host}" "readlink ${YR_LOG_DIR_PREFIX}/latest 2>/dev/null || echo ''" | tr -d '\r')
     if [ -n "${session_dir}" ]; then
         master_address=$(exec_on_host "${master_host}" \
             "jq -r '.cluster_info.\"for-join\" | .[\"function_master.ip\"] + \":\" + .[\"function_master.port\"]' '${session_dir}/session.json' 2>/dev/null || echo ''" | tr -d '\r')
@@ -498,9 +506,9 @@ yr_start_agent() {
     if [ -z "${master_address}" ] || [ "${master_address}" = "null:null" ]; then
         local master_ip gs_port
         master_ip=$(exec_on_host "${master_host}" \
-            "grep -oP 'master_ip:\K[^,]+' /tmp/yr_sessions/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
+            "grep -oP 'master_ip:\K[^,]+' ${YR_LOG_DIR_PREFIX}/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
         gs_port=$(exec_on_host "${master_host}" \
-            "grep -oP 'global_scheduler_port:\K[^,]+' /tmp/yr_sessions/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
+            "grep -oP 'global_scheduler_port:\K[^,]+' ${YR_LOG_DIR_PREFIX}/yr_current_master_info 2>/dev/null || echo ''" | tr -d '\r')
         if [ -n "${master_ip}" ] && [ -n "${gs_port}" ]; then
             master_address="${master_ip}:${gs_port}"
         fi
@@ -514,8 +522,9 @@ yr_start_agent() {
 
     info "Starting openyuanrong agent on ${agent_host}, master_address=${master_address}..."
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
+    # --log-dir-prefix 与 master 端保持一致，会话/日志均落在 ${YR_LOG_DIR_PREFIX}
     # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程
-    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start -s 'values.host_ip=\"${agent_host}\"' --function-proxy-merge-process-enable ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --log-dir-prefix '${YR_LOG_DIR_PREFIX}' -s 'values.host_ip=\"${agent_host}\"' --function-proxy-merge-process-enable ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
@@ -535,7 +544,7 @@ yr_stop_all() {
 
     for host in "${YR_HOST_LIST[@]}"; do
         info "Stopping yr on ${host} (force)..."
-        exec_on_host "${host}" "yr stop --force" 2>/dev/null && \
+        exec_on_host "${host}" "yr stop --force --log-dir-prefix '${YR_LOG_DIR_PREFIX}'" 2>/dev/null && \
             success "yr stopped on ${host}" || \
             warning "Failed to stop yr on ${host} (may not be running)"
         # 强制清理残留进程，避免多次 up/down 后进程堆积
@@ -589,7 +598,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=${py_bindir}/yr start --master \\
+ExecStart=${py_bindir}/yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'mode.master.etcd=false' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
@@ -603,7 +612,7 @@ ExecStart=${py_bindir}/yr start --master \\
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=${py_bindir}/yr stop --force
+ExecStop=${py_bindir}/yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -628,7 +637,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=${py_bindir}/yr start \\
+ExecStart=${py_bindir}/yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
@@ -641,7 +650,7 @@ ExecStart=${py_bindir}/yr start \\
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=${py_bindir}/yr stop --force
+ExecStop=${py_bindir}/yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
