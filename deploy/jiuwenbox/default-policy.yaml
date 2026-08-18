@@ -187,7 +187,7 @@ network:
   # mode:
   #   isolated: create a dedicated network namespace and apply these rules
   #   host: use host networking and skip namespace firewall setup
-  mode: host
+  mode: isolated
 
   # Outbound traffic from sandbox to outside destinations.
   egress:
