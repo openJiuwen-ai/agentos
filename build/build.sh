@@ -441,11 +441,25 @@ build_agent_gateway() {
   echo "==> build_agent_gateway"
   mkdir -p "${DOWNLOAD_DIR}/agent-gateway"
 
-  download_packages \
-    "https://gitcode.com/WeiZheng96/agent-protocol/releases/download/${REGISTRY_RELEASE_TAG}" \
-    "${DOWNLOAD_DIR}/agent-gateway" \
-    "a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl" \
-    "rqlite-${RQLITE_VERSION}-1.${ARCH}.rpm"
+  # a2x-registry 仅支持日构建，路径中的时固定为 19 点（后两位）；build.sh 可能在 19 点前或后执行，
+  # 因此先尝试当天，找不到再尝试前一天
+  local day whl_url found=0
+  local daily_base="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-protocol/package/daily/dist"
+
+  for day in "$(date +%Y%m%d)" "$(date -d "1 day ago" +%Y%m%d)"; do
+    whl_url="${daily_base}/${day}19/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
+    if curl -fsSI --connect-timeout 10 --max-time 30 "${whl_url}" >/dev/null 2>&1; then
+      found=1
+      break
+    fi
+  done
+
+  if (( found != 1 )); then
+    echo "error: failed to locate a2x_registry daily build for today or yesterday" >&2
+    return 1
+  fi
+
+  download_file "${whl_url}" "${DOWNLOAD_DIR}/agent-gateway/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
 }
 
 build_conch() {
