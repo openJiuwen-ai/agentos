@@ -549,7 +549,6 @@ pack() {
   done
 
   cp "${DOWNLOAD_DIR}/agent-gateway/"*.whl "${server_staging}/"
-  cp "${DOWNLOAD_DIR}/agent-gateway/"*.rpm "${server_staging}/"
 
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
