@@ -227,6 +227,77 @@ yr_ensure_pip() {
     exec_on_host "${host}" "python${python_version} -m ensurepip 2>/dev/null || true"
 }
 
+# ===== ADX(agent_dx_executor)安装路径规避 =====
+# 背景:ADX whl 是 py3-none-any(纯 Python)→ pip 装进 purelib;
+#      而 openyuanrong_sdk 是 cp311-cp311-manylinux(平台 wheel)→ 装进 platlib。
+#      openEuler/RedHat 系把 purelib/platlib 物理拆到 lib/lib64 两个 site-packages,
+#      两者 top-level 包名都是 yr(普通包,非 namespace 包,不会自动合并),
+#      import yr 只命中 sys.path 上第一个 yr(SDK 的 platlib/lib64),
+#      于是 yr.agentexecutor(在 purelib/lib 的另一个 yr 里)找不到 → ModuleNotFoundError。
+# 规避:正常 pip install ADX 后,把 agentexecutor 合并进 SDK 所在的 yr 目录(platlib),
+#      保证 import yr 命中同一个 yr 且能找到 agentexecutor。等价于手动 --target + cp -a 合并。
+yr_colocate_adx() {
+    local host="$1"
+    local pv="${YR_PYTHON_VERSION}"
+
+    # 1. 定位 SDK 的 yr 目录(import yr 实际命中的 platlib yr dir,即 agentexecutor 该去的地方)
+    local yr_dir
+    yr_dir=$(exec_on_host "${host}" "python${pv} -c 'import yr,os;print(os.path.dirname(yr.__file__))'" 2>/dev/null | tr -d '\r' || true)
+    if [ -z "${yr_dir}" ]; then
+        warning "ADX co-location skipped: cannot resolve yr import dir on ${host} (is openyuanrong_sdk installed?)"
+        return 0
+    fi
+
+    # 2. agentexecutor 已在该 yr 目录 → 无需处理
+    if exec_on_host "${host}" "test -d '${yr_dir}/agentexecutor'"; then
+        success "yr.agentexecutor already co-located in ${yr_dir} on ${host}"
+        return 0
+    fi
+
+    # 3. 定位 ADX 实际落地的 agentexecutor 目录。
+    #    优先用 pip show -f(agent_dx_executor 的 Location + 文件列表),
+    #    因为 pip 解析的 site-packages 不一定等于 sysconfig.get_path("purelib")
+    #    (例:openEuler 上 pip 自身装在 /usr/local/lib 时,pip 会把 pure-Python wheel 装到
+    #     /usr/local/lib 而非 sysconfig 的 /usr/lib)。pip show 是 pip 对自己行为的权威记录。
+    local adx_loc adx_src=""
+    adx_loc=$(exec_on_host "${host}" "python${pv} -m pip show -f agent_dx_executor 2>/dev/null | sed -n 's/^Location: //p' | head -n1" | tr -d '\r' || true)
+    if [ -n "${adx_loc}" ]; then
+        # 文件列表里找 yr/agentexecutor/__init__.py, 拼成绝对路径
+        local rel
+        rel=$(exec_on_host "${host}" "python${pv} -m pip show -f agent_dx_executor 2>/dev/null | sed -n 's#^  \(yr/agentexecutor/__init__\.py\).*#\1#p' | head -n1" | tr -d '\r' || true)
+        if [ -n "${rel}" ] && exec_on_host "${host}" "test -f '${adx_loc}/${rel}'"; then
+            adx_src="${adx_loc}/yr/agentexecutor"
+        fi
+    fi
+    # 兜底:用 sysconfig purelib
+    if [ -z "${adx_src}" ]; then
+        local purelib
+        purelib=$(exec_on_host "${host}" "python${pv} -c 'import sysconfig;print(sysconfig.get_path(\"purelib\"))'" 2>/dev/null | tr -d '\r' || true)
+        if [ -n "${purelib}" ] && exec_on_host "${host}" "test -d '${purelib}/yr/agentexecutor'"; then
+            adx_src="${purelib}/yr/agentexecutor"
+        fi
+    fi
+    if [ -z "${adx_src}" ]; then
+        warning "ADX co-location skipped: agentexecutor not found via pip show / purelib on ${host}"
+        return 0
+    fi
+
+    # 4. 合并进 SDK 的 yr 目录(目标结尾斜杠表示放入 yr_dir 内,而非替换 yr_dir)
+    if exec_on_host "${host}" "cp -a '${adx_src}' '${yr_dir}/'"; then
+        success "Co-located yr.agentexecutor -> ${yr_dir} on ${host}"
+    else
+        warning "Failed to co-locate yr.agentexecutor into ${yr_dir} on ${host}"
+        return 0
+    fi
+
+    # 5. 校验 import yr.agentexecutor
+    if exec_on_host "${host}" "python${pv} -c 'import yr.agentexecutor'" >/dev/null 2>&1; then
+        success "Verified: import yr.agentexecutor OK on ${host}"
+    else
+        warning "import yr.agentexecutor failed on ${host} after co-location"
+    fi
+}
+
 yr_install_packages() {
     local host="$1"
     local python_version="${YR_PYTHON_VERSION}"
@@ -351,6 +422,12 @@ yr_install_packages() {
             error "Failed to install on ${host}: ${package}"
         fi
     done
+
+    # ADX whl(py3-none-any → purelib)与 SDK(cp311 → platlib)在 openEuler 上会落到不同 site-packages,
+    # 导致 import yr.agentexecutor 失败。装完做 co-location 合并规避(详见 yr_colocate_adx 注释)。
+    if printf '%s\n' "${packages[@]}" | grep -q '^agent_dx_executor'; then
+        yr_colocate_adx "${host}"
+    fi
 }
 
 yr_uninstall_packages() {
@@ -376,6 +453,15 @@ yr_uninstall_packages() {
             warning "Package not installed or failed to uninstall on ${host}: ${pkg}"
         fi
     done
+
+    # pip uninstall 只清 ADX 自身在 purelib 的注册;co-location 时手动 cp 进 SDK 的 platlib yr 目录
+    # 的 agentexecutor 子目录不会被 pip 清。需显式删除,否则下次 install 的 colocate 检测会误判已就位。
+    local yr_dir
+    yr_dir=$(exec_on_host "${host}" "python${python_version} -c 'import yr,os;print(os.path.dirname(yr.__file__))'" 2>/dev/null | tr -d '\r' || true)
+    if [ -n "${yr_dir}" ] && exec_on_host "${host}" "test -d '${yr_dir}/agentexecutor'" 2>/dev/null; then
+        info "Removing co-located yr.agentexecutor from ${yr_dir} on ${host}"
+        exec_on_host "${host}" "rm -rf '${yr_dir}/agentexecutor'" 2>/dev/null || true
+    fi
 }
 
 yr_verify_install() {
