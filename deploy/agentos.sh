@@ -281,6 +281,7 @@ Config:
   moosefs     配置文件: deploy/moosefs/moosefs.conf (端口/目录/副本数/systemd 开关等)
               默认部署分布式文件系统，通过 MOOSEFS_ENABLED=no 关闭
               master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
+              支持 openEuler (RPM) 和 Ubuntu (DEB)，自动检测包管理器
               systemd 可选: MOOSEFS_USE_SYSTEMD=auto/yes/no (默认 auto 自动检测)
               角色判断: 本机 IP 匹配 MOOSEFS_MASTER_HOST 为 master，否则为 agent
               生命周期: install(配置+unit生成) → up(enable --now) → down(disable --now) → uninstall(停止+清理)

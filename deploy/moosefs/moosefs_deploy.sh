@@ -336,6 +336,18 @@ _mfs_get_host_list() {
     fi
 }
 
+# ===== 包检测函数（兼容 RPM 和 DEB）=====
+_mfs_check_pkg_installed() {
+    local pkg="$1"
+    if command -v rpm >/dev/null 2>&1; then
+        rpm -q "${pkg}" >/dev/null 2>&1
+    elif command -v dpkg >/dev/null 2>&1; then
+        dpkg -s "${pkg}" >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
 # ===== install 逻辑 =====
 deploy_mfs_install() {
     local local_ip
@@ -349,20 +361,20 @@ deploy_mfs_install() {
 
     info "Configuring MooseFS on local machine"
 
-    # 2. 验证 RPM 包已由上游安装
+    # 2. 验证包已由上游安装（支持 RPM 和 DEB）
     local missing=()
     for pkg in moosefs-master moosefs-chunkserver moosefs-client; do
-        if ! rpm -q "${pkg}" >/dev/null 2>&1; then
+        if ! _mfs_check_pkg_installed "${pkg}"; then
             missing+=("${pkg}")
         fi
     done
     if [ ${#missing[@]} -gt 0 ]; then
-        error "MooseFS RPM packages not installed: ${missing[*]}. Please install them before running this script. See deploy/moosefs/README.md for dependency list."
+        error "MooseFS packages not installed: ${missing[*]}. Please install them before running this script. See deploy/moosefs/README.md for dependency list."
     fi
-    success "MooseFS RPM packages verified"
+    success "MooseFS packages verified"
 
     # 3. 验证 fuse3 依赖
-    if ! rpm -q fuse3 >/dev/null 2>&1; then
+    if ! _mfs_check_pkg_installed fuse3; then
         error "fuse3 package not installed. moosefs-client requires libfuse3.so.3. See deploy/moosefs/README.md for installation."
     fi
     success "fuse3 dependency verified"

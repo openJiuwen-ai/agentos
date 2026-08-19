@@ -4,42 +4,56 @@
 
 本目录是 agentos 的统一部署入口，采用**可插拔架构**编排各组件的安装与部署。
 
-当前已注册模块：
+当前已注册模块（按部署顺序）：
 
 | 模块 | 说明 | 部署/安装内容 |
 | --- | --- | --- |
 | `moosefs` | 分布式共享存储 | MooseFS 集群（master + chunkserver + client），单机自动跳过 |
-| `jiuwenbox` | 沙箱服务 | 在 `--hosts` 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
+| `jiuwenbox` | 沙箱服务 | 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
 | `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
-| `jiuwenswarm` | jiuwenswarm 函数 + gateway | 函数注册 + gateway 进程（whl 包已包含 gateway） |
+| `agent-gateway` | A2X 注册中心 | a2x-registry 后端（sqlite 存储），优先 systemd 托管，抢占 ingress VIP 的节点启动 |
+| `jiuwenswarm` | jiuwenswarm gateway + web | gateway 进程 + web 前端（whl 包已包含 gateway） |
 
 ## 目录结构
 
 ```
 deploy/
 ├── agentos.sh                # agentos 部署总脚本（不含模块特有逻辑）
+├── etcd.sh                   # etcd 独立启停脚本（init/deinit 委托给它）
+├── check-ingress-master.sh   # ingress VIP 持有检查（agent-gateway systemd ExecStartPre）
+├── config.yaml               # 集群拓扑配置（etcd_nodes/master_nodes/ingress_virtual_ip）
 ├── README.md                 # 本文档
 ├── moosefs/
 │   ├── module.sh             # moosefs 钩子函数
 │   ├── moosefs_deploy.sh     # moosefs 部署脚本（install/up/down/uninstall）
-│   └── moosefs.conf          # moosefs 配置文件
+│   ├── moosefs.conf          # moosefs 配置文件
+│   └── README.md             # moosefs RPM 依赖说明
 ├── jiuwenbox/
-│   ├── module.sh             # jiuwenbox 钩子（含 --hosts 编排）
-│   ├── jiuwenbox_deploy.sh   # up/down/restart（含 --hosts 编排）
+│   ├── module.sh             # jiuwenbox 钩子
+│   ├── jiuwenbox_deploy.sh   # up/down/restart
 │   └── default-policy.yaml   # policy 模板（含 extensions 占位符）
 ├── yuanrong/
 │   ├── module.sh             # yuanrong 钩子函数
 │   └── yuanrong_deploy.sh    # yuanrong 原始部署脚本
-└── jiuwenswarm/
-    ├── module.sh             # jiuwenswarm 钩子函数
-    └── .env.custom           # jiuwenswarm 配置文件
+├── agent-gateway/
+│   └── module.sh             # agent-gateway 钩子（A2X 注册中心，systemd/nohup 双模式）
+├── jiuwenswarm/
+│   ├── module.sh             # jiuwenswarm 钩子函数
+│   ├── .env.custom           # jiuwenswarm 配置文件
+│   ├── conf/
+│   │   ├── claw_meta_process.template.json
+│   │   └── gateway-config-yuanrong.template.yaml
+│   └── deploy.sh             # jiuwenswarm submodule 部署脚本
+└── scripts/
+    └── config.py             # 集群配置解析与角色推导工具
 ```
 
 ## 架构设计
 
 核心机制：**模块注册 + 钩子函数 + 调度引擎**。
 
-1. **模块注册**：`agentos.sh` 顶部的 `MODULES` 数组声明所有模块及其部署顺序。
+1. **模块注册**：`agentos.sh` 顶部的 `MODULES` 数组声明所有模块及其部署顺序：
+   `MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")`
 2. **钩子约定**：每个模块在 `deploy/<module>/module.sh` 中实现 4 个钩子函数：
    - `<module>_up` — 启动/部署
    - `<module>_down` — 停止/卸载
@@ -49,26 +63,29 @@ deploy/
    - `up` / `install`：按 `MODULES` 声明顺序
    - `down` / `uninstall`：自动逆序
 4. **模块加载**：`load_modules` 在启动时 `source` 所有 `module.sh`，使钩子函数在当前 shell 中可用。
+5. **etcd 委托**：etcd 作为全集群前置依赖，独立于 `up/down`，由 `etcd.sh` 单独管理（`init`/`deinit` 委托）。
+
+### 生命周期（三对互逆操作，嵌套如括号）
+
+```
+install  ↔  uninstall     装/卸 whl（最外层）
+  init   ↔  deinit        bootstrap / 拆 etcd（中层，一次性）
+    up   ↔  down          起/停应用服务（最内层，可反复）
+```
+
+拆除顺序天然逆序：`down → deinit → uninstall`。
 
 ## 使用方法
 
 ### 前置要求
 
-- 部署机器到所有目标主机需配置 SSH 免密登录
-- 目标主机需预装指定版本的 Python（默认 3.11）
-- 部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）
-- `up` / `restart` 不安装 whl 包，请先在各目标主机执行 `install`
-- `up` 时会对每台目标主机（`--hosts` 未指定则默认本机）自动确保 `agentos` 用户存在：已存在则跳过，否则执行 `useradd agentos`；任一台创建失败即中断 `up`。该用户是沙箱默认 policy 的运行用户，缺失会导致沙箱起不来，故需提前具备创建用户的权限
-- 各目标主机需预生成 agent SSH 直连密钥（`up` 默认启用，脚本不生成）。默认路径 `/root/.ssh/`，已存在则无需重复创建：
-
-  ```bash
-  ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
-  mkdir -p /root/.ssh/agent_pub
-  cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
-  chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
-  ```
-
-  docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。详见下文「yuanrong」配置。
+- **操作系统**：基于 openEuler 22.03-LTS-SP1/SP4 或 24.03-LTS-SP1/SP4（x86_64 和 aarch64），需支持 systemd
+- **Python**：目标主机需预装指定版本的 Python（默认 3.11）
+- **systemd**：etcd 和 agent-gateway 强依赖 systemd（`systemctl` 可用且 `/run/systemd/system` 存在）；moosefs 和 jiuwenswarm 自动检测
+- **SSH 免密**：部署机器到所有目标主机需配置 SSH 免密登录（root 用户）
+- **系统命令**：部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
+- **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`（单机开发模式默认全为 `127.0.0.1`）
+- **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
 
 ### 安装包获取
 
@@ -79,53 +96,127 @@ deploy/
   - arm：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/aarch64/AgentOS-Server.tgz`
 - 自行构建：见 [agentos/README.md](../README.md)
 
+### 集群配置
+
+安装部署前需编辑 `deploy/config.yaml` 配置集群拓扑：
+
+```yaml
+cluster:
+  # etcd 集群节点（奇数节点保证 raft 共识）
+  etcd_nodes:
+    - "127.0.0.1"
+
+  # master 节点（主备）
+  master_nodes:
+    - "127.0.0.1"
+
+  # 统一入口虚拟 IP（抢占到 VIP 的节点部署 gateway/registry/web-server）
+  ingress_virtual_ip: "127.0.0.1"
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `etcd_nodes` | etcd 集群节点 IP 列表（单机 1 节点 / 多机 HA 3 节点，奇数保证 raft 共识） |
+| `master_nodes` | master 节点列表（单机 1 节点 / 多机 HA 2 节点） |
+| `ingress_virtual_ip` | 统一入口虚拟 IP，抢占到 VIP 的节点部署 agent-gateway/registry/web-server |
+
+`config.yaml` 随 `install` 持久化到 `~/.agentos/deploy/config.yaml`，角色推导（etcd 节点、master 节点、VIP 持有）由 `scripts/config.py` 解析。
+
+### agent SSH 直连密钥（yuanrong 前置）
+
+各目标主机需预生成 agent SSH 直连密钥（`up` 默认启用，脚本不生成）。默认路径 `/root/.ssh/`，已存在则无需重复创建：
+
+```bash
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+mkdir -p /root/.ssh/agent_pub
+cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
+```
+
+**多机部署时，每台节点上都需要有一份相同的密钥**（同一套私钥 + 公钥），在任一节点生成后通过 scp 分发到其余所有节点即可。
+
+docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。详见下文「yuanrong」配置。
+
 ### 命令
 
 #### 单机部署
 
 ```bash
-# 本机安装全部 whl 包
+# 1. 本机安装全部 whl 包（会把 deploy 目录持久化到 ~/.agentos/）
 bash agentos.sh install
 
-# 一键部署全部组件到本机
+# 2. bootstrap etcd（非 etcd 节点自动跳过；自动清理历史 etcd 数据）
+bash agentos.sh init
+
+# 3. 一键部署全部组件到本机（自动前置检查 etcd 可达性）
 bash agentos.sh up
 
-# 停止并卸载本机的全部组件
-bash agentos.sh down
-
-# 重启本机的全部组件（先 down 再 up）
+# 4. 重启全部应用组件（先 down 再 up，不含 init/deinit）
 bash agentos.sh restart
 
-# 卸载本机全部 whl 包
+# 5. 停止全部应用组件（etcd 保持运行）
+bash agentos.sh down
+
+# 6. 拆除 etcd（停服务 + 删 unit，保留数据）
+bash agentos.sh deinit
+
+# 7. 卸载本机全部 whl 包
 bash agentos.sh uninstall
 ```
 
-#### 多机部署（TODO）
+#### 多机部署
+
+单机与多机部署的流程完全一致，区别仅在于 `config.yaml` 的拓扑配置不同。多机部署时，**需在各个节点上分别执行** `agentos.sh`，建议先在 master 节点执行，再在 agent 节点执行。
+
+> **注意**：多机部署时 etcd 需全集群先就绪——所有 etcd 节点完成 `init` 后，各节点才能执行 `up`（`up` 会自动检测 etcd 可达性）。
 
 ```bash
-# 一键部署全部组件（多机，第一个 IP 为 master，其余为 agent）
-bash agentos.sh up --hosts 192.168.1.1,192.168.1.2,192.168.1.3
+# ---- 在每个节点上分别执行（先 master，后 agent）----
 
-# 停止并卸载全部组件
-bash agentos.sh down --hosts 192.168.1.1,192.168.1.2
+# 1. 各节点安装全部 whl 包（会把 deploy 目录持久化到 ~/.agentos/）
+bash agentos.sh install
 
-# 重启全部组件（先 down 再 up）
-bash agentos.sh restart --hosts 192.168.1.1
+# 2. 所有 etcd 节点 bootstrap etcd（非 etcd 节点自动跳过；全集群 init 完成后再进入下一步）
+bash agentos.sh init
+
+# 3. 各节点部署全部应用组件（先 master 节点 up，再 agent 节点 up）
+bash agentos.sh up
+
+# 4. 停止全部应用组件（etcd 保持运行；先 agent 节点 down，再 master 节点 down）
+bash agentos.sh down
+
+# 5. 各 etcd 节点拆除 etcd（保留数据）
+bash agentos.sh deinit
+
+# 6. 各节点卸载全部 whl 包
+bash agentos.sh uninstall
+```
+
+#### etcd 数据清理（独立操作）
+
+```bash
+# 彻底删除 /var/lib/agentos/etcd 数据（默认直接清理，无交互确认）
+bash etcd.sh clean
 ```
 
 ### 参数说明
 
 | 参数 | 说明 |
 | --- | --- |
-| `up` | 按声明顺序部署全部组件 |
-| `down` | 逆序停止并卸载全部组件 |
-| `restart` | 重启全部组件（先 down 再 up） |
-| `install` | 在本机安装全部组件的 whl 包（不启动服务，会把 deploy 目录持久化到~/.agentos目录中） |
+| `install` | 在本机安装全部组件的 whl 包（不启动服务，会把 deploy 目录持久化到 `~/.agentos/`） |
+| `init` | bootstrap etcd（委托 `etcd.sh clean + up`，非 etcd 节点自动跳过；自动清理历史 etcd 数据） |
+| `up` | 按声明顺序部署全部应用组件（前置检查 etcd 可达，不可达则提示先 `init`） |
+| `down` | 逆序停止全部应用组件（不动 etcd） |
+| `deinit` | 停 etcd + 删 unit（委托 `etcd.sh down`，保留数据） |
 | `uninstall` | 在本机卸载全部组件的 whl 包 |
-| `--hosts HOSTS` | 目标主机 IP 列表，逗号分隔。yuanrong：第一个为 master、其余为 agent；jiuwenbox：每台各启一份。不指定时默认本机 IP |
+| `restart` | 重启全部应用组件（先 down 再 up；不含 init/deinit） |
 | `-h, --help` | 显示帮助信息 |
 
 ### 配置
+
+#### config.yaml（集群拓扑）
+
+配置文件：`deploy/config.yaml`。角色推导由 `scripts/config.py` 解析，支持 `local-ip`、`is-etcd-node`、`is-master-node`、`etcd-name`、`initial-cluster`、`etcd-advertise-ip`、`etcd-nodes`、`ingress-vip`、`all` 等子命令。
 
 #### moosefs
 
@@ -133,7 +224,7 @@ bash agentos.sh restart --hosts 192.168.1.1
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `MOOSEFS_MASTER_HOST` | Master 节点地址（systemd 模式下区分 master/agent 角色） | 空（SSH 多机模式自动取 `--hosts` 第一个 IP） |
+| `MOOSEFS_MASTER_HOST` | Master 节点地址（systemd 模式下区分 master/agent 角色） | 空（systemd 模式自动取 `config.yaml` 的 `master_nodes` 第一个 IP） |
 | `MOOSEFS_ENABLED` | 是否启用 MooseFS（`auto`/`yes`/`no`） | `auto`（多机自动启用，单机自动跳过） |
 | `MOOSEFS_USE_SYSTEMD` | 是否使用 systemd（`auto`/`yes`/`no`） | `auto`（自动检测） |
 | `MFS_MASTER_PORT` | Master 服务端口 | `9420` |
@@ -143,22 +234,19 @@ bash agentos.sh restart --hosts 192.168.1.1
 | `MFS_MOUNT_POINT` | 共享挂载点路径 | `/home/agentos/users` |
 | `MFS_GOAL` | 数据副本数 | `2`（单机自动设为 1） |
 
-三种部署模式：
-1. **SSH 多机模式**：`--hosts` 指定 2+ IP，Master 取第一个 IP，通过 SSH 远程协调
-2. **systemd 模式**：各节点独立 `install` + `systemctl start`，通过 `MOOSEFS_MASTER_HOST` 区分 master/agent 角色
-3. **单机跳过**：其他场景（使用本地文件系统，不部署 MooseFS）
+两种部署模式：
+1. **systemd 模式**：各节点独立 `install` + `systemctl start`，通过 `MOOSEFS_MASTER_HOST`（或 `config.yaml` 的 `master_nodes` 第一个 IP）区分 master/agent 角色
+2. **单机跳过**：其他场景（使用本地文件系统，不部署 MooseFS）
 
-`--hosts` 命令行参数优先级高于 `MOOSEFS_MASTER_HOST` 配置，同时设置时打印 warning。
-
-MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 `deploy/moosefs/README.md`。支持 openEuler 22.03-LTS-SP1/SP4 和 24.03-LTS-SP1/SP4（x86_64 和 aarch64）。
+MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)。支持 openEuler 22.03-LTS-SP1/SP4 和 24.03-LTS-SP1/SP4（x86_64 和 aarch64）。
 
 #### jiuwenbox
 
 - 配置文件：`deploy/jiuwenbox/default-policy.yaml`（`__JIUWENSWARM_EXTENSIONS_DIR__` 在各机 start 时按该机 `pip show jiuwenswarm` 替换）
-- `module.sh` 为薄封装；`--hosts` 编排与启停逻辑在 `jiuwenbox_deploy.sh`
-- `--hosts` 时在列表中**每一台**启动一份 jiuwenbox（无 master/agent 差异）；远端 scp 后执行同一套 `up`/`down`（对端默认本机 IP，只走本机启停）
+- `module.sh` 为薄封装；启停逻辑在 `jiuwenbox_deploy.sh`
+- 每台机器各启动一份 jiuwenbox（无 master/agent 差异）
 - 已有实例时只报错、不自动清理（对齐 yuanrong）；需先 `down` 再 `up`
-- 前置：各目标机已安装 jiuwenswarm（含 `jiuwenbox-server`），控制机到目标机 root SSH 免密
+- 前置：各目标机已安装 jiuwenswarm（含 `jiuwenbox-server`）
 
 #### yuanrong
 
@@ -199,16 +287,69 @@ chmod 755 /root/.ssh/agent_pub
 - docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。
 - 生产环境建议改回三套独立密钥（host/backend/client 分开）。
 
+#### etcd
+
+独立脚本 `deploy/etcd.sh` 管理 etcd unit 生命周期，`agentos.sh` 的 `init`/`deinit` 委托给它。
+
+| 子命令 | 说明 |
+| --- | --- |
+| `up` | 生成并启动 `agentos-etcd.service`（非 etcd 节点跳过） |
+| `down` | 停止并删除 unit（保留 `/var/lib/agentos/etcd` 数据） |
+| `check` | 探测 etcd 集群是否可达（TCP 连通任一 etcd_node 的 client port 即通过） |
+| `clean` | 清理 etcd 数据目录（默认直接清理，无交互确认；对齐 yr start 语义） |
+
+| 环境变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `YR_ETCD_CLIENT_PORT` | etcd client 端口 | `32379` |
+| `YR_HEALTH_CHECK_RETRIES` | up 健康检查重试次数 | `30` |
+
+etcd 二进制路径从 `yr config dump` 的 `values.etcd.bin_path` 探测，回退 yr 包内 `third_party/etcd/etcd`。角色推导读取 `~/.agentos/deploy/config.yaml`（由 `scripts/config.py` 解析）。
+
+- `init` 自动 `clean + up`，无需手动清理历史数据
+- `down` 保留数据，便于 `restart`；彻底清数据用 `init`（自动 clean）或独立 `./etcd.sh clean`
+- `up` 前置检查 etcd 可达性（`etcd.sh check`），不可达则报错引导先 `init`
+
+#### agent-gateway
+
+A2X 注册中心（a2x-registry 后端 + sqlite 存储），优先 systemd 托管，无 systemd 时回退 nohup 后台进程。
+
+| 环境变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `A2X_REGISTRY_PORT` | 注册中心监听端口 | `4003` |
+| `A2X_REGISTRY_TLS_CERTFILE` | mTLS 服务端证书路径（三者齐全才开启） | 空（纯 http） |
+| `A2X_REGISTRY_TLS_KEYFILE` | mTLS 服务端私钥路径 | 空 |
+| `A2X_REGISTRY_TLS_CA_CERTS` | mTLS CA 证书路径 | 空 |
+| `A2X_REGISTRY_RUN_DIR` | 运行目录（PID 文件） | `/var/run/agentos` |
+| `A2X_REGISTRY_LOG_DIR` | 日志目录（nohup 模式按天新建日志） | `/var/log/agentos` |
+| `A2X_REGISTRY_LOG_RETENTION_DAYS` | 日志保留天数 | `7` |
+| `HEALTH_CHECK_RETRIES` | up 健康检查重试次数 | `15` |
+| `STOP_WAIT_RETRIES` | down 停止等待重试次数 | `10` |
+
+监听地址（`A2X_REGISTRY_BIND`）推导优先级：
+1. `config.yaml` 的 `cluster.ingress_virtual_ip`（VIP）
+2. 本机网卡 IP（`hostname -I`）
+3. `127.0.0.1`
+
+> 注意：注册中心后端禁止 `A2X_REGISTRY_BIND=0.0.0.0`，故只能绑定具体 VIP。
+
+systemd 模式下，`install` 时会复制 `check-ingress-master.sh` 到 `/usr/local/bin/agentos-check-ingress-master`，作为 unit 的 `ExecStartPre`：本机未持有 `ingress_virtual_ip` 时阻止服务启动（fail-closed）。`up` 钩子只做幂等启动，不做 master 判定。
+
+whl 包来源：`install` 时从 agentos 根目录匹配 `a2x_registry-*-py3-none-any.whl`。
+
 #### jiuwenswarm
 
 配置文件：`deploy/jiuwenswarm/.env.custom`（基于 submodule 中的 `.env.example` 修改）。主要配置项：
 
 | 变量 | 说明 |
 | --- | --- |
-| `CLUSTER_HOSTS` | 目标主机 IP 列表（也可通过 `--hosts` 参数指定，命令行优先级更高） |
+| `CLUSTER_HOSTS` | 目标主机 IP 列表 |
 | `JIUWENSWARM_PACKAGE_URL` | jiuwenswarm 安装包 URL（up 时若远程主机未安装 jiuwenswarm 则用此 URL pip 安装） |
 | `MODEL_PROVIDER` / `MODEL_NAME` / `API_BASE` / `API_KEY` | 大模型接口配置 |
 | `EMBED_MODEL` / `EMBED_API_BASE` / `EMBED_API_KEY` | 向量模型接口配置 |
+| `GATEWAY_HOST` / `GATEWAY_PORT` | gateway 进程监听地址/端口（host 留空时自动绑定 `config.yaml` 的 `ingress_virtual_ip`） |
+| `WEB_PORT` / `WEB_ENABLED` | web 前端端口/是否随 `up` 启动 |
+| `WEB_STATIC_PORT` | web 前端静态资源服务端口 |
+| `SANDBOX_TYPE` / `TOOL_SANDBOX_*` | 沙箱类型与工具沙箱配置 |
 
 #### whl 包来源
 
@@ -216,6 +357,8 @@ chmod 755 /root/.ssh/agent_pub
 
 - **openyuanrong**：`YR_PKG_BASE` 默认指向 agentos 根目录，yuanrong 脚本按版本/arch 自动拼接 whl 文件名
 - **jiuwenswarm**：匹配 `jiuwenswarm-*-py3-none-any.whl`（如 `jiuwenswarm-0.2.3-py3-none-any.whl`，已包含 gateway）
+- **a2x-registry**：匹配 `a2x_registry-*-py3-none-any.whl`（agent-gateway 模块）
+- **moosefs**：从 agentos 根目录获取 RPM 包（moosefs-master/chunkserver/client）
 
 可通过 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 yuanrong 的 whl 目录。
 
@@ -234,7 +377,7 @@ chmod 755 /root/.ssh/agent_pub
 
 # 部署/启动（远程或本机）
 mymodule_up() {
-    # 调用你的部署脚本，sub_args 已由调度器构造好（包含 --hosts 等参数）
+    # 调用你的部署脚本，调度器透传额外参数
     bash "${SCRIPT_DIR}/mymodule/deploy_mymodule.sh" up "$@"
 }
 
@@ -268,21 +411,21 @@ mymodule_uninstall() {
 编辑 `agentos.sh` 顶部的 `MODULES` 数组，按部署顺序添加模块名：
 
 ```bash
-MODULES=("yuanrong" "jiuwenswarm" "mymodule")
+MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodule")
 ```
 
 ### 完成
 
-此后 `bash agentos.sh up` 会自动按 `yuanrong → jiuwenswarm → mymodule` 顺序部署，`bash agentos.sh down` 会逆序卸载，`install` / `uninstall` 同理。
+此后 `bash agentos.sh up` 会自动按声明顺序部署，`bash agentos.sh down` 会逆序卸载，`install` / `uninstall` 同理。
 
 ### 钩子函数说明
 
 | 钩子 | 调用时机 | 参数 | 典型实现 |
 | --- | --- | --- | --- |
-| `<module>_up` | `up` / `restart` 时，按声明顺序调用 | `--hosts ...` 等透传参数 | 调用模块部署脚本启动服务 |
-| `<module>_down` | `down` / `restart` 时，逆序调用 | `--hosts ...` 等透传参数 | 调用模块部署脚本停止服务 |
-| `<module>_install` | `install` 时，按声明顺序调用 | `--hosts ...` 等透传参数（通常 install 不需要） | 本机 pip 安装 whl 包 |
-| `<module>_uninstall` | `uninstall` 时，逆序调用 | `--hosts ...` 等透传参数（通常 uninstall 不需要） | 本机 pip 卸载 whl 包 |
+| `<module>_up` | `up` / `restart` 时，按声明顺序调用 | 透传额外参数 | 调用模块部署脚本启动服务 |
+| `<module>_down` | `down` / `restart` 时，逆序调用 | 透传额外参数 | 调用模块部署脚本停止服务 |
+| `<module>_install` | `install` 时，按声明顺序调用 | 透传额外参数（通常 install 不需要） | 本机 pip 安装 whl 包 |
+| `<module>_uninstall` | `uninstall` 时，逆序调用 | 透传额外参数（通常 uninstall 不需要） | 本机 pip 卸载 whl 包 |
 
 ### 可用的全局变量
 
@@ -294,7 +437,9 @@ MODULES=("yuanrong" "jiuwenswarm" "mymodule")
 | `AGENTOS_ROOT` | agentos 根目录（`deploy` 的同级目录）的绝对路径 |
 | `MODULES` | 已注册模块数组 |
 | `YR_PYTHON_VERSION` | Python 版本（默认 `3.11`） |
-| `CLUSTER_HOSTS` | `--hosts` 参数解析出的主机列表 |
+| `CLUSTER_HOSTS` | 主机列表 |
+| `AGENTOS_SSH_KEY` | agent SSH 直连私钥路径（默认 `/root/.ssh/agent_key`） |
+| `AGENTOS_SSH_BACKEND_PUBLIC_DIR` | agent SSH 公钥目录（默认 `/root/.ssh/agent_pub`） |
 | `info` / `success` / `warning` / `error` | 日志函数 |
 
 ### 可选钩子
@@ -303,6 +448,6 @@ MODULES=("yuanrong" "jiuwenswarm" "mymodule")
 
 ### 命名规范
 
-- 模块名使用小写字母 + 数字 + 连字符（如 `mymodule`、`skill-store`）
+- 模块名使用小写字母 + 数字 + 连字符（如 `mymodule`、`agent-gateway`、`skill-store`）
 - 钩子函数名必须为 `<module名>_<hook>`，其中 `<hook>` 为 `up` / `down` / `install` / `uninstall`
 - `module.sh` 中定义的内部函数建议加 `_` 前缀（如 `_mymodule_helper`）避免命名冲突
