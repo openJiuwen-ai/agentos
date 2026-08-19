@@ -266,16 +266,18 @@ class ThirdpartyAgentService:
         import httpx
 
         url = f"{settings.AGENT_REGISTER_URL.rstrip('/')}/api/images"
+        rootfs = {
+            **result.runtime_spec.get("rootfs", {}),
+            "imageurl": result.image,
+        }
+        rootfs.pop("ports", None)
         payload = {
             "framework": params.entrypoint,
             "framework_version": params.version,
             "env_vars": {},
             "runtime_spec": {
                 **result.runtime_spec,
-                "rootfs": {
-                    **result.runtime_spec.get("rootfs", {}),
-                    "imageurl": result.image,
-                },
+                "rootfs": rootfs,
             },
             "image_module_version": result.image_module_version,
             "uploaded_by": params.uploaded_by,

@@ -26,7 +26,10 @@ RUN set -eux; \
     && rm /tmp/node.tar.gz
 ENV PATH="/usr/local/bin:${PATH}"
 
-# OpenYuanrong SDK (root install); OBS daily URL aligned with build/build.sh
+# OpenYuanrong SDK + agent_dx_executor (root install); OBS daily URL aligned with build/build.sh
+# executor 是纯 Python wheel(py3-none-any), 与平台 wheel 的 SDK 会被 pip 装到不同 site-packages
+# (openEuler 的 purelib=.../lib/... 与 platlib=.../lib64/... 分裂), 造成两个 yr 包。
+# 故先装到临时目录, 再把 yr 树合并进 SDK 所在的 platlib, 保证 yr 包单一、import yr.agentexecutor 可用。
 RUN set -eux; \
     py_arch="$(uname -m)"; \
     case "${py_arch}" in \
@@ -62,7 +65,19 @@ RUN set -eux; \
     echo "installing ${SDK_WHEEL} from ${sdk_base}"; \
     curl -fsSL "${sdk_base}/${SDK_WHEEL}" -o "/tmp/${SDK_WHEEL}"; \
     pip3 install "/tmp/${SDK_WHEEL}" -i https://mirrors.huaweicloud.com/repository/pypi/simple; \
-    rm "/tmp/${SDK_WHEEL}"
+    rm "/tmp/${SDK_WHEEL}"; \
+    \
+    sdk_ver=$(printf '%s' "${SDK_WHEEL}" | sed -n 's/^openyuanrong_sdk-\([0-9][0-9.]*\)-.*/\1/p'); \
+    EXECUTOR_VER="${sdk_ver:-9.9.9}"; \
+    EXECUTOR_WHEEL="agent_dx_executor-${EXECUTOR_VER}-py3-none-any.whl"; \
+    echo "installing ${EXECUTOR_WHEEL} from ${sdk_base}"; \
+    curl -fsSL "${sdk_base}/${EXECUTOR_WHEEL}" -o "/tmp/${EXECUTOR_WHEEL}"; \
+    PLATLIB="$(python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))')"; \
+    mkdir -p /tmp/executor-target; \
+    pip3 install --no-cache-dir --target /tmp/executor-target "/tmp/${EXECUTOR_WHEEL}"; \
+    cp -a /tmp/executor-target/yr/. "${PLATLIB}/yr/"; \
+    cp -a "/tmp/executor-target/agent_dx_executor-${EXECUTOR_VER}.dist-info" "${PLATLIB}/"; \
+    rm -rf /tmp/executor-target "/tmp/${EXECUTOR_WHEEL}"
 
 # 在构建最终镜像时改为agentos属主/属组
 RUN mkdir -p /opt/agent-ssh \

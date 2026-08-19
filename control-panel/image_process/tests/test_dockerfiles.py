@@ -20,6 +20,7 @@ class TestBaseDockerfileContract:
         assert "agentos.runtime_spec" in content
         assert "sshd_config" in content
         assert "openyuanrong_sdk" in content
+        assert "agent_dx_executor" in content
 
 
 _AGENT_DOCKERFILE = _IMAGE_PROCESS_DIR / "agent.Dockerfile"
