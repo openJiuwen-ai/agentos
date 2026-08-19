@@ -994,9 +994,8 @@ install_alloy() {
         --network host \
         -v "${ALLOY_CONFIG_HOST}:/etc/alloy/config.alloy:ro" \
         -v "${ALLOY_DATA_HOST}:/etc/alloy/data" \
-        -v /root:/home/agentos/host_root:ro \
         -v /home/agentos:/home/agentos:ro \
-        -v /tmp/yr_sessions:/tmp/yr_sessions:ro \
+        -v /var/log/agentos:/var/log/agentos:ro \
         -v /tmp/jiuwenbox:/tmp/jiuwenbox:ro \
         "$ALLOY_IMAGE" \
         run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/etc/alloy/data /etc/alloy/config.alloy \

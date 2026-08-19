@@ -56,7 +56,7 @@ services:
       - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
       - /root:/home/agentos/host_root:ro
-      - ${YR_LOG_DIR:-/tmp/yr_sessions}:/tmp/yr_sessions:ro
+      - /var/log/agentos:/var/log/agentos
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -189,10 +189,9 @@ services:
   alloy:
     image: grafana/alloy:v1.18.1
     volumes:
-      - /root:/home/agentos/host_root:ro
       - ${AGENTOS_BASE:-/home/agentos}/users:/home/agentos/users:ro
       - ${AGENTOS_BASE:-/home/agentos}/logs:/home/agentos/logs:ro
-      - ${YR_LOG_DIR:-/tmp/yr_sessions}:/tmp/yr_sessions:ro
+      - /var/log/agentos:/var/log/agentos:ro
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy_data:/etc/alloy/data
