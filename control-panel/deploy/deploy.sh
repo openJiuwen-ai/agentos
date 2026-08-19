@@ -848,25 +848,38 @@ install_npu_exporter() {
         fi
         log "  已创建用户组 '$NPU_RUN_GROUP'"
     fi
+    local home_dir="/home/${NPU_RUN_USER}"
     if ! id "$NPU_RUN_USER" &>/dev/null; then
-        # 检测操作系统类型，选择对应的 nologin 路径
- 	    local nologin_shell="/sbin/nologin"
- 	    if [ -f "/usr/sbin/nologin" ]; then
- 	        nologin_shell="/usr/sbin/nologin"
- 	    fi
-        if ! useradd -r -g "$NPU_RUN_GROUP" -s "$nologin_shell" "$NPU_RUN_USER" 2>/dev/null; then
-            if ! useradd -g "$NPU_RUN_GROUP" -s "$nologin_shell" "$NPU_RUN_USER" 2>/dev/null; then
-                fail "创建用户 '$NPU_RUN_USER' 失败，请检查系统权限或是否存在同名冲突"
-            fi
+        local nologin_shell="/usr/sbin/nologin"
+        if [ ! -f "$nologin_shell" ]; then
+            nologin_shell="/sbin/nologin"
         fi
-        log "  已创建用户 '$NPU_RUN_USER'"
+        if ! useradd -d "$home_dir" -m -g "$NPU_RUN_GROUP" -s "$nologin_shell" "$NPU_RUN_USER"; then
+            fail "创建用户 '$NPU_RUN_USER' 失败，请检查系统权限或是否存在同名冲突"
+        fi
+        log "  已创建用户 '$NPU_RUN_USER' (home: $home_dir)"
+    fi
+    if [ ! -d "$home_dir" ]; then
+        if ! mkdir -p "$home_dir"; then
+            fail "创建家目录 '$home_dir' 失败"
+        fi
+        if ! chown "$NPU_RUN_USER:$NPU_RUN_GROUP" "$home_dir"; then
+            fail "设置家目录 '$home_dir' 属主失败"
+        fi
+        if ! usermod -d "$home_dir" "$NPU_RUN_USER"; then
+            fail "设置用户 '$NPU_RUN_USER' 家目录失败"
+        fi
+        log "  已创建家目录 $home_dir"
     fi
 
-    if getent group "$NPU_DEVICE_GROUP" >/dev/null 2>&1; then
-        usermod -aG "$NPU_DEVICE_GROUP" "$NPU_RUN_USER"
-        log "  已将 $NPU_RUN_USER 加入组 $NPU_DEVICE_GROUP"
-    else
-        log "  跳过：组 $NPU_DEVICE_GROUP 不存在，npu-exporter 可能无法访问 NPU 设备"
+    if ! getent group "$NPU_DEVICE_GROUP" &>/dev/null; then
+        fail "用户组 '$NPU_DEVICE_GROUP' 不存在，请先创建该用户组"
+    fi
+    if ! groups "$NPU_RUN_USER" 2>/dev/null | grep -qw "$NPU_DEVICE_GROUP"; then
+        if ! usermod -a -G "$NPU_DEVICE_GROUP" "$NPU_RUN_USER"; then
+            fail "将用户 '$NPU_RUN_USER' 添加到 $NPU_DEVICE_GROUP 组失败"
+        fi
+        log "  已将用户 '$NPU_RUN_USER' 添加到 $NPU_DEVICE_GROUP 组"
     fi
 
     # 创建日志目录结构
