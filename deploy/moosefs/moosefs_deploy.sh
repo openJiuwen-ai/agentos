@@ -391,7 +391,7 @@ deploy_mfs_install() {
         info "Created /etc/fuse.conf with user_allow_other"
     fi
 
-    # 6. 生成 master 配置文件
+    # 7. 生成 master 配置文件
     local mfs_conf_dir="/etc/mfs"
     mkdir -p "${mfs_conf_dir}"
 
@@ -661,7 +661,7 @@ deploy_mfs_up() {
             info "Waiting for master port ${MFS_MASTER_PORT}..."
             local retries=0
             while [ ${retries} -lt 30 ]; do
-                if exec_on_host "$(get_local_ip)" "echo > /dev/tcp/127.0.0.1/${MFS_MASTER_PORT}" 2>/dev/null; then
+                if echo > /dev/tcp/127.0.0.1/${MFS_MASTER_PORT} 2>/dev/null; then
                     success "Master port ${MFS_MASTER_PORT} is ready"
                     break
                 fi
@@ -924,6 +924,10 @@ deploy_mfs_uninstall() {
         # 删除 chunkserver 运行时状态文件，避免重新注册时 ID/索引/锁冲突
         # chunkserver 启动时会重新从 master 获取 ID 并扫描已有 chunk 数据上报
         find "${MFS_CHUNK_DIR}" \( -name '.metaid' -o -name '.chunkdb' -o -name '.lock' \) -delete 2>/dev/null || true
+        # 清理 /var/lib/mfs 下的运行时状态文件（保留 master metadata 和 chunk 数据）
+        find /var/lib/mfs \( -name 'chunkserverid.mfs' -o -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
+        # 清理旧版可能的锁文件残留（/var/run/mfs/）
+        rm -f /var/run/mfs/mfsmaster.lock /var/run/mfs/mfschunkserver.lock 2>/dev/null || true
         success "Data preserved (chunkserver chunks + master metadata), runtime state files cleared"
     fi
 
@@ -1039,9 +1043,10 @@ Examples:
   MOOSEFS_ENABLED=no ./$(basename "$0") up                            # 关闭 MooseFS 部署
 
 注意:
-  - 部署机器到所有目标主机需配置SSH免密登录
-  - install 需要在每台目标主机上执行（多机时每台主机都需安装）
-  - MooseFS RPM 包需放置在 AGENTOS_ROOT 目录下
+  - 部署机器到所有目标主机需配置SSH免密登录（仅 SSH 多机模式）
+  - install 需要在每台目标主机上执行（每台主机都需配置）
+  - MooseFS RPM 包需由上游预装（见 deploy/moosefs/README.md）
+  - master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
 EOF
     exit 0
 }
