@@ -12,7 +12,7 @@ import {
   ElMessage,
 } from 'element-plus';
 import { RefreshRight } from '@element-plus/icons-vue';
-import searchIcon from '@/assets/images/search.svg';
+import searchIcon from '@/assets/images/search-icon.png';
 import funnelIcon from '@/assets/images/funnel-icon.png';
 import avatarIcon from '@/assets/images/avatar.svg';
 import frameworkDefaultIcon from '@/assets/images/framework-page/default-framework-icon.png';
@@ -306,21 +306,19 @@ onUnmounted(() => {
 
     <!-- 表格区 -->
     <div class="table-card">
-      <div class="table-header">
-        <h2 class="table-header__title">智能体实例</h2>
-        <ElInput
-          v-model="keyword"
-          class="table-header__search"
-          placeholder="请输入搜索内容"
-          clearable
-          @keyup.enter="onSearchChange"
-          @clear="onSearchChange"
-        >
-          <template #prefix>
-            <img :src="searchIcon" alt="" width="16" height="16" />
-          </template>
-        </ElInput>
-      </div>
+      <h2 class="table-header__title">智能体实例</h2>
+      <ElInput
+        v-model="keyword"
+        class="table-header__search"
+        placeholder="请输入搜索内容"
+        clearable
+        @keyup.enter="onSearchChange"
+        @clear="onSearchChange"
+      >
+        <template #prefix>
+          <img :src="searchIcon" alt="" width="14" height="14" class="table-header__search-icon" />
+        </template>
+      </ElInput>
 
       <ElTable
         ref="tableRef"
@@ -328,6 +326,7 @@ onUnmounted(() => {
         :data="instances"
         row-key="service_id"
         class="agent-table"
+        :border="false"
         :empty-text="emptyText"
         @sort-change="onSortChange"
       >
@@ -718,28 +717,24 @@ onUnmounted(() => {
   border-radius: 24px;
 }
 
-.table-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
-  flex-shrink: 0;
-}
-
 .table-header__title {
-  margin: 0;
+  margin: 0 0 20px;
+  flex-shrink: 0;
   font-size: 16px;
   font-weight: 700;
+  line-height: 24px;
   color: var(--text-primary);
 }
 
 .table-header__search {
-  width: 328px;
+  width: 296px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
 }
 
 .agent-table {
   width: 100%;
+  flex: 1;
 }
 
 /* ── 列头筛选 ── */
@@ -825,7 +820,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 20px;
+  margin-top: 12px;
   flex-shrink: 0;
   min-height: 32px;
 }
@@ -846,57 +841,63 @@ onUnmounted(() => {
   user-select: none;
 }
 
-/* ── 表头样式 ── */
+/* ── 表头 / 单元格样式（对齐 818 设计稿） ── */
 :deep(.agent-table) {
-  --el-table-header-bg-color: rgba(0, 0, 0, 0.05);
-  --el-table-header-text-color: rgba(0, 0, 0, 0.9);
-  --el-table-border-color: rgba(0, 0, 0, 0.05);
+  --el-table-header-bg-color: rgba(25, 25, 25, 0.05);
+  --el-table-header-text-color: var(--text-primary);
+  --el-table-border-color: var(--border-separator-subtle);
+  --el-table-row-hover-bg-color: rgba(25, 25, 25, 0.03);
 }
 
-:deep(.agent-table .el-table__header-wrapper) {
-  border-radius: 12px;
-  overflow: hidden;
+:deep(.agent-table .el-table__inner-wrapper::before) {
+  display: none;
 }
 
 :deep(.agent-table .el-table__header th.el-table__cell) {
-  height: 48px;
-  padding: 0;
-  background: rgba(0, 0, 0, 0.05);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.9);
+  position: relative;
+  height: 40px;
+  padding: 9px 8px;
+  background: rgba(25, 25, 25, 0.05);
+  border-bottom: 1px solid var(--border-separator);
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 500;
-  line-height: 19px;
+  line-height: 22px;
+}
+
+:deep(.agent-table .el-table__header th.el-table__cell:not(:first-child)::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
 }
 
 :deep(.agent-table .el-table__header th .cell) {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
-  margin-bottom: 10px;
-  padding: 0 8px 0 12px;
+  padding: 0;
   font-size: 14px;
   font-weight: 500;
-  line-height: 19px;
-  color: rgba(0, 0, 0, 0.9);
+  line-height: 22px;
+  color: var(--text-primary);
 }
 
-:deep(.agent-table .el-table__body td) {
+:deep(.agent-table .el-table__body td.el-table__cell) {
+  height: 40px;
+  padding: 9px 8px;
   color: var(--text-primary);
   font-weight: 400;
-  height: 48px;
-  padding: 0;
   border-bottom: 1px solid var(--border-separator-subtle);
 }
 
-:deep(.agent-table .el-table__body tr:hover > td) {
-  background: rgba(25, 25, 25, 0.03);
-}
-
 :deep(.agent-table .el-table__body td .cell) {
-  padding: 0 8px 0 12px;
+  padding: 0;
   font-size: 14px;
+  line-height: 22px;
 }
 
 /* ── 排序图标 ── */
@@ -921,33 +922,78 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-:deep(.agent-table .el-table__body td.col-node .cell) {
-  padding-left: 16px;
-}
-
 :deep(.table-header__search .el-input__wrapper) {
-  height: 40px;
-  padding: 0 12px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 24px;
+  height: 32px;
+  min-height: 32px;
+  padding: 5px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   box-shadow: none;
 }
 
-:deep(.table-header__search .el-input__wrapper:hover),
-:deep(.table-header__search .el-input__wrapper.is-focus) {
-  background: rgba(0, 0, 0, 0.05);
+:deep(.table-header__search .el-input__wrapper:hover) {
+  border-color: var(--border-hover);
   box-shadow: none;
+}
+
+:deep(.table-header__search .el-input__wrapper.is-focus) {
+  border-color: var(--border-focus);
+  box-shadow: none;
+}
+
+:deep(.table-header__search .el-input__prefix),
+:deep(.table-header__search .el-input__suffix) {
+  color: var(--text-primary);
+}
+
+:deep(.table-header__search .el-input__prefix) {
+  margin-right: 8px;
+}
+
+.table-header__search-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+:deep(.pagination-row .el-pagination) {
+  padding: 0;
+  gap: 8px;
+}
+
+:deep(.pagination-row .el-pagination__sizes) {
+  margin: 0;
+}
+
+:deep(.pagination-row .el-pagination__sizes .el-select) {
+  width: 155px;
+}
+
+:deep(.pagination-row .el-pagination__sizes .el-select__wrapper) {
+  min-height: 32px;
+  height: 32px;
+  padding: 5px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+:deep(.pagination-row .el-pagination button) {
+  padding: 0;
+  background: transparent;
 }
 
 :deep(.table-header__search .el-input__inner) {
-  height: 40px;
-  font-size: 16px;
+  height: 22px;
+  font-size: 14px;
   font-weight: 400;
   line-height: 22px;
-  color: rgba(0, 0, 0, 0.9);
+  color: var(--text-primary);
 }
 
 :deep(.table-header__search .el-input__inner::placeholder) {
-  color: rgba(0, 0, 0, 0.4);
+  color: var(--text-placeholder);
 }
 </style>

@@ -22,7 +22,9 @@ const activeTopMenu = computed(() => (route.meta.topMenu as string | undefined) 
 
 const visibleTopMenus = computed(() => (effectiveIsAdmin.value ? topMenus : topMenus.filter((m) => !m.adminOnly)));
 
+const productName = '华为智能体一体机';
 const workspaceLabel = computed(() => (workspace.value === 'admin' ? '管理工作台' : '个人工作台'));
+const brandTitle = computed(() => `${productName}${workspaceLabel.value}`);
 
 function switchWorkspace(mode: 'admin' | 'user') {
   setWorkspace(mode);
@@ -72,14 +74,19 @@ function handleProfileCommand(command: string | number | object) {
   <header class="top-nav">
     <div class="top-nav__left">
       <img :src="logoImg" alt="华为智能体一体机" class="top-nav__logo" />
-      <span class="top-nav__brand">华为智能体一体机</span>
-      <ElDropdown v-if="isAdmin" trigger="click" @command="handleWorkspaceCommand">
-        <ElButton class="workspace-btn">
-          <span>{{ workspaceLabel }}</span>
-          <img :src="arrowDownLine" alt="" width="10" height="10" />
+      <ElDropdown
+        v-if="isAdmin"
+        trigger="click"
+        placement="bottom-end"
+        popper-class="workspace-dropdown-popper"
+        @command="handleWorkspaceCommand"
+      >
+        <ElButton text class="workspace-switcher">
+          <span class="workspace-switcher__title">{{ brandTitle }}</span>
+          <img :src="arrowDownLine" alt="" class="workspace-switcher__arrow" />
         </ElButton>
         <template #dropdown>
-          <ElDropdownMenu>
+          <ElDropdownMenu class="workspace-dropdown-menu">
             <ElDropdownItem command="admin" :class="{ 'is-workspace-active': workspace === 'admin' }">
               管理工作台
             </ElDropdownItem>
@@ -89,6 +96,7 @@ function handleProfileCommand(command: string | number | object) {
           </ElDropdownMenu>
         </template>
       </ElDropdown>
+      <span v-else class="workspace-switcher__title">{{ brandTitle }}</span>
     </div>
 
     <ElMenu
@@ -164,46 +172,61 @@ function handleProfileCommand(command: string | number | object) {
 .top-nav__left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   justify-self: start;
 }
 
 .top-nav__logo {
-  width: 32px;
+  width: 26px;
   height: 26px;
   object-fit: contain;
+  flex-shrink: 0;
 }
 
-.top-nav__brand {
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: var(--text-primary);
-  white-space: nowrap;
+.workspace-switcher.el-button {
+  height: 26px;
+  min-height: unset;
+  padding: 2px 2px 2px 8px;
+  margin: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
 }
 
-.workspace-btn {
+.workspace-switcher.el-button :deep(> span) {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--text-primary);
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  height: auto;
-  margin: 0;
+  gap: 8px;
 }
 
-.workspace-btn.el-button:hover,
-.workspace-btn.el-button:focus {
+.workspace-switcher.el-button:hover,
+.workspace-switcher.el-button:focus,
+.workspace-switcher.el-button:focus-visible,
+.workspace-switcher.el-button:active {
+  background: transparent;
+  border-color: transparent;
   color: var(--text-primary);
-  background: var(--bg-2);
-  border-color: var(--color-primary);
+  outline: none;
+}
+
+.workspace-switcher__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.workspace-switcher__arrow {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.workspace-switcher.el-button:hover .workspace-switcher__arrow,
+.workspace-switcher.el-button[aria-expanded='true'] .workspace-switcher__arrow {
+  transform: rotate(180deg);
 }
 
 .top-nav__right {
@@ -357,9 +380,57 @@ function handleProfileCommand(command: string | number | object) {
 </style>
 
 <style>
-.is-workspace-active {
-  color: var(--color-primary) !important;
-  font-weight: 500;
+.workspace-dropdown-popper.el-popper {
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+.workspace-dropdown-popper .el-popper__arrow {
+  display: none;
+}
+
+.workspace-dropdown-menu.el-dropdown-menu {
+  width: 120px;
+  min-width: 120px;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.workspace-dropdown-menu .el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.workspace-dropdown-menu .el-dropdown-menu__item + .el-dropdown-menu__item {
+  margin-top: 4px;
+}
+
+.workspace-dropdown-menu .el-dropdown-menu__item:not(.is-disabled):hover,
+.workspace-dropdown-menu .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: rgba(25, 25, 25, 0.05);
+  color: var(--text-primary);
+}
+
+.workspace-dropdown-menu .el-dropdown-menu__item.is-workspace-active,
+.workspace-dropdown-menu .el-dropdown-menu__item.is-workspace-active:not(.is-disabled):hover,
+.workspace-dropdown-menu .el-dropdown-menu__item.is-workspace-active:not(.is-disabled):focus {
+  background: var(--bg-active);
+  color: #0067d1;
+  font-weight: 400;
 }
 
 .profile-dropdown-menu {
