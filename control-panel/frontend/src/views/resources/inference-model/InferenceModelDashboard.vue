@@ -1,22 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import {
-  ElInput,
-  ElMessageBox,
-  ElButton,
-  ElRadioGroup,
-  ElRadioButton,
-  ElAlert,
-  ElSkeleton,
-  ElEmpty,
-  ElMessage,
-} from 'element-plus';
-import { Search } from '@element-plus/icons-vue';
+import { ElMessageBox, ElButton, ElTabs, ElTabPane, ElAlert, ElSkeleton, ElEmpty, ElMessage } from 'element-plus';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
 import ModelUsageGuide from './ModelUsageGuide.vue';
+import OverviewStatCard from './OverviewStatCard.vue';
 import {
   fetchModelList,
   fetchModelsHealth,
@@ -38,6 +28,10 @@ import {
   getDateRange,
   USAGE_ALL_TIME_START,
 } from './utils/usage';
+import apiCallIcon from '@/assets/images/api_call.svg';
+import tokenIcon from '@/assets/images/token.svg';
+import personIcon from '@/assets/images/person.svg';
+import dataStatisticsIcon from '@/assets/images/data_statistics.svg';
 
 const router = useRouter();
 const { effectiveIsAdmin: isAdmin, userId } = useAuth();
@@ -49,6 +43,7 @@ interface ModelCardData {
   name: string;
   status: 'success' | 'error' | 'warning';
   statusText: string;
+  statusKey: 'healthy' | 'unhealthy' | 'unknown';
   tags: string[];
   e2eP95: string;
   todayCalls: string;
@@ -69,7 +64,17 @@ const drawerVisible = ref(false);
 const drawerMode = ref<'view' | 'edit'>('view');
 const selectedModel = ref<ModelDetail | null>(null);
 
-const filters = [{ key: 'all', label: '全部模型' }];
+const filters = [
+  { key: 'all', label: '全部状态' },
+  { key: 'healthy', label: '健康' },
+  { key: 'unhealthy', label: '异常' },
+  { key: 'unknown', label: '未知' },
+];
+
+const filteredModels = computed(() => {
+  if (activeFilter.value === 'all') return models.value;
+  return models.value.filter((m) => m.statusKey === activeFilter.value);
+});
 
 // 调用概览数据
 const overviewData = ref({
@@ -78,6 +83,38 @@ const overviewData = ref({
   total: { requests: 0, tokens: 0 },
 });
 const overviewError = ref('');
+const activeUsersCount = ref(0);
+
+const overviewCards = computed(() => [
+  {
+    key: 'requests',
+    title: '调用次数',
+    value: overviewData.value.today.requests.toLocaleString(),
+    desc: '今日调用次数',
+    icon: apiCallIcon,
+  },
+  {
+    key: 'tokens',
+    title: 'Token数',
+    value: formatTokens(overviewData.value.today.tokens),
+    desc: '今日Token使用量',
+    icon: tokenIcon,
+  },
+  {
+    key: 'users',
+    title: '用户',
+    value: isAdmin.value ? String(activeUsersCount.value) : '--',
+    desc: '近一周活跃用户数',
+    icon: personIcon,
+  },
+  {
+    key: 'status',
+    title: '调用状况',
+    value: '--',
+    desc: '实时并发数 QPS',
+    icon: dataStatisticsIcon,
+  },
+]);
 
 async function loadOverviewData() {
   overviewError.value = '';
@@ -95,6 +132,7 @@ async function loadOverviewData() {
         week: calculateOverviewTotals(weekRes),
         total: calculateOverviewTotals(totalRes),
       };
+      activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
     } else {
       // 普通用户：使用 /user 接口获取自己的数据
       const uid = userId.value;
@@ -114,6 +152,7 @@ async function loadOverviewData() {
         week: calculateUserTotals(weekRes),
         total: calculateUserTotals(totalRes),
       };
+      activeUsersCount.value = 0;
     }
   } catch (e) {
     console.error('加载调用概览数据失败:', e);
@@ -137,12 +176,23 @@ async function loadModels() {
     // 将后端数据转换为ModelCard期望的格式
     models.value =
       data?.items?.map((item) => {
+        // mapModelStatus 返回 status 和 statusText，statusKey 需要根据 status 额外处理
         const { status, statusText } = mapModelStatus(item.status);
+        let statusKey: ModelCardData['statusKey'];
+        if (item.status === 'healthy') {
+          statusKey = 'healthy';
+        } else if (item.status === 'unhealthy') {
+          statusKey = 'unhealthy';
+        } else {
+          statusKey = 'unknown';
+        }
+        const mapped = { status, statusText, statusKey };
         return {
           id: item.id,
           name: item.model_name,
-          status,
-          statusText,
+          status: mapped.status,
+          statusText: mapped.statusText,
+          statusKey: mapped.statusKey,
           tags: [],
           e2eP95: '--',
           todayCalls: '--',
@@ -281,9 +331,6 @@ async function handleAddModel(formData: {
   }
 }
 
-watch([activeFilter, searchQuery], () => {
-  loadModels();
-});
 async function loadGatewayConfig() {
   try {
     const data = await fetchGatewayConfig();
@@ -304,12 +351,12 @@ onMounted(() => {
   <section class="page inference-dashboard">
     <h1 class="page-title">推理模型</h1>
 
-    <!-- Overview Card -->
-    <div class="overview-card">
-      <div class="overview-card__header">
-        <div class="overview-card__title"><span>调用概览</span></div>
+    <!-- 今日调用分析 -->
+    <section class="analysis-section">
+      <div class="analysis-section__header">
+        <h2 class="analysis-section__title">今日调用分析</h2>
         <ElButton
-          class="overview-card__detail"
+          class="analysis-section__detail"
           link
           type="primary"
           @click="router.push({ name: 'inference-model-call-analysis' })"
@@ -318,82 +365,40 @@ onMounted(() => {
         </ElButton>
       </div>
       <ElAlert v-if="overviewError" :title="`加载失败: ${overviewError}`" type="error" show-icon :closable="false" />
-      <div v-else class="overview-card__content">
-        <div class="overview-card__section">
-          <div class="overview-card__section-header"><span>调用次数</span></div>
-          <div class="overview-card__metrics">
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">今日</span
-              ><span class="overview-card__metric-value"
-                >{{ overviewData.today.requests.toLocaleString()
-                }}<span class="overview-card__metric-unit">次</span></span
-              >
-            </div>
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">本周</span
-              ><span class="overview-card__metric-value"
-                >{{ overviewData.week.requests.toLocaleString()
-                }}<span class="overview-card__metric-unit">次</span></span
-              >
-            </div>
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">累计</span
-              ><span class="overview-card__metric-value"
-                >{{ overviewData.total.requests.toLocaleString()
-                }}<span class="overview-card__metric-unit">次</span></span
-              >
-            </div>
-          </div>
-        </div>
-        <div class="overview-card__divider"></div>
-        <div class="overview-card__section">
-          <div class="overview-card__section-header"><span>Token数</span></div>
-          <div class="overview-card__metrics">
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">今日</span
-              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.today.tokens) }}</span>
-            </div>
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">本周</span
-              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.week.tokens) }}</span>
-            </div>
-            <div class="overview-card__metric">
-              <span class="overview-card__metric-label">累计</span
-              ><span class="overview-card__metric-value">{{ formatTokens(overviewData.total.tokens) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Model Cards -->
-    <div class="card model-list-card">
-      <div class="model-section__header">
-        <h2 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary)">可用推理模型</h2>
-        <ElButton v-if="isAdmin" type="primary" @click="showAddModal = true">添加模型</ElButton>
-      </div>
-      <div class="model-section__toolbar">
-        <ElRadioGroup v-model="activeFilter">
-          <ElRadioButton v-for="f in filters" :key="f.key" :value="f.key">{{ f.label }}</ElRadioButton>
-        </ElRadioGroup>
-        <ElInput
-          v-model="searchQuery"
-          placeholder="请输入搜索内容"
-          :prefix-icon="Search"
-          clearable
-          style="width: 240px"
+      <div v-else class="analysis-grid">
+        <OverviewStatCard
+          v-for="card in overviewCards"
+          :key="card.key"
+          variant="hero"
+          :title="card.title"
+          :value="card.value"
+          :desc="card.desc"
+          :icon="card.icon"
         />
       </div>
+    </section>
+
+    <!-- 可用推理模型 -->
+    <section class="model-section">
+      <div class="model-section__header">
+        <h2 class="model-section__title">可用推理模型</h2>
+        <div class="model-section__actions">
+          <ElButton v-if="isAdmin" type="primary" @click="showAddModal = true">添加模型</ElButton>
+        </div>
+      </div>
+      <ElTabs v-model="activeFilter" class="model-section__tabs">
+        <ElTabPane v-for="f in filters" :key="f.key" :name="f.key" :label="f.label" />
+      </ElTabs>
       <div v-if="loading" class="model-list-state">
         <ElSkeleton :rows="6" animated />
       </div>
       <ElAlert v-else-if="listError" :title="listError" type="error" show-icon :closable="false" />
-      <div v-else-if="!models.length" class="model-list-state">
+      <div v-else-if="!filteredModels.length" class="model-list-state">
         <ElEmpty description="暂无推理模型" :image-size="80" />
       </div>
       <div v-else class="model-grid">
         <ModelCard
-          v-for="model in models"
+          v-for="model in filteredModels"
           :key="model.id"
           v-bind="model"
           :icon-src="model.iconSrc"
@@ -404,7 +409,7 @@ onMounted(() => {
           @restart="handleRestartModel(model.id)"
         />
       </div>
-    </div>
+    </section>
 
     <ModelUsageGuide
       :gateway-url="gatewayUrl"
@@ -428,127 +433,128 @@ onMounted(() => {
 .inference-dashboard {
   display: flex;
   flex-direction: column;
-  /* 允许内容超出视口时整页滚动，而不是压缩“可用推理模型”区域 */
   flex: 1 0 auto;
   box-sizing: border-box;
+  gap: 40px;
 }
 
-.overview-card {
-  background: var(--bg-2);
-  border-radius: 12px;
-  padding: 20px;
-  margin-top: 20px;
-  flex-shrink: 0;
+.inference-dashboard .page-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+  color: var(--text-primary);
 }
-.overview-card__header {
+
+.analysis-section,
+.model-section {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
+  flex-direction: column;
+  gap: 24px;
 }
-.overview-card__title {
+
+.analysis-section__header,
+.model-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analysis-section__title,
+.model-section__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.analysis-section__detail {
+  height: auto;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.model-section__actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.model-section__tabs {
+  margin-top: -8px;
+}
+
+.model-section__tabs :deep(.el-tabs__header) {
+  margin: 0;
+}
+
+.model-section__tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background-color: #dfdfdf;
+}
+
+.model-section__tabs :deep(.el-tabs__item) {
+  height: 32px;
+  padding: 0 0 8px;
+  margin-right: 32px;
   font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.overview-card__detail {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  height: auto;
-  padding: 0;
-}
-.overview-card__content {
-  display: flex;
-  gap: 0;
-}
-.overview-card__section {
-  flex: 1;
-  padding: 0 20px;
-}
-.overview-card__section:first-child {
-  padding-left: 0;
-}
-.overview-card__section:last-child {
-  padding-right: 0;
-}
-.overview-card__divider {
-  width: 1px;
-  background: var(--border);
-  margin: 0 20px;
-}
-.overview-card__section-header {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-}
-.overview-card__metrics {
-  display: flex;
-  gap: 24px;
-  margin-bottom: 16px;
-}
-.overview-card__metric {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.overview-card__metric-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.overview-card__metric-value {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.overview-card__metric-unit {
-  font-size: 12px;
   font-weight: 400;
+  line-height: 24px;
   color: var(--text-secondary);
-  margin-left: 2px;
 }
 
-.model-list-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  margin-top: 24px;
+.model-section__tabs :deep(.el-tabs__item.is-active) {
+  color: var(--color-primary);
 }
 
-.model-section__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-  flex-shrink: 0;
+.model-section__tabs :deep(.el-tabs__active-bar) {
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--color-primary);
 }
-.model-section__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  margin-bottom: 20px;
-  flex-shrink: 0;
+
+.model-section__tabs :deep(.el-tabs__content) {
+  display: none;
 }
+
 .model-list-state {
-  flex: 1;
   min-height: 160px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px 0;
 }
+
 .model-grid {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
-  gap: 28px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
   align-content: start;
+}
+
+@media (max-width: 1400px) {
+  .analysis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .analysis-grid,
+  .model-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

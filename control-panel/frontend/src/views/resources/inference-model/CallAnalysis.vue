@@ -14,10 +14,11 @@ import {
   generateDateSeriesFromRange,
   getDateRange,
 } from './utils/usage';
-import apiCallTimesIcon from '@/assets/images/api_call_times.svg';
+import OverviewStatCard from './OverviewStatCard.vue';
+import apiCallTimesIcon from '@/assets/images/api_call.svg';
 import tokenIcon from '@/assets/images/token.svg';
 import personIcon from '@/assets/images/person.svg';
-import apiCallIcon from '@/assets/images/api_call.svg';
+import dataStatisticsIcon from '@/assets/images/data_statistics.svg';
 
 const { effectiveIsAdmin: isAdmin, userId } = useAuth();
 const loading = ref(false);
@@ -72,6 +73,57 @@ const totalUsersCount = ref(0);
 function formatRequests(requests: number): string {
   return requests.toLocaleString();
 }
+
+const overviewCards = computed(() => {
+  const cards = [
+    {
+      key: 'requests',
+      title: '调用次数',
+      icon: apiCallTimesIcon,
+      metrics: [
+        { value: formatRequests(overviewStats.value.today.requests), label: '今日', hero: true },
+        { value: formatRequests(overviewStats.value.week.requests), label: '本周' },
+        { value: formatRequests(overviewStats.value.total.requests), label: '累计' },
+      ],
+    },
+    {
+      key: 'tokens',
+      title: 'Token数',
+      icon: tokenIcon,
+      metrics: [
+        { value: formatTokens(overviewStats.value.today.tokens), label: '今日', hero: true },
+        { value: formatTokens(overviewStats.value.week.tokens), label: '本周' },
+        { value: formatTokens(overviewStats.value.total.tokens), label: '累计' },
+      ],
+    },
+  ];
+
+  if (isAdmin.value) {
+    cards.push(
+      {
+        key: 'users',
+        title: '用户',
+        icon: personIcon,
+        metrics: [
+          { value: String(activeUsersCount.value), label: '近一周活跃用户数', hero: true },
+          { value: String(totalUsersCount.value), label: '总用户数' },
+        ],
+      },
+      {
+        key: 'status',
+        title: '调用状况',
+        icon: dataStatisticsIcon,
+        metrics: [
+          { value: '--', label: '实时并发数 QPS', hero: true },
+          { value: '--', label: '近一周请求成功率' },
+        ],
+      },
+    );
+  }
+
+  return cards;
+});
+
 const userRankRows = computed(() =>
   (userRankData.value?.items ?? []).map((user, index) => ({
     ...user,
@@ -508,105 +560,16 @@ onUnmounted(() => {
     <ElAlert v-else-if="error" :title="error" type="error" show-icon :closable="false" class="call-analysis__state" />
 
     <template v-else>
-      <!-- 概览指标条（对齐 DSL） -->
-      <div class="call-analysis__overview-card">
-        <div class="overview-row">
-          <section class="overview-block">
-            <header class="overview-block__header">
-              <span class="overview-block__icon">
-                <img :src="apiCallTimesIcon" alt="" width="22" height="22" />
-              </span>
-              <span class="overview-block__title">调用次数</span>
-            </header>
-            <div class="overview-block__metrics">
-              <div class="overview-metric overview-metric--hero">
-                <span class="overview-metric__value overview-metric__value--hero">{{
-                  formatRequests(overviewStats.today.requests)
-                }}</span>
-                <span class="overview-metric__label">今日</span>
-              </div>
-              <div class="overview-metric">
-                <span class="overview-metric__value">{{ formatRequests(overviewStats.week.requests) }}</span>
-                <span class="overview-metric__label">本周</span>
-              </div>
-              <div class="overview-metric">
-                <span class="overview-metric__value">{{ formatRequests(overviewStats.total.requests) }}</span>
-                <span class="overview-metric__label">累计</span>
-              </div>
-            </div>
-          </section>
-
-          <div class="overview-divider" />
-
-          <section class="overview-block">
-            <header class="overview-block__header">
-              <span class="overview-block__icon">
-                <img :src="tokenIcon" alt="" width="22" height="22" />
-              </span>
-              <span class="overview-block__title">Token数</span>
-            </header>
-            <div class="overview-block__metrics">
-              <div class="overview-metric overview-metric--hero">
-                <span class="overview-metric__value overview-metric__value--hero">{{
-                  formatTokens(overviewStats.today.tokens)
-                }}</span>
-                <span class="overview-metric__label">今日</span>
-              </div>
-              <div class="overview-metric">
-                <span class="overview-metric__value">{{ formatTokens(overviewStats.week.tokens) }}</span>
-                <span class="overview-metric__label">本周</span>
-              </div>
-              <div class="overview-metric">
-                <span class="overview-metric__value">{{ formatTokens(overviewStats.total.tokens) }}</span>
-                <span class="overview-metric__label">累计</span>
-              </div>
-            </div>
-          </section>
-
-          <template v-if="isAdmin">
-            <div class="overview-divider" />
-
-            <section class="overview-block">
-              <header class="overview-block__header">
-                <span class="overview-block__icon">
-                  <img :src="personIcon" alt="" width="22" height="22" />
-                </span>
-                <span class="overview-block__title">用户数</span>
-              </header>
-              <div class="overview-block__metrics">
-                <div class="overview-metric overview-metric--hero">
-                  <span class="overview-metric__value overview-metric__value--hero">{{ activeUsersCount }}</span>
-                  <span class="overview-metric__label">近一周活跃用户数</span>
-                </div>
-                <div class="overview-metric">
-                  <span class="overview-metric__value">{{ totalUsersCount }}</span>
-                  <span class="overview-metric__label">总用户数</span>
-                </div>
-              </div>
-            </section>
-
-            <div class="overview-divider" />
-
-            <section class="overview-block">
-              <header class="overview-block__header">
-                <span class="overview-block__icon">
-                  <img :src="apiCallIcon" alt="" width="22" height="22" />
-                </span>
-                <span class="overview-block__title">调用状况</span>
-              </header>
-              <div class="overview-block__metrics">
-                <div class="overview-metric overview-metric--hero">
-                  <span class="overview-metric__value overview-metric__value--hero">--</span>
-                  <span class="overview-metric__label">实时并发数 QPS</span>
-                </div>
-                <div class="overview-metric">
-                  <span class="overview-metric__value">--</span>
-                  <span class="overview-metric__label">近一周请求成功率</span>
-                </div>
-              </div>
-            </section>
-          </template>
-        </div>
+      <!-- 概览指标卡 -->
+      <div class="call-analysis__overview-grid" :class="{ 'call-analysis__overview-grid--admin': isAdmin }">
+        <OverviewStatCard
+          v-for="card in overviewCards"
+          :key="card.key"
+          variant="metrics"
+          :title="card.title"
+          :icon="card.icon"
+          :metrics="card.metrics"
+        />
       </div>
 
       <!-- 管理员视图 -->
@@ -642,25 +605,22 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="call-analysis__row">
-          <!-- 用户用量排名 -->
-          <div class="call-analysis__card call-analysis__card--half">
-            <h3 class="call-analysis__card-title">用户用量排名Top10</h3>
-            <ElTable :data="userRankRows" empty-text="暂无数据" stripe>
-              <ElTableColumn prop="rank" label="排名" width="88" />
-              <ElTableColumn label="用户">
-                <template #default="{ row }">
-                  {{ row.username || row.user_id }}
-                </template>
-              </ElTableColumn>
-              <ElTableColumn prop="tokensText" label="Token数" />
-              <ElTableColumn prop="requestsText" label="请求数" />
-              <template #empty>
-                <ElEmpty description="暂无数据" :image-size="72" />
+        <!-- 用户用量排名 -->
+        <div class="call-analysis__card call-analysis__card--full">
+          <h3 class="call-analysis__card-title">用户用量排名Top10</h3>
+          <ElTable :data="userRankRows" empty-text="暂无数据" class="app-table" stripe>
+            <ElTableColumn prop="rank" label="排名" width="88" />
+            <ElTableColumn label="用户">
+              <template #default="{ row }">
+                {{ row.username || row.user_id }}
               </template>
-            </ElTable>
-          </div>
-          <div class="call-analysis__placeholder" aria-hidden="true" />
+            </ElTableColumn>
+            <ElTableColumn prop="tokensText" label="Token数" />
+            <ElTableColumn prop="requestsText" label="请求数" />
+            <template #empty>
+              <ElEmpty description="暂无数据" :image-size="72" />
+            </template>
+          </ElTable>
         </div>
       </template>
 
@@ -722,7 +682,6 @@ onUnmounted(() => {
 
 <style scoped>
 .call-analysis {
-  padding: 12px 32px 24px 32px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -732,95 +691,28 @@ onUnmounted(() => {
   margin: 12px 0;
 }
 
-/* 概览指标条 */
-.call-analysis__overview-card {
-  background: var(--bg-2);
-  border-radius: 8px;
-  padding: 20px 24px;
-}
-
-.overview-row {
-  display: flex;
-  align-items: stretch;
-  gap: 40px;
-}
-
-.overview-block {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.overview-block__header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.overview-block__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--tag-bg-info);
-  flex-shrink: 0;
-}
-
-.overview-block__title {
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: var(--text-primary);
-}
-
-.overview-block__metrics {
-  display: flex;
-  align-items: flex-end;
+/* 概览指标卡 */
+.call-analysis__overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
-  padding-left: 36px;
 }
 
-.overview-metric {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-width: 0;
+.call-analysis__overview-grid--admin {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.overview-metric--hero {
-  gap: 8px;
+@media (max-width: 1400px) {
+  .call-analysis__overview-grid--admin {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.overview-metric__value {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.overview-metric__value--hero {
-  font-size: 32px;
-  line-height: 40px;
-}
-
-.overview-metric__label {
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.overview-divider {
-  width: 1px;
-  align-self: stretch;
-  background: var(--border-separator);
-  flex-shrink: 0;
+@media (max-width: 960px) {
+  .call-analysis__overview-grid,
+  .call-analysis__overview-grid--admin {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 卡片布局 */
@@ -860,19 +752,14 @@ onUnmounted(() => {
 }
 
 .call-analysis__card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   min-width: 0;
   background: var(--bg-2);
-  border-radius: 8px;
-  border: 1px solid var(--border-separator);
+  border-radius: var(--radius-2xl);
+  border: none;
   padding: 20px 24px;
-}
-
-.call-analysis__card--half {
-  width: 100%;
-}
-
-.call-analysis__placeholder {
-  min-width: 0;
 }
 
 .call-analysis__card--full {
@@ -883,15 +770,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
 }
 
 .call-analysis__card-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--text-primary);
-  line-height: 28px;
+  line-height: 24px;
 }
 
 /* ECharts容器 */
@@ -939,8 +825,7 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .overview-divider,
-  .call-analysis__placeholder {
+  .overview-divider {
     display: none;
   }
 

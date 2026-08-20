@@ -50,8 +50,10 @@ const activeIndex = computed(() => {
 function iconMaskStyle(icon?: string) {
   if (!icon) return undefined;
   return {
-    maskImage: `url(${icon})`,
-    WebkitMaskImage: `url(${icon})`,
+    maskImage: `url("${icon}")`,
+    WebkitMaskImage: `url("${icon}")`,
+    maskMode: 'alpha',
+    WebkitMaskSourceType: 'alpha',
   };
 }
 

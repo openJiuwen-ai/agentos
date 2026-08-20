@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { ElMessage, ElTabs, ElTabPane } from 'element-plus';
+import { useRouter } from 'vue-router';
+import { ElMessage, ElTabs, ElTabPane, ElLink } from 'element-plus';
 import { CopyDocument } from '@element-plus/icons-vue';
 
 const props = defineProps<{
@@ -9,7 +10,12 @@ const props = defineProps<{
   exampleContextWindow?: number | null;
 }>();
 
+const router = useRouter();
 const activeTab = ref('params');
+
+function goToApiKeyPage() {
+  void router.push({ name: 'inference-model-api-key' });
+}
 
 async function copyToClipboard(text: string, label: string) {
   try {
@@ -36,15 +42,18 @@ const modelName = computed(() => props.exampleModelName || 'deepseek-v4-flash');
 
 const contextWindow = computed(() => props.exampleContextWindow ?? 131072);
 
-const curlExample = computed(() => `curl -X POST "${gatewayBase.value}/v1/chat/completions" \\
+const curlExample = computed(
+  () => `curl -X POST "${gatewayBase.value}/v1/chat/completions" \\
   -H "Authorization: Bearer <<您的apikey>>" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${modelName.value}",
     "messages": [{"role": "user", "content": "你好"}]
-  }'`);
+  }'`,
+);
 
-const jiuwenswarmYaml = computed(() => `models:
+const jiuwenswarmYaml = computed(
+  () => `models:
   defaults:
     - model_client_config:
         api_base: ${gatewayBase.value}/v1
@@ -56,16 +65,16 @@ const jiuwenswarmYaml = computed(() => `models:
         custom_headers: {}
       model_config_obj:
         temperature: 0.95
-      is_default: true`);
+      is_default: true`,
+);
 
 const modelAlias = computed(() =>
-  props.exampleModelName
-    ? props.exampleModelName.toLowerCase().replace(/[^a-z0-9.-]/g, '')
-    : 'my-model',
+  props.exampleModelName ? props.exampleModelName.toLowerCase().replace(/[^a-z0-9.-]/g, '') : 'my-model',
 );
 
 const jiuwenswarmTuiCmd = computed(
-  () => `/model add ${modelAlias.value} api_base=${gatewayBase.value} model=${modelName.value} model_provider=OpenAI api_key=<<您的apikey>>`,
+  () =>
+    `/model add ${modelAlias.value} api_base=${gatewayBase.value} model=${modelName.value} model_provider=OpenAI api_key=<<您的apikey>>`,
 );
 </script>
 
@@ -76,9 +85,7 @@ const jiuwenswarmTuiCmd = computed(
     <ElTabs v-model="activeTab" class="usage-guide-card__tabs">
       <!-- 参数说明 -->
       <ElTabPane label="参数说明" name="params">
-        <p class="usage-guide-card__desc">
-          在调用推理模型前，请确认以下关键参数已正确配置：
-        </p>
+        <p class="usage-guide-card__desc">在调用推理模型前，请确认以下关键参数已正确配置：</p>
         <div class="usage-guide-card__table-wrap">
           <table class="usage-guide-card__table">
             <thead>
@@ -93,7 +100,7 @@ const jiuwenswarmTuiCmd = computed(
                 <td><code>api_key</code></td>
                 <td>
                   API 认证密钥，用于验证调用方身份，请在
-                  <router-link :to="{ name: 'inference-model-api-key' }">API Key 管理</router-link>
+                  <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
                   页面申请
                 </td>
                 <td><code>&lt;&lt;您的apikey&gt;&gt;</code></td>
@@ -101,17 +108,23 @@ const jiuwenswarmTuiCmd = computed(
               <tr>
                 <td><code>api_base</code> / <code>base_url</code></td>
                 <td>模型服务的访问地址（LiteLLM Gateway 统一入口）</td>
-                <td><code>{{ gatewayBase }}</code></td>
+                <td>
+                  <code>{{ gatewayBase }}</code>
+                </td>
               </tr>
               <tr>
                 <td><code>model_name</code></td>
                 <td>模型标识名称，指定要调用的具体模型</td>
-                <td><code>{{ modelName }}</code></td>
+                <td>
+                  <code>{{ modelName }}</code>
+                </td>
               </tr>
               <tr>
                 <td><code>context_window</code></td>
                 <td>模型支持的最大上下文长度（tokens），超出会截断或报错</td>
-                <td><code>{{ contextWindow }}</code></td>
+                <td>
+                  <code>{{ contextWindow }}</code>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -122,7 +135,7 @@ const jiuwenswarmTuiCmd = computed(
       <ElTabPane label="curl 示例" name="curl">
         <p class="usage-guide-card__desc">
           通过 OpenAI 兼容接口直接调用已部署的模型，<code>&lt;&lt;您的apikey&gt;&gt;</code> 请替换为
-          <router-link :to="{ name: 'inference-model-api-key' }">API Key 管理</router-link>
+          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥：
         </p>
         <div class="usage-guide-card__code-block">
@@ -145,8 +158,9 @@ const jiuwenswarmTuiCmd = computed(
       <!-- JiuwenSwarm 客户端 接入 -->
       <ElTabPane label="JiuwenSwarm 客户端接入" name="jiuwenswarm">
         <p class="usage-guide-card__desc">
-          在 JiuwenSwarm 配置文件<code>config.yaml</code> 的 <code>models</code> 字段中添加以下内容，即可将模型接入 Agent 编排流程。请将 <code>api_key</code> 替换为
-          <router-link :to="{ name: 'inference-model-api-key' }">API Key 管理</router-link>
+          在 JiuwenSwarm 配置文件<code>config.yaml</code> 的 <code>models</code> 字段中添加以下内容，即可将模型接入
+          Agent 编排流程。请将 <code>api_key</code> 替换为
+          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥，<code>api_base</code> 和 <code>model_name</code> 替换为实际值：
         </p>
         <div class="usage-guide-card__code-block">
@@ -169,8 +183,9 @@ const jiuwenswarmTuiCmd = computed(
       <!-- JiuwenSwarm TUI 接入 -->
       <ElTabPane label="JiuwenSwarm TUI 接入" name="jiuwenswarm-tui">
         <p class="usage-guide-card__desc">
-          在 JiuwenSwarm TUI 中使用 <code>/model add</code> 命令添加模型，<code>&lt;&lt;您的apikey&gt;&gt;</code> 请替换为
-          <router-link :to="{ name: 'inference-model-api-key' }">API Key 管理</router-link>
+          在 JiuwenSwarm TUI 中使用 <code>/model add</code> 命令添加模型，<code>&lt;&lt;您的apikey&gt;&gt;</code>
+          请替换为
+          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥：
         </p>
         <div class="usage-guide-card__code-block">
@@ -196,9 +211,8 @@ const jiuwenswarmTuiCmd = computed(
 <style scoped>
 .usage-guide-card {
   background: var(--bg-2);
-  border-radius: 12px;
+  border-radius: var(--radius-2xl);
   padding: 24px;
-  margin-top: 24px;
   flex-shrink: 0;
 }
 
@@ -222,6 +236,12 @@ const jiuwenswarmTuiCmd = computed(
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.usage-guide-card__desc :deep(.el-link),
+.usage-guide-card__table :deep(.el-link) {
+  font-size: inherit;
+  vertical-align: baseline;
 }
 
 .usage-guide-card__desc code {

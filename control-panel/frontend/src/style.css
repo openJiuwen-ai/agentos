@@ -23,8 +23,8 @@
 }
 
 :root {
-  --color-primary: #0a59f7;
-  --el-color-primary: #0a59f7;
+  --color-primary: #0067d1;
+  --el-color-primary: #0067d1;
   --el-font-family: 'HarmonyOS Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
  
   /* 文本色 */
@@ -33,7 +33,7 @@
   --text-placeholder: #aeaeae;
   --text-disabled: #c9c9c9;
   --text-inverse: #ffffff; 
-  --text-on: #0a59f7;
+  --text-on: #0067d1;
 
   /* 背景色 */
   --bg-1: #f3f3f3;
@@ -46,7 +46,7 @@
   /* 边框色 */
   --border: #c9c9c9;
   --border-hover: #191919;
-  --border-focus: #0a59f7;
+  --border-focus: #0067d1;
   --border-active: #b8d9f9;
   --border-disabled: #c9c9c9;
   --border-separator: #dfdfdf;
@@ -84,6 +84,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
+  --radius-2xl: 24px;
 }
 
 html,
@@ -204,7 +205,7 @@ body,
 /* White card container */
 .card {
   background: var(--bg-2);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-2xl);
   padding: 20px 24px;
 }
 
@@ -231,6 +232,86 @@ body,
 
 .data-table tr:last-child td {
   border-bottom: none;
+}
+
+/* Element Plus 表格 —— ElTable 加 class="app-table" 即可 */
+.app-table {
+  --el-table-header-bg-color: rgba(25, 25, 25, 0.05);
+  --el-table-header-text-color: var(--text-primary);
+  --el-table-border-color: var(--border-separator-subtle);
+  --el-table-row-hover-bg-color: rgba(25, 25, 25, 0.03);
+}
+
+.app-table .el-table__inner-wrapper::before {
+  display: none;
+}
+
+.app-table .el-table__header th.el-table__cell {
+  position: relative;
+  height: 40px;
+  padding: 9px 8px;
+  background: rgba(25, 25, 25, 0.05);
+  border-bottom: 1px solid var(--border-separator);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.app-table .el-table__header th.el-table__cell:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+.app-table .el-table__header th .cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
+.app-table .el-table__body td.el-table__cell {
+  height: 40px;
+  padding: 9px 8px;
+  color: var(--text-primary);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border-separator-subtle);
+}
+
+.app-table .el-table__body td .cell {
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.app-table .caret-wrapper {
+  background-image: url('./assets/images/sort-icon.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  opacity: 0.4;
+  transition: opacity 0.2s;
+}
+
+.app-table .caret-wrapper .sort-caret {
+  display: none !important;
+}
+
+.app-table th.ascending .caret-wrapper,
+.app-table th.descending .caret-wrapper {
+  opacity: 1;
 }
 
 /* Info grid & row (used by ModelInfoRow, not overridden by scoped styles) */

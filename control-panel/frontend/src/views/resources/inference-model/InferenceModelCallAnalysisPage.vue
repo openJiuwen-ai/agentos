@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router';
 import { ElButton } from 'element-plus';
-import { ArrowLeft } from '@element-plus/icons-vue';
 import CallAnalysis from './CallAnalysis.vue';
+import arrowLeftIcon from '@/assets/images/arrow-left.svg';
 
 const router = useRouter();
 
@@ -13,16 +13,16 @@ function goBack() {
 
 <template>
   <div class="detail-page">
-    <header class="detail-page__banner">
-      <div class="detail-page__banner-content">
-        <ElButton class="detail-page__back" text :icon="ArrowLeft" @click="goBack" />
-        <h1 class="detail-page__title">推理模型调用分析</h1>
-      </div>
-    </header>
+    <div class="detail-page__header">
+      <ElButton class="detail-page__back" text @click="goBack">
+        <img :src="arrowLeftIcon" alt="" class="detail-page__back-icon" width="20" height="20" />
+      </ElButton>
+      <h1 class="detail-page__title">推理模型调用分析</h1>
+    </div>
 
-    <section class="detail-page__body">
+    <div class="detail-page__body">
       <CallAnalysis />
-    </section>
+    </div>
   </div>
 </template>
 
@@ -30,28 +30,40 @@ function goBack() {
 .detail-page {
   display: flex;
   flex-direction: column;
+  gap: 24px;
   min-height: 100%;
+  padding: 24px 32px;
+  box-sizing: border-box;
+  background: var(--bg-page);
 }
 
-.detail-page__banner {
-  padding: 12px 32px;
-}
-
-.detail-page__banner-content {
+.detail-page__header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .detail-page__back {
-  width: 36px;
-  height: 36px;
+  width: 20px;
+  height: 20px;
+  min-height: unset;
   padding: 0;
-  color: var(--text-secondary);
+  margin: 0;
+  border: none;
 }
 
-.detail-page__back:hover {
-  color: var(--text-primary);
+.detail-page__back :deep(> span) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-page__back-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .detail-page__title {
@@ -67,7 +79,5 @@ function goBack() {
 .detail-page__body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  background: var(--bg-page);
 }
 </style>

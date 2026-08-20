@@ -41,18 +41,20 @@ function handleAction(action: string) {
             <ElIcon :size="24" color="#6b7280"><Monitor /></ElIcon>
           </slot>
         </div>
-        <div>
+        <div class="model-card__identity">
           <div class="model-card__name-row">
             <span class="model-card__name">{{ name }}</span>
           </div>
           <div v-if="tags?.length" class="model-card__tags">
-            <ElTag v-for="tag in tags" :key="tag" size="small" type="info">{{ tag }}</ElTag>
+            <ElTag v-for="tag in tags" :key="tag" size="small" effect="light" class="model-card__tag">
+              {{ tag }}
+            </ElTag>
           </div>
         </div>
       </div>
       <div class="model-card__status" :class="`model-card__status--${status}`">
         <span class="model-card__status-dot"></span>
-        {{ statusText }}
+        <span class="model-card__status-text">{{ statusText }}</span>
       </div>
     </div>
     <div class="model-card__info-section">
@@ -63,6 +65,7 @@ function handleAction(action: string) {
     </div>
     <div class="model-card__footer">
       <span v-if="meta?.length" class="model-card__meta">{{ meta.join(' · ') }}</span>
+      <span v-else class="model-card__meta"></span>
       <ElDropdown v-if="isAdmin" trigger="click" @command="handleAction">
         <ElButton class="model-card__more" text :icon="MoreFilled" title="更多" @click.stop />
         <template #dropdown>
@@ -90,39 +93,42 @@ function handleAction(action: string) {
 
 <style scoped>
 .model-card {
-  background: linear-gradient(180deg, #e9f4ff 0%, rgba(237, 246, 255, 0.78) 22%, rgba(255, 255, 255, 0) 100%), #fff;
-  border-radius: 24px;
-  border: 2px solid var(--border-separator-subtle);
-  padding: 20px;
+  background: var(--bg-2);
+  border-radius: var(--radius-2xl);
+  border: none;
+  padding: 20px 24px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: box-shadow 0.2s;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .model-card:hover {
-  border-color: var(--border-separator);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .model-card__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .model-card__info {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .model-card__icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  background: var(--bg-2);
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--bg-1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -137,30 +143,53 @@ function handleAction(action: string) {
   padding: 4px;
 }
 
+.model-card__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
 .model-card__name-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .model-card__name {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-card__tags {
   display: flex;
   gap: 8px;
-  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.model-card__tag {
+  --el-tag-bg-color: rgba(208, 216, 253, 0.5);
+  --el-tag-border-color: transparent;
+  --el-tag-text-color: #1f55b5;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .model-card__status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--text-primary);
+  gap: 4px;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .model-card__status-dot {
@@ -170,12 +199,19 @@ function handleAction(action: string) {
   background: var(--text-secondary);
 }
 
+.model-card__status-text {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
 .model-card__status--success .model-card__status-dot {
-  background: var(--success);
+  background: #36c18d;
 }
 
 .model-card__status--error .model-card__status-dot {
-  background: var(--error);
+  background: #e02128;
 }
 
 .model-card__status--warning .model-card__status-dot {
@@ -184,52 +220,59 @@ function handleAction(action: string) {
 
 .model-card__info-section {
   display: flex;
-  gap: 32px;
-  padding: 16px 0;
-  border-top: 1px solid #f3f4f6;
-  border-bottom: 1px solid #f3f4f6;
+  gap: 24px;
+  padding-bottom: 4px;
+}
+
+.model-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.model-info-item__label {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-secondary);
+}
+
+.model-info-item__value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 36px;
+  color: var(--text-primary);
+  opacity: 0.89;
 }
 
 .model-card__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .model-card__meta {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
   color: var(--text-secondary);
-}
-
-.model-info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.model-info-item__label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.model-info-item__value {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-card__more {
-  width: 28px;
-  height: 28px;
+  width: 16px;
+  height: 16px;
   padding: 0;
+  min-height: unset;
   color: var(--text-secondary);
 }
 
 .model-card__more:hover {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .model-card__delete {

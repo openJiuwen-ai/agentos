@@ -325,7 +325,7 @@ onUnmounted(() => {
         v-loading="listLoading"
         :data="instances"
         row-key="service_id"
-        class="agent-table"
+        class="agent-table app-table"
         :border="false"
         :empty-text="emptyText"
         @sort-change="onSortChange"
@@ -839,87 +839,6 @@ onUnmounted(() => {
   line-height: 32px;
   color: var(--text-primary);
   user-select: none;
-}
-
-/* ── 表头 / 单元格样式（对齐 818 设计稿） ── */
-:deep(.agent-table) {
-  --el-table-header-bg-color: rgba(25, 25, 25, 0.05);
-  --el-table-header-text-color: var(--text-primary);
-  --el-table-border-color: var(--border-separator-subtle);
-  --el-table-row-hover-bg-color: rgba(25, 25, 25, 0.03);
-}
-
-:deep(.agent-table .el-table__inner-wrapper::before) {
-  display: none;
-}
-
-:deep(.agent-table .el-table__header th.el-table__cell) {
-  position: relative;
-  height: 40px;
-  padding: 9px 8px;
-  background: rgba(25, 25, 25, 0.05);
-  border-bottom: 1px solid var(--border-separator);
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-}
-
-:deep(.agent-table .el-table__header th.el-table__cell:not(:first-child)::before) {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 12px;
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-}
-
-:deep(.agent-table .el-table__header th .cell) {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 22px;
-  color: var(--text-primary);
-}
-
-:deep(.agent-table .el-table__body td.el-table__cell) {
-  height: 40px;
-  padding: 9px 8px;
-  color: var(--text-primary);
-  font-weight: 400;
-  border-bottom: 1px solid var(--border-separator-subtle);
-}
-
-:deep(.agent-table .el-table__body td .cell) {
-  padding: 0;
-  font-size: 14px;
-  line-height: 22px;
-}
-
-/* ── 排序图标 ── */
-:deep(.agent-table .caret-wrapper) {
-  background-image: url('../../../assets/images/sort-icon.png');
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 12px;
-  width: 12px;
-  height: 12px;
-  margin: 0;
-  opacity: 0.4;
-  transition: opacity 0.2s;
-}
-
-:deep(.agent-table .caret-wrapper .sort-caret) {
-  display: none !important;
-}
-
-:deep(.agent-table th.ascending .caret-wrapper),
-:deep(.agent-table th.descending .caret-wrapper) {
-  opacity: 1;
 }
 
 :deep(.table-header__search .el-input__wrapper) {
