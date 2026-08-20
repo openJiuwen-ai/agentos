@@ -47,6 +47,28 @@ class TestListModelsAPI:
             assert resp.status_code == 502
 
 
+class TestListModelsHealthAPI:
+    """GET /api/v1/litellm/model/health — 模型健康状态"""
+
+    async def test_success(self, client):
+        mock = {"id-1": "healthy", "id-2": "unhealthy"}
+        with patch(
+            "app.api.v1.litellm_model.LitellmService.get_models_health",
+            new=AsyncMock(return_value=mock),
+        ):
+            resp = await client.get("/api/v1/litellm/model/health")
+            assert resp.status_code == 200
+            assert resp.json()["data"] == mock
+
+    async def test_upstream_error_502(self, client):
+        with patch(
+            "app.api.v1.litellm_model.LitellmService.get_models_health",
+            new=AsyncMock(side_effect=LitellmUpstreamError(500, "Down")),
+        ):
+            resp = await client.get("/api/v1/litellm/model/health")
+            assert resp.status_code == 502
+
+
 class TestGetModelAPI:
     """GET /api/v1/litellm/model/{model_id} — 单个模型详情"""
 

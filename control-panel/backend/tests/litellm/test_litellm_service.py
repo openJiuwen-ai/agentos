@@ -913,6 +913,101 @@ class TestServiceListModels:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Service: get_models_health
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestServiceGetModelsHealth:
+    """LitellmService.get_models_health() — {model_id: status} 映射."""
+
+    @pytest.fixture
+    def svc(self):
+        from app.services.litellm_service import LitellmService
+        s = LitellmService()
+        s._client = AsyncMock()
+        return s
+
+    @pytest.mark.asyncio
+    async def test_basic(self, svc):
+        """场景: /model/info 返回 2 模型, /health 1 healthy 1 unhealthy.
+        预期: {model_id: status} 正确映射."""
+        llm_response = {
+            "data": [
+                {"model_name": "ds", "litellm_params": {"model": "ds", "api_base": "http://a"}, "model_info": {"id": "id-1"}},
+                {"model_name": "gpt", "litellm_params": {"model": "gpt", "api_base": "http://b"}, "model_info": {"id": "id-2"}},
+            ]
+        }
+        health_response = {
+            "healthy_endpoints": [{"model": "ds", "api_base": "http://a"}],
+            "unhealthy_endpoints": [{"model": "gpt", "api_base": "http://b"}],
+        }
+
+        with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info" else health_response
+            )
+
+            result = await svc.get_models_health()
+
+        assert result == {"id-1": "healthy", "id-2": "unhealthy"}
+
+    @pytest.mark.asyncio
+    async def test_empty(self, svc):
+        """场景: /model/info 返回空.
+        预期: {}."""
+        with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = lambda method, path, **kw: (
+                {"data": []} if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
+
+            result = await svc.get_models_health()
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_no_match_is_unknown(self, svc):
+        """场景: /health 端点不匹配任何模型.
+        预期: 所有 status='unknown'."""
+        llm_response = {
+            "data": [
+                {"model_name": "ds", "litellm_params": {"model": "ds", "api_base": "http://a"}, "model_info": {"id": "id-1"}},
+            ]
+        }
+
+        with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
+
+            result = await svc.get_models_health()
+
+        assert result == {"id-1": "unknown"}
+
+    @pytest.mark.asyncio
+    async def test_skips_no_id(self, svc):
+        """场景: /model/info 返回缺 model_name 和 model_info.id 的项.
+        预期: 被跳过."""
+        llm_response = {
+            "data": [
+                {"litellm_params": {}},
+                {"model_name": "ok", "litellm_params": {}, "model_info": {"id": "id-ok"}},
+            ]
+        }
+
+        with patch.object(svc, "request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = lambda method, path, **kw: (
+                llm_response if path == "/model/info"
+                else {"healthy_endpoints": [], "unhealthy_endpoints": []}
+            )
+
+            result = await svc.get_models_health()
+
+        assert result == {"id-ok": "unknown"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Service: get_model
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -104,6 +104,11 @@ export async function fetchModelList(params?: { status?: string; keyword?: strin
   return get<ModelListResponse>('/api/v1/litellm/model', params);
 }
 
+/** 获取模型健康状态映射（列表渲染后异步刷新用） */
+export async function fetchModelsHealth() {
+  return get<Record<string, string>>('/api/v1/litellm/model/health');
+}
+
 /** 获取模型详情 */
 export async function fetchModelDetail(id: string) {
   return get<ModelDetail>(`/api/v1/litellm/model/${id}`);

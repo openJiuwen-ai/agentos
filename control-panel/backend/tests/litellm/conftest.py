@@ -17,6 +17,16 @@ import app.models.litellm_user_key       # noqa: F401
 import app.models.user_default_key       # noqa: F401
 from app.models.base import Base
 
+# ── 测试专用配置覆盖（避免 encrypt_key 因密钥为空报错） ───────────────
+# litellm 子目录使用独立引擎/fixture，不经过根 conftest 的 _configure_for_test，
+# 需在此显式设置，否则 settings.LITELLM_KEY_ENCRYPTION_KEY 为空，
+# encrypt_key() 会抛 ValueError: must decode to 32 bytes, got 0 bytes
+from app.config import settings
+settings.LITELLM_KEY_ENCRYPTION_KEY = "0" * 64   # 256-bit 全零密钥，仅测试用
+settings.LITELLM_ADMIN_URL = "http://localhost:4000"
+settings.LITELLM_MASTER_KEY = "test-master-key"
+settings.LITELLM_DATABASE_URL = "sqlite+aiosqlite://"
+
 # ── 数据库引擎（TEST_DB_URL 环境变量切换 PostgreSQL，默认 SQLite 内存）─────
 _TEST_DB_URL = os.getenv("TEST_DB_URL", "sqlite+aiosqlite://")
 

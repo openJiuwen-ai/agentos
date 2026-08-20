@@ -543,11 +543,9 @@ class LitellmService:
             for row in name_result.scalars().all():
                 local_by_name[row.model_name] = row
 
-        # 获取健康状态
-        health_map = await _build_health_map(self)
-
+        # 健康状态由独立接口 /model/health 按需刷新，避免 list_models 被 /health 阻塞
         tasks = [
-            _fetch_model_detail(self, m, local_by_name.get(m.get("model_name")), health_map)
+            _fetch_model_detail(self, m, local_by_name.get(m.get("model_name")))
             for m in llm_models
         ]
         merged = [r for r in tasks if r is not None]
@@ -563,6 +561,31 @@ class LitellmService:
             "page_size": page_size,
             "items": items,
         }
+
+    async def get_models_health(self) -> dict[str, str]:
+        """获取所有模型的健康状态映射 {model_id: status}。
+
+        供前端列表渲染后异步刷新，避免 list_models 被 /health 阻塞。
+        """
+        llm_data = await self.request("GET", "/model/info")
+        llm_models: list[dict] = []
+        if isinstance(llm_data, dict) and "data" in llm_data:
+            llm_models = llm_data["data"]
+        elif isinstance(llm_data, list):
+            llm_models = llm_data
+
+        health_map = await _build_health_map(self)
+
+        result: dict[str, str] = {}
+        for m in llm_models:
+            model_id = m.get("model_info", {}).get("id") or m.get("model_name")
+            if not model_id:
+                continue
+            llm_model = (m.get("litellm_params") or {}).get("model") or ""
+            api_base = (m.get("litellm_params") or {}).get("api_base") or ""
+            key = f"{llm_model}|{api_base}"
+            result[model_id] = health_map.get(key, "unknown")
+        return result
 
     @staticmethod
     def _model_matches(m: dict, model_id: str) -> bool:

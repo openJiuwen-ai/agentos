@@ -122,6 +122,28 @@ async def list_models(
 
 
 @router.get(
+    "/health",
+    response_model=ApiResponse[dict[str, str]],
+    summary="获取模型健康状态",
+    description=(
+        "独立探测 LiteLLM /health，返回 {model_id: status} 映射。"
+        "供前端在模型列表渲染后异步刷新状态，避免列表接口被健康探测阻塞。"
+    ),
+)
+async def list_models_health(
+    svc: LitellmService = Depends(get_litellm_svc),
+    current_user: TokenData = Depends(get_current_user),
+):
+    try:
+        data = await svc.get_models_health()
+    except LitellmConnectionError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except LitellmUpstreamError as e:
+        raise HTTPException(status_code=502, detail=e.detail) from e
+    return ApiResponse(data=data)
+
+
+@router.get(
     "/{model_id}",
     response_model=ApiResponse[ModelItem],
     summary="获取单个模型详情",

@@ -19,6 +19,7 @@ import ModelInfoDrawer from './ModelInfoDrawer.vue';
 import ModelUsageGuide from './ModelUsageGuide.vue';
 import {
   fetchModelList,
+  fetchModelsHealth,
   fetchModelDetail,
   createModel,
   updateModel,
@@ -120,6 +121,14 @@ async function loadOverviewData() {
   }
 }
 
+function mapModelStatus(rawStatus?: string): { status: 'success' | 'error' | 'warning'; statusText: string } {
+  const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
+    healthy: { status: 'success', statusText: '健康' },
+    unhealthy: { status: 'error', statusText: '异常' },
+  };
+  return statusMap[rawStatus ?? ''] ?? { status: 'warning', statusText: '未知' };
+}
+
 async function loadModels() {
   loading.value = true;
   listError.value = '';
@@ -128,11 +137,7 @@ async function loadModels() {
     // 将后端数据转换为ModelCard期望的格式
     models.value =
       data?.items?.map((item) => {
-        const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
-          healthy: { status: 'success', statusText: '健康' },
-          unhealthy: { status: 'error', statusText: '异常' },
-        };
-        const { status, statusText } = statusMap[item.status ?? ''] ?? { status: 'warning', statusText: '未知' };
+        const { status, statusText } = mapModelStatus(item.status);
         return {
           id: item.id,
           name: item.model_name,
@@ -147,11 +152,28 @@ async function loadModels() {
           contextWindow: item.model_info?.context_window,
         };
       }) ?? [];
+    // 列表渲染后异步刷新健康状态，不阻塞
+    void refreshModelsHealth();
   } catch (e) {
     models.value = [];
     listError.value = e instanceof Error ? e.message : '加载模型列表失败';
   } finally {
     loading.value = false;
+  }
+}
+
+async function refreshModelsHealth() {
+  try {
+    const healthMap = await fetchModelsHealth();
+    if (!healthMap) return;
+    models.value = models.value.map((m) => {
+      const raw = healthMap[m.id];
+      if (!raw) return m;
+      const { status, statusText } = mapModelStatus(raw);
+      return { ...m, status, statusText };
+    });
+  } catch (e) {
+    console.error('刷新模型健康状态失败:', e);
   }
 }
 
