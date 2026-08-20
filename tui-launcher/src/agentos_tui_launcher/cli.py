@@ -345,6 +345,19 @@ class LauncherCli:
         launcher_opts, _ = self.parse_launcher_args(argv)
         session = self._build_session_service(launcher_opts)
 
+        # login 子命令要求 --api-url 和 --gateway-url 必须显式提供。
+        missing = []
+        if launcher_opts.api_url is None:
+            missing.append("--api-url")
+        if launcher_opts.gateway_url is None:
+            missing.append("--gateway-url")
+        if missing:
+            self._err(
+                f"Missing required option(s): {', '.join(missing)}\n"
+                "  agentos-tui login --api-url <url> --gateway-url <url>"
+            )
+            return EXIT_USAGE
+
         # 设置输入回调。
         session.set_credential_input(self._read_username_password)
 
@@ -616,6 +629,16 @@ class LauncherCli:
                 i += 1
                 continue
 
+            # 检测单横线拼写错误，如 -api-url（应为 --api-url）。
+            # 单横线参数不会被任何 launcher 规则匹配，会静默丢失。
+            if arg.startswith(("-api-", "-gateway-", "-allow-", "-no-", "-host")):
+                suggested = "-" + arg  # 在单横线前再加一横，变成双横线
+                raise errors.UsageError(
+                    f"Unknown launcher option: {arg}\n"
+                    f"Did you mean '{suggested}'?\n"
+                    "Run 'agentos-tui --help' to see supported launcher options."
+                )
+
             # 遇到 launcher 不识别的 -- 参数，在 -- 分隔符之前报错提示。
             # 只拦截以 --allow- / --api- / --gateway- / --no- / --host 开头的参数，
             # 这些明显是 launcher 级别的参数；其他 -- 参数（如 --url、--token）
@@ -659,39 +682,22 @@ class LauncherCli:
                 gateway_port = opts.gateway_port or 19001
                 opts.gateway_url = f"ws://{opts.host}:{gateway_port}/tui"
 
-        # 如果命令行提供了 --api-url，覆盖配置中的值。
-        if opts.api_url is not None:
+        # 合并所有 CLI 参数，一次性覆盖配置中的值。
+        # 避免分三步更新导致中间状态不一致（如 gateway_url 被旧值覆盖）。
+        if opts.api_url is not None or opts.gateway_url is not None or opts.allow_insecure_http is not None:
             cfg = ClientConfig(
-                api_url=opts.api_url,
+                api_url=opts.api_url if opts.api_url is not None else cfg.api_url,
                 websocket_url=cfg.websocket_url,
                 last_user_id=cfg.last_user_id,
                 last_username=cfg.last_username,
-                allow_insecure_http=cfg.allow_insecure_http,
-                gateway_url=cfg.gateway_url,
-            )
-            need_save = True
-
-        # 如果命令行提供了 --gateway-url，覆盖配置中的值。
-        if opts.gateway_url is not None:
-            cfg = ClientConfig(
-                api_url=cfg.api_url,
-                websocket_url=cfg.websocket_url,
-                last_user_id=cfg.last_user_id,
-                last_username=cfg.last_username,
-                allow_insecure_http=cfg.allow_insecure_http,
-                gateway_url=opts.gateway_url,
-            )
-            need_save = True
-
-        # 如果命令行提供了 --allow-insecure-http，覆盖配置中的值。
-        if opts.allow_insecure_http is not None:
-            cfg = ClientConfig(
-                api_url=cfg.api_url,
-                websocket_url=cfg.websocket_url,
-                last_user_id=cfg.last_user_id,
-                last_username=cfg.last_username,
-                allow_insecure_http=opts.allow_insecure_http,
-                gateway_url=cfg.gateway_url,
+                allow_insecure_http=(
+                    opts.allow_insecure_http
+                    if opts.allow_insecure_http is not None
+                    else cfg.allow_insecure_http
+                ),
+                gateway_url=(
+                    opts.gateway_url if opts.gateway_url is not None else cfg.gateway_url
+                ),
             )
             need_save = True
 
