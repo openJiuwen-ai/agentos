@@ -103,6 +103,7 @@ async function loadProfile() {
   try {
     const data = await getMe();
     profile.value = data;
+    let a = 1;
   } catch {
     // silent
   }
