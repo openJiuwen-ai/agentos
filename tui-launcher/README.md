@@ -49,15 +49,25 @@ pip install agentos_tui_launcher-*.whl
 直接运行，会自动弹出登录提示，并把配置写入文件：
 
 ```bash
-agentos-tui --api-url http://<your-server>:8090 --gateway-url ws://<your-server>:19001/tui --allow-insecure-http true
+# 使用 --host 简化登录（推荐）：自动拼接 --api-url 和 --gateway-url
+agentos-tui login --host <your-server> --allow-insecure-http true
+
+# 自定义端口
+agentos-tui login --host <your-server> --api-port 8090 --gateway-port 19001 --allow-insecure-http true
+
+# 也支持旧方式，完全手动指定（优先级高于 --host 自动拼接）
+agentos-tui login --api-url http://<your-server>:8090 --gateway-url ws://<your-server>:19001/tui --allow-insecure-http true
 ```
 
 各参数说明：
 
 | 参数 | 说明 |
 |------|------|
-| `--api-url <url>` | IAM API 地址（会写入配置） |
-| `--gateway-url <url>` | Gateway WebSocket 地址（会写入配置） |
+| `--host <host>` | 服务器地址（IP 或域名）。未提供 `--api-url`/`--gateway-url` 时自动拼接（默认 api 端口 8090，gateway 端口 19001） |
+| `--api-port <port>` | API 端口，与 `--host` 配合使用（默认 8090） |
+| `--gateway-port <port>` | Gateway 端口，与 `--host` 配合使用（默认 19001） |
+| `--api-url <url>` | IAM API 地址（会写入配置，优先级高于 `--host` 自动拼接） |
+| `--gateway-url <url>` | Gateway WebSocket 地址（会写入配置，优先级高于 `--host` 自动拼接） |
 | `--allow-insecure-http[=true\|false]` | 允许 HTTP 连接；不加值等效于 `true` |
 | `--no-allow-insecure-http` | 禁止 HTTP 连接（覆盖 `--allow-insecure-http`） |
 | `--no-save-login` | 本次登录不保存 refresh token |

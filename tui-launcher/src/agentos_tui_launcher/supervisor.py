@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -295,6 +296,7 @@ class SubprocessRunner:
         self._current_master_fd: Optional[int] = None
         self._reader_thread: Optional[threading.Thread] = None
         self._stdout_chunks: list[bytes] = []
+        self._saved_console_mode: Optional[int] = None
         self._install_signal_handlers()
 
     def run_foreground(self, spec: ProcessSpec) -> ProcessResult:
@@ -352,6 +354,21 @@ class SubprocessRunner:
             stdin_fd = -1
             stdout_fd = -1
 
+        def _acquire_pty_ctty() -> None:
+            """子进程 preexec_fn：获取 PTY 为控制终端。
+
+            start_new_session=True 调用 setsid() 创建新会话并脱离原控制终端，
+            但不会自动绑定 PTY。需手动 TIOCSCTTY 才能使：
+            1. TIOCSWINSZ(master_fd) 发送的 SIGWINCH 到达本进程
+            2. 本进程的 ioctl(TIOCGWINSZ) 读取 PTY 尺寸（而非真实终端）
+            """
+            try:
+                import fcntl as _f
+                import termios as _t
+                _f.ioctl(0, _t.TIOCSCTTY, 0)
+            except (ImportError, OSError):
+                pass
+
         try:
             proc = subprocess.Popen(
                 [spec.executable.absolute_path, *spec.argv],
@@ -361,6 +378,8 @@ class SubprocessRunner:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 close_fds=True,
+                start_new_session=True,
+                preexec_fn=_acquire_pty_ctty,
             )
         except FileNotFoundError as exc:
             os.close(master_fd)
@@ -425,55 +444,84 @@ class SubprocessRunner:
 
         用户键盘 → PTY master → TUI stdin
         TUI stdout → PTY master → 用户终端 + 捕获缓冲区
+
+        注册 SIGWINCH 处理器：终端尺寸变化时同步 PTY 尺寸，让子进程
+        （jiuwenswarm-tui / 三方 agent-tui）收到 SIGWINCH 后正确重绘。
+        若不转发 resize，TUI 不知道终端尺寸变化，缩放后渲染仍按启动
+        尺寸，对话框/输入框可能错位或消失。
         """
         import errno
+        import fcntl
         import select
+        import termios
 
-        while True:
-            # 检查子进程是否已退出
-            if proc.poll() is not None:
-                # 子进程已退出，排空 PTY master 剩余数据
-                self._drain_master(master_fd, stdout_fd)
-                break
+        # 注册 SIGWINCH：终端大小变化时设置 flag，在循环中同步 PTY 尺寸。
+        resize_flag = [False]
+        old_sigwinch = signal.signal(
+            signal.SIGWINCH,
+            lambda signum, frame: resize_flag.__setitem__(0, True),
+        )
 
-            # 构建 readable fd 列表
-            rlist = [master_fd]
-            if stdin_fd >= 0:
-                rlist.append(stdin_fd)
-
-            try:
-                ready, _, _ = select.select(rlist, [], [], 0.1)
-            except (OSError, select.error) as exc:
-                # 信号中断 select 是正常现象
-                if getattr(exc, "errno", None) == errno.EINTR:
-                    continue
-                break
-
-            # 用户键盘输入 → PTY master → TUI
-            if stdin_fd >= 0 and stdin_fd in ready:
-                try:
-                    data = os.read(stdin_fd, 1024)
-                    if data:
-                        os.write(master_fd, data)
-                except OSError:
-                    pass
-
-            # TUI 输出 → PTY master → 用户终端 + 捕获
-            if master_fd in ready:
-                try:
-                    data = os.read(master_fd, 4096)
-                    if not data:
-                        # master 端已关闭（TUI 退出）
-                        break
-                    self._stdout_chunks.append(data)
-                    # 转发到用户终端
-                    if stdout_fd >= 0:
-                        try:
-                            os.write(stdout_fd, data)
-                        except OSError:
-                            pass
-                except OSError:
+        try:
+            while True:
+                # 检查子进程是否已退出
+                if proc.poll() is not None:
+                    # 子进程已退出，排空 PTY master 剩余数据
+                    self._drain_master(master_fd, stdout_fd)
                     break
+
+                # --- Resize 检测 ---
+                if resize_flag[0]:
+                    resize_flag[0] = False
+                    try:
+                        winsize = fcntl.ioctl(
+                            stdin_fd, termios.TIOCGWINSZ, b"\x00" * 8
+                        )
+                        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                    except (OSError, ValueError):
+                        pass
+
+                # 构建 readable fd 列表
+                rlist = [master_fd]
+                if stdin_fd >= 0:
+                    rlist.append(stdin_fd)
+
+                try:
+                    ready, _, _ = select.select(rlist, [], [], 0.1)
+                except (OSError, select.error) as exc:
+                    # 信号中断 select 是正常现象
+                    if getattr(exc, "errno", None) == errno.EINTR:
+                        continue
+                    break
+
+                # 用户键盘输入 → PTY master → TUI
+                if stdin_fd >= 0 and stdin_fd in ready:
+                    try:
+                        data = os.read(stdin_fd, 1024)
+                        if data:
+                            os.write(master_fd, data)
+                    except OSError:
+                        pass
+
+                # TUI 输出 → PTY master → 用户终端 + 捕获
+                if master_fd in ready:
+                    try:
+                        data = os.read(master_fd, 4096)
+                        if not data:
+                            # master 端已关闭（TUI 退出）
+                            break
+                        self._stdout_chunks.append(data)
+                        # 转发到用户终端
+                        if stdout_fd >= 0:
+                            try:
+                                os.write(stdout_fd, data)
+                            except OSError:
+                                pass
+                    except OSError:
+                        break
+        finally:
+            # 恢复 SIGWINCH 处理器
+            signal.signal(signal.SIGWINCH, old_sigwinch)
 
         # 等待子进程完全退出，获取退出码
         proc.wait()
@@ -561,11 +609,17 @@ class SubprocessRunner:
         """创建 ConPTY 所需的输入/输出管道。
 
         Returns (input_read, input_write, output_read, output_write) 均为 Win32 HANDLE。
+
+        管道缓冲区设为 0 时使用系统默认值（通常仅 4096 字节）。
+        全屏 TUI 输出大量 VT 序列时，若 output pipe 填满，
+        ConPTY 会阻塞在写管道 → TUI 阻塞在 I/O → 整个系统死锁。
+        使用 64KB 缓冲区确保高吞吐场景下不背压。
         """
         import _winapi
 
-        input_read, input_write = _winapi.CreatePipe(None, 0)
-        output_read, output_write = _winapi.CreatePipe(None, 0)
+        pipe_buffer_size = 65536  # 64KB
+        input_read, input_write = _winapi.CreatePipe(None, pipe_buffer_size)
+        output_read, output_write = _winapi.CreatePipe(None, pipe_buffer_size)
         return input_read, input_write, output_read, output_write
 
     @staticmethod
@@ -833,51 +887,140 @@ class SubprocessRunner:
 
         input_write_fd = msvcrt.open_osfhandle(input_write, os.O_WRONLY)
 
-        def _output_reader() -> None:
-            """后台线程：从 ConPTY 输出管道读取，转发到控制台并捕获。
+        # 输出队列：解耦"管道读取"与"控制台写入"。详见 _output_reader 注释。
+        output_queue: "queue.Queue[Optional[bytes]]" = queue.Queue()
 
-            不依赖外部 stop 事件；持续读到管道关闭（EOF）为止，
-            确保进程退出前的最后输出（handoff JSON）也不会丢失。
+        def _output_reader() -> None:
+            """后台线程：从 ConPTY 输出管道**快速**读取并放入 output_queue。
+
+            本线程只负责尽快清空管道，**绝不**在此处做控制台写入或 flush。
+            控制台写入由独立的 _console_writer 线程异步消费 output_queue 完成。
+
+            关键背景（Windows 全屏卡死的根因）：
+            Microsoft 官方文档
+            (https://learn.microsoft.com/zh-cn/windows/console/creating-a-pseudoconsole-session)
+            明确警告："若不充分排空输出管道，可能导致 ResizePseudoConsole
+            及 ClosePseudoConsole 死锁"。ConPTY 输出管道缓冲区仅 4-64KB，
+            而全屏 TUI（240x60 ≈ 14k cells）单次重绘可能产出数十 KB VT
+            序列。若"读取→写入控制台→flush"在同一线程串行执行，当
+            stdout_buffer.flush() 因 conhost 大缓冲区渲染或 GIL 竞争而
+            变慢时，管道会被填满 → 子进程 write() 阻塞 → 子进程事件循环
+            卡死，无法处理键盘输入 → 表现为 TUI 全屏下"界面卡死、无法输入
+            文字或命令"，而小屏下输出量小、管道不会满，故一切正常。
+
+            解耦后：
+            - 本线程 os.read 后立即入队（仅受 GIL 短暂加锁影响），管道始终被
+              快速清空，子进程 write() 永不阻塞 → 事件循环持续运转 →
+              ResizePseudoConsole 也不会死锁。
+            - _console_writer 以自己的节奏消费队列，慢一点也无害。
             """
             try:
                 read_fd = msvcrt.open_osfhandle(output_read, os.O_RDONLY)
-                # 通过 Python 的 stdout 写入：控制台场景走 WriteConsoleW（UTF-8
-                # 字节转 UTF-16 渲染，不受控制台活动代码页影响），重定向到文件时
-                # 按 UTF-8 原始字节写入。不能直接 WriteFile 到控制台句柄——
-                # 那会按活动代码页（中文系统常为 936/GBK）解释字节，
-                # UTF-8 多字节字符（█、╗、中文等）会乱码。
-                stdout_buffer = sys.stdout.buffer
                 while True:
                     try:
-                        data = os.read(read_fd, 4096)
+                        # 增大单次读取量到 16KB，减少 syscall 次数，配合
+                        # 64KB 管道缓冲区可在 4 次 read 内清空一轮。
+                        data = os.read(read_fd, 16384)
                         if not data:
                             break
                         self._stdout_chunks.append(data)
+                        output_queue.put(data)
+                    except OSError:
+                        break
+            except Exception as exc:
+                _logger.debug("ConPTY output reader stopped: %s", exc)
+            finally:
+                # 哨兵：通知 _console_writer 管道已 EOF，可退出。
+                output_queue.put(None)
+
+        def _console_writer() -> None:
+            """后台线程：从 output_queue 取出 ConPTY 输出并写入 launcher 真实 stdout。
+
+            通过 Python 的 stdout 写入：控制台场景走 WriteConsoleW（UTF-8
+            字节转 UTF-16 渲染，不受控制台活动代码页影响），重定向到文件时
+            按 UTF-8 原始字节写入。不能直接 WriteFile 到控制台句柄——
+            那会按活动代码页（中文系统常为 936/GBK）解释字节，
+            UTF-8 多字节字符（█、╗、中文等）会乱码。
+
+            以独立线程运行，即使此处的 write/flush 较慢，也不会反过来
+            阻塞 _output_reader 对管道的排空，从而避免 ConPTY 死锁。
+            """
+            stdout_buffer = sys.stdout.buffer
+            try:
+                while True:
+                    data = output_queue.get()
+                    if data is None:
+                        break
+                    try:
                         stdout_buffer.write(data)
                         stdout_buffer.flush()
                     except OSError:
                         break
             except Exception as exc:
-                _logger.debug("ConPTY output reader stopped: %s", exc)
+                _logger.debug("ConPTY console writer stopped: %s", exc)
 
         def _input_forwarder() -> None:
             """后台线程：从 stdin 读取并转发到 ConPTY 输入管道。
 
             Windows 控制台输入编码为活动代码页（如 936/GBK），
             而 ConPTY 中的 TUI 期望 UTF-8，需做编码转换。
+
+            **关键**：
+            1. 必须用 DuplicateHandle 复制 stdin 句柄再创建 fd。
+               os.close(fd) 会 CloseHandle 底层句柄，若直接用
+               GetStdHandle(STD_INPUT_HANDLE) 的原始句柄，close 后
+               stdin 被永久销毁，后续 TUI isTTY 检测失败。
+            2. 使用阻塞 os.read 读取输入（经实测验证可靠）。
+               不要改成 msvcrt.kbhit() 轮询——kbhit() 在 raw 模式 +
+               ENABLE_VIRTUAL_TERMINAL_INPUT 下可能永远返回 False，
+               导致键盘输入完全无响应（终端卡死）。
+               本线程为 daemon，子进程退出后 join 超时即可，
+               进程退出时会被强制终止，阻塞读取不会阻塞进程退出。
+            3. stdin_fd 必须在 finally 中关闭，否则 fd 泄漏。
             """
             # 获取控制台输入代码页，用于解码输入字节
             input_cp = kernel32.GetConsoleCP()
+            stdin_fd = None
             try:
-                stdin_fd = msvcrt.open_osfhandle(
-                    _winapi.GetStdHandle(_winapi.STD_INPUT_HANDLE), os.O_RDONLY
-                )
+                # 复制 stdin 句柄，避免 os.close 销毁原始句柄
+                from ctypes import wintypes as _wt
+                kernel32.DuplicateHandle.argtypes = [
+                    _wt.HANDLE, _wt.HANDLE,
+                    _wt.HANDLE, ctypes.POINTER(_wt.HANDLE),
+                    _wt.DWORD, _wt.BOOL, _wt.DWORD,
+                ]
+                kernel32.DuplicateHandle.restype = _wt.BOOL
+                current_proc = kernel32.GetCurrentProcess()
+                orig_stdin = _winapi.GetStdHandle(_winapi.STD_INPUT_HANDLE)
+                dup_handle = _wt.HANDLE()
+                if not kernel32.DuplicateHandle(
+                    current_proc, _wt.HANDLE(orig_stdin),
+                    current_proc, ctypes.byref(dup_handle),
+                    0, False, 2,  # DUPLICATE_SAME_ACCESS
+                ):
+                    return
+                stdin_fd = msvcrt.open_osfhandle(dup_handle.value, os.O_RDONLY)
                 while True:
                     try:
                         data = os.read(stdin_fd, 1024)
                         if not data:
                             break
-                        if input_cp != 65001:
+                        # 拦截 Ctrl+V (0x16)：从剪贴板读取并替换为剪贴板内容，
+                        # 让 cmd/powershell 在 QuickEdit 禁用时仍可通过 Ctrl+V 粘贴。
+                        # 0x16 在所有常见代码页（CP437/GBK/UTF-8）中均为单字节，
+                        # 可在字节流阶段直接 split。
+                        if b"\x16" in data:
+                            parts = data.split(b"\x16")
+                            # 非 Ctrl+V 片段仍需按控制台代码页转换
+                            if input_cp != 65001:
+                                parts = [
+                                    p.decode(f"cp{input_cp}", errors="replace")
+                                    .encode("utf-8")
+                                    for p in parts
+                                ]
+                            clip = self._read_win_clipboard()
+                            os.write(input_write_fd, clip.join(parts))
+                        elif input_cp != 65001:
                             # 从代码页解码为 Unicode 再编码为 UTF-8
                             text = data.decode(f"cp{input_cp}", errors="replace")
                             os.write(input_write_fd, text.encode("utf-8"))
@@ -887,8 +1030,15 @@ class SubprocessRunner:
                         break
             except Exception as exc:
                 _logger.debug("ConPTY input forwarder stopped: %s", exc)
+            finally:
+                if stdin_fd is not None:
+                    try:
+                        os.close(stdin_fd)
+                    except OSError:
+                        pass
 
         output_thread = threading.Thread(target=_output_reader, daemon=True)
+        writer_thread = threading.Thread(target=_console_writer, daemon=True)
         input_thread = threading.Thread(target=_input_forwarder, daemon=True)
 
         # 启用控制台输出句柄的 ANSI 处理，否则 ConPTY 输出的转义码会原样显示乱码。
@@ -898,6 +1048,7 @@ class SubprocessRunner:
         # 结束后恢复。若 stdin 非控制台则静默跳过。
         raw_console = False
         try:
+            self._save_win_console_mode()
             self._set_win_console_raw(True)
             raw_console = True
         except Exception as exc:
@@ -905,20 +1056,58 @@ class SubprocessRunner:
             _logger.debug("Failed to enable raw console mode: %s", exc)
 
         output_thread.start()
+        writer_thread.start()
         input_thread.start()
 
+        # 绑定 ResizePseudoConsole 用于终端缩放时同步 ConPTY 尺寸。
+        resize_pseudo_console = kernel32.ResizePseudoConsole
+        resize_pseudo_console.argtypes = [wintypes.HANDLE, COORD]
+        resize_pseudo_console.restype = ctypes.c_long  # HRESULT
+
+        # 记录初始控制台尺寸，用于轮询检测 resize。
+        last_size = self._conpty_get_console_size()
+
         try:
-            # 主线程：等待子进程退出
+            # 主线程：轮询等待子进程退出，同时检测终端 resize。
+            # 不能用 INFINITE 阻塞等待，否则无法响应窗口缩放。
             wait_for_single_object = kernel32.WaitForSingleObject
             wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             wait_for_single_object.restype = wintypes.DWORD
-            wait_for_single_object(proc_handle, 0xFFFFFFFF)
+            wait_timeout = 100  # 100ms 轮询间隔
+            while True:
+                rc = wait_for_single_object(
+                    wintypes.HANDLE(proc_handle_value),
+                    wintypes.DWORD(wait_timeout),
+                )
+                if rc == 0:  # WAIT_OBJECT_0：子进程已退出
+                    break
+                # rc == 258 (WAIT_TIMEOUT)：继续轮询，检查 resize
+                cur_size = self._conpty_get_console_size()
+                if cur_size != last_size:
+                    last_size = cur_size
+                    cols, rows = cur_size
+                    hr = resize_pseudo_console(
+                        wintypes.HANDLE(hpc.value), COORD(cols, rows)
+                    )
+                    _logger.debug(
+                        f"ResizePseudoConsole HR=0x{hr & 0xFFFFFFFF:08x} "
+                        f"cols={cols} rows={rows}"
+                    )
         finally:
             if raw_console:
-                self._set_win_console_raw(False)
-            # 关闭输入写端 → ConPTY 感知 EOF → 刷新输出 → reader 收到 EOF
+                self._restore_win_console_mode()
+            # 关闭输入写端 → ConPTY 感知 EOF
             os.close(input_write_fd)
+            # 先关闭 ConPTY，释放其对 output pipe 的引用，
+            # 使 _output_reader 收到 EOF 并退出。
+            # 若在 join 之后再关闭，output_thread 会因等不到 EOF 而超时，
+            # 导致最后的 handoff JSON 丢失。
+            close_pseudo_console(hpc)
             output_thread.join(timeout=3)
+            # output_thread 退出后会向 output_queue 投递 None 哨兵，
+            # _console_writer 收到后即可收尾；join 必须在 output_thread 之后，
+            # 否则 writer 会因等不到哨兵而 hang 至超时。
+            writer_thread.join(timeout=3)
             input_thread.join(timeout=2)
 
         # --- 8. 获取退出码 ---
@@ -932,7 +1121,6 @@ class SubprocessRunner:
         get_exit_code_process(proc_handle, ctypes.byref(exit_code_proc))
 
         # --- 9. 清理 ---
-        close_pseudo_console(hpc)
         _winapi.CloseHandle(input_read)
         # input_write 已通过 os.close(input_write_fd) 关闭
         # output_read 可能已被输出线程的 fd 关闭（线程读到 EOF 退出时，
@@ -966,6 +1154,38 @@ class SubprocessRunner:
         entries = "".join(f"{k}={v}\0" for k, v in env.items())
         return (entries + "\0").encode("utf-16-le")
 
+    def _save_win_console_mode(self) -> None:
+        """保存当前控制台输入模式，用于后续精确恢复。"""
+        try:
+            import _winapi
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.GetStdHandle(_winapi.STD_INPUT_HANDLE)
+            mode = wintypes.DWORD()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                self._saved_console_mode = mode.value
+        except (OSError, AttributeError):
+            self._saved_console_mode = None
+
+    def _restore_win_console_mode(self) -> None:
+        """精确恢复之前保存的控制台输入模式。
+
+        使用保存的原始模式精确还原，避免 read-modify-write 模式
+        在多次调用间丢失或引入额外标志位。
+        """
+        if self._saved_console_mode is None:
+            # 没有保存过模式，回退到 _set_win_console_raw(False) 的默认恢复。
+            self._set_win_console_raw(False)
+            return
+        try:
+            import _winapi
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.GetStdHandle(_winapi.STD_INPUT_HANDLE)
+            kernel32.SetConsoleMode(handle, self._saved_console_mode)
+        except (OSError, AttributeError):
+            pass
+
     @staticmethod
     def _set_win_console_raw(raw: bool) -> None:
         """切换 launcher 真实控制台的输入模式（ConPTY 转发期间使用）。
@@ -973,7 +1193,7 @@ class SubprocessRunner:
         raw=True：禁用 ENABLE_LINE_INPUT / ENABLE_ECHO_INPUT，启用
         ENABLE_VIRTUAL_TERMINAL_INPUT，使 os.read 能逐键读取 VT 序列
         （全屏 TUI 需要原始按键流；默认行缓冲模式下按键会被缓存到回车）。
-        raw=False：恢复默认模式。
+        raw=False：恢复默认模式（移除 ENABLE_VIRTUAL_TERMINAL_INPUT）。
 
         若 stdin 不是真实控制台（如被重定向为管道），GetConsoleMode 失败，
         静默跳过。
@@ -986,12 +1206,29 @@ class SubprocessRunner:
             mode = wintypes.DWORD()
             if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
                 return
-            # ENABLE_LINE_INPUT=0x0002, ENABLE_ECHO_INPUT=0x0004,
+            # ENABLE_PROCESSED_INPUT=0x0001, ENABLE_LINE_INPUT=0x0002,
+            # ENABLE_ECHO_INPUT=0x0004, ENABLE_WINDOW_INPUT=0x0008,
+            # ENABLE_MOUSE_INPUT=0x0010, ENABLE_INSERT_MODE=0x0020,
+            # ENABLE_QUICK_EDIT_MODE=0x0040, ENABLE_EXTENDED_FLAGS=0x0080,
             # ENABLE_VIRTUAL_TERMINAL_INPUT=0x0200
             if raw:
-                new_mode = (mode.value & ~0x0002 & ~0x0004) | 0x0200
+                # 清除 PROCESSED_INPUT 使 Ctrl+C 不被本地拦截为信号，
+                # 而是作为 \x03 转发到 ConPTY 子进程。
+                #
+                # **保留 ENABLE_QUICK_EDIT_MODE**：让用户可以用鼠标选中
+                # 控制台中的历史消息进行复制。QuickEdit 开启后，鼠标
+                # 点击控制台客户区会进入"选择模式"，期间键盘输入会
+                # 被截留，但用户可以通过 Enter 或单击退出选择模式，
+                # 键盘输入即可恢复。
+                new_mode = (
+                    mode.value
+                    & ~0x0001  # 清 PROCESSED_INPUT
+                    & ~0x0002  # 清 LINE_INPUT
+                    & ~0x0004  # 清 ECHO_INPUT
+                    # 保留 QUICK_EDIT_MODE，允许鼠标选中复制历史消息
+                ) | 0x0080 | 0x0200  # 置 EXTENDED_FLAGS | VIRTUAL_TERMINAL_INPUT
             else:
-                new_mode = mode.value | 0x0002 | 0x0004
+                new_mode = (mode.value | 0x0001 | 0x0002 | 0x0004) & ~0x0200
             kernel32.SetConsoleMode(handle, new_mode)
         except (OSError, AttributeError):
             pass
@@ -1017,6 +1254,62 @@ class SubprocessRunner:
             kernel32.SetConsoleMode(handle, new_mode)
         except (OSError, AttributeError):
             pass
+
+    @staticmethod
+    def _read_win_clipboard() -> bytes:
+        """从 Windows 剪贴板读取文本，转换为 UTF-8 字节。
+
+        在 raw VT 输入模式下，传统 conhost（cmd.exe / powershell.exe）：
+        - QuickEdit 被显式禁用（避免选择模式冻结输入），右键粘贴随之失效
+        - Shift+Insert 不触发 conhost 自动粘贴
+        - Ctrl+V 生成控制字符 ``\\x16`` 传到 ReadFile
+        本函数配合 _input_forwarder 拦截 ``\\x16``，主动从剪贴板取出
+        文本转发到子进程，恢复 cmd/powershell 下的粘贴能力。
+        Windows Terminal 自身处理粘贴，不依赖此机制。
+
+        Returns:
+            剪贴板文本的 UTF-8 字节；剪贴板不可用或无文本时返回 ``b""``。
+        """
+        try:
+            from ctypes import wintypes as _wt
+
+            cf_unicode_text = 13
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+            user32.OpenClipboard.argtypes = [_wt.HWND]
+            user32.OpenClipboard.restype = _wt.BOOL
+            user32.CloseClipboard.argtypes = []
+            user32.CloseClipboard.restype = _wt.BOOL
+            user32.IsClipboardFormatAvailable.argtypes = [_wt.UINT]
+            user32.IsClipboardFormatAvailable.restype = _wt.BOOL
+            user32.GetClipboardData.argtypes = [_wt.UINT]
+            user32.GetClipboardData.restype = _wt.HANDLE
+            kernel32.GlobalLock.argtypes = [_wt.HGLOBAL]
+            kernel32.GlobalLock.restype = _wt.LPVOID
+            kernel32.GlobalUnlock.argtypes = [_wt.HGLOBAL]
+            kernel32.GlobalUnlock.restype = _wt.BOOL
+
+            if not user32.OpenClipboard(None):
+                return b""
+            try:
+                if not user32.IsClipboardFormatAvailable(cf_unicode_text):
+                    return b""
+                handle = user32.GetClipboardData(cf_unicode_text)
+                if not handle:
+                    return b""
+                ptr = kernel32.GlobalLock(handle)
+                if not ptr:
+                    return b""
+                try:
+                    text = ctypes.wstring_at(ptr)
+                    return text.encode("utf-8")
+                finally:
+                    kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+        except (OSError, AttributeError, ValueError):
+            return b""
 
     @staticmethod
     def _conpty_close_pipes_silent(

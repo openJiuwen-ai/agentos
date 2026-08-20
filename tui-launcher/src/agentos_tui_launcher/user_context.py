@@ -149,6 +149,15 @@ class SessionServiceImpl:
                 "Already logged in; pass replace_existing=True or logout first."
             )
 
+        # 如果已有旧 session 且要替换，先清理旧 session 的持久化凭据，
+        # 避免旧用户的 refresh token 残留。
+        if self._session is not None and replace_existing:
+            old_key = CredentialKey(
+                service_origin=_normalize_origin(self._session.context.service_url),
+                user_id=self._session.context.user_id,
+            )
+            self._safe_delete_credential(old_key)
+
         # 读取输入；具体由 CLI 层负责关闭回显并注入回调。
         # 这里通过 _read_credentials 抽象，便于测试。
         username, password = self._read_credentials()

@@ -348,10 +348,22 @@ class LauncherCli:
         # 设置输入回调。
         session.set_credential_input(self._read_username_password)
 
-        # 如果已有身份，明确确认是否替换。
+        # 先尝试恢复现有登录态，检测是否已有持久化登录身份。
+        # 注意：每次 CLI 调用都会创建新的 SessionServiceImpl，
+        # 因此 has_session 始终为 False，必须通过 restore() 检测已有登录。
         replace_existing = True
         if session.has_session:
+            # 内存中已有 session（极少见，仅当 session 复用时会触发）
             replace_existing = self._confirm_replace_login()
+        else:
+            # 尝试从持久化存储恢复，检测是否已有登录用户。
+            try:
+                restored = session.restore()
+                if restored is not None:
+                    replace_existing = self._confirm_replace_login()
+            except Exception:
+                # 恢复失败（网络不可用、凭据不存在等），仍允许登录。
+                pass
 
         context = session.login(
             replace_existing=replace_existing,
@@ -370,6 +382,23 @@ class LauncherCli:
         """logout 子命令：调用服务端 logout 并清除本地凭据。"""
         launcher_opts, _ = self.parse_launcher_args(argv)
         session = self._build_session_service(launcher_opts)
+
+        # 检查是否有活跃登录态，避免连续登出时产生误导。
+        # 注意：每次 CLI 调用都会创建新的 SessionServiceImpl，
+        # 因此必须通过 restore() 检测已有持久化登录。
+        has_active_login = bool(session.has_session)
+        if not has_active_login:
+            try:
+                restored = session.restore()
+                has_active_login = restored is not None
+            except Exception:
+                # 恢复失败（网络不可用、凭据损坏等），仍尝试 logout 清理本地。
+                pass
+
+        if not has_active_login:
+            self._out("No active session to log out of.")
+            return EXIT_OK
+
         try:
             session.logout()
             self._out("Logged out.")
@@ -414,8 +443,12 @@ class LauncherCli:
             "Launcher options:\n"
             "  -h, --help              Show this help and exit.\n"
             "  -V, --version           Show version and exit.\n"
-            "  --api-url <url>        IAM / User API base URL.\n"
-            "  --gateway-url <url>    Gateway URL passed to JiuwenSwarm TUI as --url.\n"
+            "  --host <host>           Server host (IP or domain). Auto-splices\n"
+            "                          --api-url and --gateway-url when omitted.\n"
+            "  --api-port <port>       API port (default: 8090, used with --host).\n"
+            "  --gateway-port <port>   Gateway port (default: 19001, used with --host).\n"
+            "  --api-url <url>         IAM / User API base URL.\n"
+            "  --gateway-url <url>     Gateway URL passed to JiuwenSwarm TUI as --url.\n"
             "  --allow-insecure-http[=true|false]\n"
             "                              Allow HTTP connections (non-HTTPS) for API.\n"
             "                              Default: true (when flag present without value).\n"
@@ -431,6 +464,8 @@ class LauncherCli:
             "  5  required executable unavailable\n"
             "  6  network or remote service error\n"
             "  70 internal error\n"
+            "\n"
+            f"Config file: {FileConfigStore().config_path()}\n"
         )
         return EXIT_OK
 
@@ -449,6 +484,9 @@ class LauncherCli:
         gateway_url: Optional[str] = None
         no_save_login = False
         allow_insecure_http: Optional[bool] = None
+        host: Optional[str] = None
+        api_port: Optional[int] = None
+        gateway_port: Optional[int] = None
         tui_args: list[str] = []
         seen_separator = False
 
@@ -528,11 +566,61 @@ class LauncherCli:
                 i += 1
                 continue
 
+            if arg == "--host":
+                if i + 1 >= n:
+                    raise errors.UsageError("--host requires a value.")
+                host = argv[i + 1]
+                i += 2
+                continue
+
+            if arg.startswith("--host="):
+                host = arg[len("--host="):]
+                if not host:
+                    raise errors.UsageError("--host value is empty.")
+                i += 1
+                continue
+
+            if arg == "--api-port":
+                if i + 1 >= n:
+                    raise errors.UsageError("--api-port requires a value.")
+                try:
+                    api_port = int(argv[i + 1])
+                except ValueError as err:
+                    raise errors.UsageError("--api-port must be an integer.") from err
+                i += 2
+                continue
+
+            if arg.startswith("--api-port="):
+                try:
+                    api_port = int(arg[len("--api-port="):])
+                except ValueError as err:
+                    raise errors.UsageError("--api-port must be an integer.") from err
+                i += 1
+                continue
+
+            if arg == "--gateway-port":
+                if i + 1 >= n:
+                    raise errors.UsageError("--gateway-port requires a value.")
+                try:
+                    gateway_port = int(argv[i + 1])
+                except ValueError as err:
+                    raise errors.UsageError("--gateway-port must be an integer.") from err
+                i += 2
+                continue
+
+            if arg.startswith("--gateway-port="):
+                try:
+                    gateway_port = int(arg[len("--gateway-port="):])
+                except ValueError as err:
+                    raise errors.UsageError("--gateway-port must be an integer.") from err
+                i += 1
+                continue
+
             # 遇到 launcher 不识别的 -- 参数，在 -- 分隔符之前报错提示。
-            # 只拦截以 --allow- / --api- / --gateway- / --no- 开头的参数，
+            # 只拦截以 --allow- / --api- / --gateway- / --no- / --host 开头的参数，
             # 这些明显是 launcher 级别的参数；其他 -- 参数（如 --url、--token）
             # 归 JiuwenSwarm TUI。
-            if arg.startswith(("--allow-", "--api-", "--gateway-", "--no-")):
+            if arg.startswith(("--allow-", "--api-", "--gateway-", "--no-", "--host")):
                 raise errors.UsageError(
                     f"Unknown launcher option: {arg}\n"
                     "Run 'agentos-tui --help' to see supported launcher options."
@@ -548,15 +636,28 @@ class LauncherCli:
                 no_save_login=no_save_login,
                 gateway_url=gateway_url,
                 allow_insecure_http=allow_insecure_http,
+                host=host,
+                api_port=api_port,
+                gateway_port=gateway_port,
             ),
             tuple(tui_args),
         )
 
-    def _build_session_service(self, opts: "_LauncherOpts") -> SessionServiceImpl:
+    @staticmethod
+    def _build_session_service(opts: "_LauncherOpts") -> SessionServiceImpl:
         """构造 SessionService 及其依赖。"""
         config_store = FileConfigStore()
         cfg = config_store.load()
         need_save = False
+
+        # 如果提供了 --host，自动拼接 --api-url 和 --gateway-url（仅当未显式提供时）。
+        if opts.host is not None:
+            if opts.api_url is None:
+                api_port = opts.api_port or 8090
+                opts.api_url = f"http://{opts.host}:{api_port}"
+            if opts.gateway_url is None:
+                gateway_port = opts.gateway_port or 19001
+                opts.gateway_url = f"ws://{opts.host}:{gateway_port}/tui"
 
         # 如果命令行提供了 --api-url，覆盖配置中的值。
         if opts.api_url is not None:
@@ -604,7 +705,6 @@ class LauncherCli:
             cred_store = FileCredentialStore()
 
         cfg = config_store.load()
-        self._out(f"Config: {config_store.config_path()}")
 
         auth_client = RequestsAuthClient(
             allow_insecure_http=cfg.allow_insecure_http
@@ -1071,7 +1171,15 @@ class LauncherCli:
 class _LauncherOpts:
     """launcher 自有参数解析结果。"""
 
-    __slots__ = ("api_url", "no_save_login", "gateway_url", "allow_insecure_http")
+    __slots__ = (
+        "api_url",
+        "no_save_login",
+        "gateway_url",
+        "allow_insecure_http",
+        "host",
+        "api_port",
+        "gateway_port",
+    )
 
     def __init__(
         self,
@@ -1080,11 +1188,17 @@ class _LauncherOpts:
         no_save_login: bool,
         gateway_url: Optional[str] = None,
         allow_insecure_http: Optional[bool] = None,
+        host: Optional[str] = None,
+        api_port: Optional[int] = None,
+        gateway_port: Optional[int] = None,
     ) -> None:
         self.api_url = api_url
         self.no_save_login = no_save_login
         self.gateway_url = gateway_url
         self.allow_insecure_http = allow_insecure_http
+        self.host = host
+        self.api_port = api_port
+        self.gateway_port = gateway_port
 
 
 def _mask_user_id(user_id: str) -> str:
