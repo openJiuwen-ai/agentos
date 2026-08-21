@@ -218,7 +218,7 @@ resolve_yr_schedule_time() {
 configure_daily() {
   local jiuwen_schedule_time yr_schedule_time
 
-  jiuwen_schedule_time="$(date +%Y%m%d)17"
+  jiuwen_schedule_time="$(date +%Y%m%d)02"
   yr_schedule_time="$(resolve_yr_schedule_time)"
   echo "  yuanrong daily build: ${yr_schedule_time}, version: ${YUANRONG_DAILY_VERSION}"
 
@@ -441,13 +441,14 @@ build_agent_gateway() {
   echo "==> build_agent_gateway"
   mkdir -p "${DOWNLOAD_DIR}/agent-gateway"
 
-  # a2x-registry 仅支持日构建，路径中的时固定为 19 点（后两位）；build.sh 可能在 19 点前或后执行，
-  # 因此先尝试当天，找不到再尝试前一天
-  local day whl_url found=0
-  local daily_base="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-protocol/package/daily/dist"
+  # a2x-registry 仅支持日构建，路径中的小时（后两位）可能是 00-23 任意时间；
+  # 从当前小时开始向前逐小时探测，取最新可用的包；72 小时内仍找不到则视为失败
+  local ts whl_url found=0 offset
+  local daily_base="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-protocol/package/daily/dist/"
 
-  for day in "$(date +%Y%m%d)" "$(date -d "1 day ago" +%Y%m%d)"; do
-    whl_url="${daily_base}/${day}19/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
+  for offset in $(seq 0 71); do
+    ts="$(date -d "${offset} hours ago" +%Y%m%d%H)"
+    whl_url="${daily_base}${ts}/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
     if curl -fsSI --connect-timeout 10 --max-time 30 "${whl_url}" >/dev/null 2>&1; then
       found=1
       break
@@ -455,7 +456,7 @@ build_agent_gateway() {
   done
 
   if (( found != 1 )); then
-    echo "error: failed to locate a2x_registry daily build for today or yesterday" >&2
+    echo "error: failed to locate a2x_registry daily build within the last 72 hours" >&2
     return 1
   fi
 
