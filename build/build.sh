@@ -186,20 +186,27 @@ fetch_latest_yr_schedule_time() {
     return 1
   fi
 
+  # 硬规则:只取末四位 0010 或 1410 的构建(其余一律跳过),0010/1410 等价,
+  # 取数值最大(最新)的一个,跨天自然回退,都无则报错(用 --yr-schedule-time 指定)。
   schedule_time="$(printf '%s\n' "${html}" \
     | sed -n '/<h2>openeuler<\/h2>/,/<hr class="os-divider">/p' \
     | sed -n 's/.*<tr><td>\([0-9][0-9]*\)<\/td>.*/\1/p' \
+    | grep -E '(0010|1410)$' \
+    | sort -r \
     | head -1)"
 
   if [[ -z "${schedule_time}" ]]; then
     schedule_time="$(printf '%s\n' "${html}" \
       | grep -oE 'daily_build/[0-9]+/openeuler' \
-      | head -1 \
-      | sed -E 's|daily_build/([0-9]+)/openeuler|\1|')"
+      | sed -E 's|daily_build/([0-9]+)/openeuler|\1|' \
+      | grep -E '(0010|1410)$' \
+      | sort -r \
+      | head -1)"
   fi
 
   if [[ -z "${schedule_time}" ]]; then
-    echo "error: failed to parse latest openeuler build from ${YUANRONG_DAILY_INDEX_URL}" >&2
+    echo "error: no openeuler daily build matching 0010/1410 schedule in ${YUANRONG_DAILY_INDEX_URL}" >&2
+    echo "  (manual triggers like 1728/1541 are skipped; set --yr-schedule-time to override)" >&2
     return 1
   fi
 
