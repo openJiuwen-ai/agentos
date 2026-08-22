@@ -12,6 +12,7 @@ Usage::
 from app.database import get_async_session as get_db_session
 from app.iam.permissions import Action, PermissionService, Resource
 from app.iam.security import (
+    get_current_oauth_user,
     get_current_user,
     get_user_backend,
     require_admin,
@@ -26,6 +27,7 @@ __all__ = [
     "Resource",
     "TokenData",
     "TokenService",
+    "get_current_oauth_user",
     "get_current_user",
     "get_db_session",
     "get_user_backend",

@@ -186,6 +186,15 @@ class Settings(BaseSettings):
             return ""
         return str(value)
 
+    # ── OAuth2 Provider ──
+    OAUTH2_CLIENT_ID: str = ""
+    OAUTH2_CLIENT_SECRET: str = ""
+    OAUTH2_REDIRECT_URI: str = ""
+    OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    OAUTH2_FRONTEND_ORIGIN: str = ""
+    # OAuth2 客户端展示名称（透传给前端登录/同意页展示）；启用 OAuth2 时必填，不能为空
+    OAUTH2_CLIENT_NAME: str = ""
+
     # ── 注册中心后端 (选填；未配置时智能体监控功能不可用) ──
     AGENT_REGISTER_URL: str = ""
 

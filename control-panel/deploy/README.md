@@ -75,6 +75,13 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | `MASTER_IP` | 空 | 仅 worker 节点；master 节点 IP（Alloy 日志上报用） |
 | `WORKER_NODES` | `[]` | 仅 master；worker IP 的 JSON 数组，如 `'["192.168.1.11"]'`（建议单引号包裹，仅支持 IPv4） |
 | `AGENT_REGISTER_URL` | `http://<本机IP>:4003` | 注册中心地址（留空禁用"智能体监控"） |
+| `AGENT_REGISTER_URL` | `http://<本机IP>:4003` | 注册中心地址 |
+| `OAUTH2_CLIENT_ID` | 无 | OAuth2客户端ID |
+| `OAUTH2_CLIENT_SECRET` | 无 | OAuth2客户端密钥 |
+| `OAUTH2_REDIRECT_URI` | 无 | OAuth2客户端回调地址 |
+| `OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES` | 1440 | OAuth2 access token有效时间 |
+| `OAUTH2_FRONTEND_ORIGIN` | 无 | AgentOS前端地址 |
+| `OAUTH2_CLIENT_NAME` | 无 | 透传给前端登录/同意页展示的客户端名称（启用 OAuth2 时必填，不能为空） |
 
 > 以下密钥由安装脚本自动生成，**无需手动设置**：
 > - `AGENTOS_JWT_SECRET_KEY` — JWT 签名密钥

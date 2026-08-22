@@ -50,6 +50,19 @@ function processQueue(error: unknown, token: string | null = null) {
   failedQueue = [];
 }
 
+// 401 失败后的落地策略：
+// - 普通受保护页 → 跳 /login 重新登录
+// - /oauth/authorize 流程中 → 不跳转，URL 中的 OAuth 参数（client_id/redirect_uri/state）
+//   需保留给 LoginPage.vue onMounted 的 catch 块清 stale 数据并展示 OAuth 模式登录表单，
+//   避免硬跳 /login 导致 OAuth 流程中断
+function redirectToLogin(): boolean {
+  if (window.location.pathname === '/oauth/authorize') {
+    return false;
+  }
+  window.location.href = '/login';
+  return true;
+}
+
 instance.interceptors.response.use(
   (response) => {
     const payload = response.data as ApiResponse;
@@ -94,7 +107,7 @@ instance.interceptors.response.use(
       if (!refreshToken) {
         isRefreshing = false;
         clearAuth();
-        window.location.href = '/login';
+        redirectToLogin();
         return Promise.reject(new Error('请重新登录'));
       }
 
@@ -115,7 +128,7 @@ instance.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError, null);
         clearAuth();
-        window.location.href = '/login';
+        redirectToLogin();
         return Promise.reject(new Error('登录已过期，请重新登录'));
       } finally {
         isRefreshing = false;
@@ -123,12 +136,14 @@ instance.interceptors.response.use(
     }
 
     const detail = error.response?.data?.detail;
-    const message = (detail && typeof detail === 'object' && 'message' in detail)
-      ? (detail as { message: string }).message
-      : (typeof detail === 'string' ? detail : undefined)
-        || error.response?.data?.message
-        || error.message
-        || '网络异常';
+    const message =
+      detail && typeof detail === 'object' && 'message' in detail
+        ? (detail as { message: string; reason?: string }).message +
+          ((detail as { reason?: string }).reason ? ` (${(detail as { reason?: string }).reason})` : '')
+        : (typeof detail === 'string' ? detail : undefined) ||
+          error.response?.data?.message ||
+          error.message ||
+          '网络异常';
     return Promise.reject(new ApiError(message, error.response?.status));
   },
 );

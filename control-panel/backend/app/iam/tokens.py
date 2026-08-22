@@ -65,6 +65,38 @@ class TokenService:
             algorithm=settings.AGENTOS_JWT_ALGORITHM,
         )
 
+    @staticmethod
+    def create_oauth2_access_token(user_id: str, username: str) -> str:
+        now = int(time.time())
+        return jwt.encode(
+            {
+                "sub": user_id,
+                "username": username,
+                "type": "oauth2_access",
+                "jti": secrets.token_hex(16),
+                "iat": now,
+                "exp": now + settings.OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            },
+            settings.AGENTOS_JWT_SECRET_KEY,
+            algorithm=settings.AGENTOS_JWT_ALGORITHM,
+        )
+
+    @staticmethod
+    def verify_oauth2_access_token(token: str) -> dict | None:
+        """解码并校验 OAuth2 access token。返回 payload dict 或 None。"""
+        try:
+            payload = jwt.decode(
+                token,
+                settings.AGENTOS_JWT_SECRET_KEY,
+                algorithms=[settings.AGENTOS_JWT_ALGORITHM],
+                options={"require_exp": True},
+            )
+        except JWTError:
+            return None
+        if payload.get("type") != "oauth2_access":
+            return None
+        return payload
+
     # ── Verification (zero-IO) ──────────────────────────────────────
 
     @staticmethod

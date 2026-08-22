@@ -16,15 +16,24 @@ from app.api.v1.logs import router as logs_router
 from app.api.v1.logs_ws import ws_router as logs_ws_router
 from app.api.v1.log_loki import router as log_loki_router
 from app.api.v1.users import router as users_router
+from app.api.v1.oauth2 import oauth2_router
 from app.api.v1.hardware import router as hardware_router
+from app.config import settings
 from app.core.logging import setup_file_logging
-from app.iam.engine import ensure_iam_tables
+from app.iam.engine import ensure_iam_tables, ensure_oauth2_tables
 from app.services import get_user_backend
 from app.services.litellm_service import LitellmService
 from app.services.log_export import start_log_services, stop_log_services
 from app.thirdparty_agent import ensure_thirdparty_agent_tables
 
 logger = logging.getLogger("app")
+
+# OAuth2 Provider 是否启用：client_id / client_secret / client_name 均已配置
+_OAUTH2_ENABLED = bool(
+    settings.OAUTH2_CLIENT_ID
+    and settings.OAUTH2_CLIENT_SECRET
+    and settings.OAUTH2_CLIENT_NAME
+)
 
 
 @asynccontextmanager
@@ -33,9 +42,9 @@ async def lifespan(fastapi_app: FastAPI):
     setup_file_logging()
 
     # 1. Create the shared database engine (single source of truth).
-    import app.database as _db
+    from app import database
 
-    _db.init_engine()
+    database.init_engine()
 
     # 2. Start the user-system backend (uses the shared engine).
     backend = get_user_backend()
@@ -47,6 +56,10 @@ async def lifespan(fastapi_app: FastAPI):
         await ensure_iam_tables(engine)
         await _create_log_tables(engine)
         await ensure_thirdparty_agent_tables(engine)
+
+        # 4. Create OAuth2 tables (only when enabled)
+        if _OAUTH2_ENABLED:
+            await ensure_oauth2_tables(engine)
 
     logger.info("backend-api started (backend: %s)", type(backend).__name__)
 
@@ -71,6 +84,14 @@ async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.hardware_svc = hw_svc
     logger.info("HardwareService attached to app.state")
 
+    # 5. Start OAuth2 auth code cleanup task (only when enabled)
+    if _OAUTH2_ENABLED:
+        from app.services.oauth_service import auth_code_cleanup_task
+
+        _oauth2_cleanup_task = asyncio.create_task(auth_code_cleanup_task())
+    else:
+        _oauth2_cleanup_task = None
+
     # 6. 日志中心 — 定时任务 + 导出 Worker
     await start_log_services()
 
@@ -85,11 +106,17 @@ async def lifespan(fastapi_app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    if _oauth2_cleanup_task is not None:
+        _oauth2_cleanup_task.cancel()
+        try:
+            await _oauth2_cleanup_task
+        except asyncio.CancelledError:
+            pass
     await hw_svc.close()
     await stop_log_services()
     await litellm_svc.close()
     await backend.on_shutdown()
-    await _db.dispose_engine()
+    await database.dispose_engine()
     logger.info("backend-api shut down.")
 
 
@@ -110,7 +137,6 @@ async def _seed_initial_model(litellm_svc: LitellmService) -> None:
     部署框架和监控地址由 deploy 脚本处理，后端只注册模型和 context_window。
     """
     import json
-    from app.config import settings
 
     # 获取模型列表：优先 INITIAL_MODELS，回退到嗅探
     if settings.INITIAL_MODELS:
@@ -247,6 +273,23 @@ app.include_router(logs_router)
 app.include_router(logs_ws_router)
 app.include_router(log_loki_router)
 app.include_router(thirdparty_agent_router)
+
+# OAuth2 Provider — 仅当 client_id / client_secret / client_name 均已配置时才启用
+if not _OAUTH2_ENABLED:
+    logger.warning(
+        "OAuth2 Provider 未启用 (OAUTH2_CLIENT_ID=%r, OAUTH2_CLIENT_SECRET=%s, OAUTH2_CLIENT_NAME=%r)，"
+        "OAuth2 路由未注册。"
+        "如需启用请在 .env 中设置 OAUTH2_CLIENT_ID / OAUTH2_CLIENT_SECRET / OAUTH2_CLIENT_NAME。",
+        settings.OAUTH2_CLIENT_ID,
+        "已设置" if settings.OAUTH2_CLIENT_SECRET else "为空",
+        settings.OAUTH2_CLIENT_NAME or "为空",
+    )
+else:
+    logger.info(
+        "OAuth2 Provider enabled (client_id=%s, client_name=%s)",
+        settings.OAUTH2_CLIENT_ID, settings.OAUTH2_CLIENT_NAME,
+    )
+    app.include_router(oauth2_router)
 
 
 @app.get("/")

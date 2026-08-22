@@ -1,39 +1,93 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
-import {
-  ElForm,
-  ElFormItem,
-  ElInput,
-  ElButton,
-  ElMessage,
-  type FormInstance,
-  type FormRules,
-} from 'element-plus';
-import { login } from '@/api/auth';
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { ElForm, ElFormItem, ElInput, ElButton, ElCheckbox, type FormInstance, type FormRules } from 'element-plus';
 import { findDefaultLandingRouteName } from '@/router/menu';
 import { useAuth } from '@/composables/useAuth';
+import { login, submitOAuthDecision, getPermissions } from '@/api/auth';
 import loginLogo from '@/assets/images/login-logo.png';
 
+const route = useRoute();
 const router = useRouter();
 const { storeAuth } = useAuth();
 
+const isOAuthMode = route.meta.mode === 'oauth';
+
 const loginFormRef = ref<FormInstance>();
-const loginForm = ref({
-  username: '',
-  password: '',
-});
+const loginForm = ref({ username: '', password: '' });
 const loading = ref(false);
+const errorMessage = ref('');
+
+// ── OAuth: params from URL query
+const oauthParams = ref({
+  client_id: '',
+  redirect_uri: '',
+  state: '',
+  // 客户端展示名称，由后端 oauth2_authorize 注入（环境变量 OAUTH2_CLIENT_NAME）
+  client_name: '',
+});
+
+// ── OAuth: which step to show
+const oauthStep = ref<'login' | 'consent'>('login');
+const oauthRemember = ref(false);
+
+const OAUTH_CONSENT_PREFIX = 'oauth_consent:';
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入账号名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 };
 
+onMounted(async () => {
+  if (!isOAuthMode) return;
+
+  // Read OAuth params from URL query (passed by backend redirect)
+  const q = route.query;
+  if (q.client_id) oauthParams.value.client_id = String(q.client_id);
+  if (q.redirect_uri) oauthParams.value.redirect_uri = String(q.redirect_uri);
+  if (q.state) oauthParams.value.state = String(q.state);
+  if (q.client_name) oauthParams.value.client_name = String(q.client_name);
+
+  if (!oauthParams.value.client_id || !oauthParams.value.redirect_uri) {
+    errorMessage.value = 'OAuth 参数缺失，授权请求无效';
+    return;
+  }
+
+  // If already logged into CP, verify token then show consent (or auto-authorize)
+  const storedUsername = localStorage.getItem('username');
+  const accessToken = localStorage.getItem('access_token');
+  if (storedUsername && accessToken) {
+    try {
+      await getPermissions();
+      // Token valid — 先填充用户名，供同意页展示与自动授权时回写 consent 记录
+      loginForm.value.username = storedUsername;
+      // check if user previously chose "remember" for this client
+      const consentKey = OAUTH_CONSENT_PREFIX + oauthParams.value.client_id;
+      const consentRemembered = localStorage.getItem(consentKey) === storedUsername;
+      // 复用已有 oauth_consent:* 记录为 oauthRemember 复选框赋初值
+      oauthRemember.value = consentRemembered;
+      if (consentRemembered) {
+        // Auto-authorize — skip consent page
+        handleOAuthDecision('allow');
+        return;
+      }
+      oauthStep.value = 'consent';
+      return;
+    } catch {
+      // token invalid or network error — fall through to clear stale data
+    }
+    // Token invalid, clear stale data
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('username');
+    localStorage.removeItem('role');
+    localStorage.removeItem('user_id');
+  }
+});
+
 async function handleLogin() {
   const form = loginFormRef.value;
   if (!form) return;
-
   try {
     await form.validate();
   } catch {
@@ -41,13 +95,66 @@ async function handleLogin() {
   }
 
   loading.value = true;
+  errorMessage.value = '';
   try {
     const result = await login(loginForm.value.username, loginForm.value.password);
-    storeAuth(result);
-    router.push({ name: findDefaultLandingRouteName(result.role === 'admin') });
+
+    if (isOAuthMode) {
+      storeAuth(result);
+      loginForm.value.username = result.username;
+      // 未登录场景下登录后必须显示同意页，确保用户有机会取消"记住授权"
+      // 仅用历史记录预填复选框，不自动跳过同意步骤
+      const consentKey = OAUTH_CONSENT_PREFIX + oauthParams.value.client_id;
+      oauthRemember.value = localStorage.getItem(consentKey) === result.username;
+      oauthStep.value = 'consent';
+    } else {
+      storeAuth(result);
+      router.push({ name: findDefaultLandingRouteName(result.role === 'admin') });
+    }
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '登录失败，请重试');
+    errorMessage.value = e instanceof Error ? e.message : '登录失败，请重试';
   } finally {
+    loading.value = false;
+  }
+}
+
+async function handleOAuthDecision(action: 'allow' | 'deny') {
+  if (action === 'deny') {
+    loading.value = true;
+    errorMessage.value = '';
+    try {
+      const result = await submitOAuthDecision({
+        action: 'deny',
+        client_id: oauthParams.value.client_id,
+        redirect_uri: oauthParams.value.redirect_uri,
+        state: oauthParams.value.state,
+      });
+      window.location.href = result.redirect_uri;
+    } catch (e) {
+      errorMessage.value = e instanceof Error ? e.message : '操作失败，请重试';
+      loading.value = false;
+    }
+    return;
+  }
+
+  // Allow: store consent preference before proceeding
+  if (oauthRemember.value) {
+    const consentKey = OAUTH_CONSENT_PREFIX + oauthParams.value.client_id;
+    localStorage.setItem(consentKey, loginForm.value.username);
+  }
+
+  loading.value = true;
+  errorMessage.value = '';
+  try {
+    const result = await submitOAuthDecision({
+      action: 'allow',
+      client_id: oauthParams.value.client_id,
+      redirect_uri: oauthParams.value.redirect_uri,
+      state: oauthParams.value.state,
+    });
+    window.location.href = result.redirect_uri;
+  } catch (e) {
+    errorMessage.value = e instanceof Error ? e.message : '操作失败，请重试';
     loading.value = false;
   }
 }
@@ -64,54 +171,96 @@ async function handleLogin() {
             <p class="login-panel__desc">通过本地部署的 AI 能力，协助你处理日常工作、编写代码并完成复杂任务。</p>
           </div>
         </header>
+        <!-- ── OAuth: 同意步骤 ── -->
+        <template v-if="isOAuthMode && oauthStep === 'consent'">
+          <h1 class="login-dialog__title">授权确认</h1>
+          <p style="color: var(--text-secondary); margin: 4px 0 20px; line-height: 1.6">
+            <strong>{{ oauthParams.client_name }}</strong>
+            想要访问您的账户（{{ loginForm.username }}）
+          </p>
 
-        <ElForm
-          ref="loginFormRef"
-          :model="loginForm"
-          :rules="rules"
-          class="login-panel__form"
-          label-position="top"
-          hide-required-asterisk
-          size="large"
-          @submit.prevent="handleLogin"
-        >
-          <div class="login-panel__fields">
-            <ElFormItem label="账号名" prop="username">
-              <ElInput
-                v-model="loginForm.username"
-                placeholder="请输入账号名"
-                autocomplete="username"
-                :disabled="loading"
-              />
-            </ElFormItem>
+          <div v-if="errorMessage" class="oauth-error">{{ errorMessage }}</div>
 
-            <ElFormItem label="密码" prop="password">
-              <ElInput
-                v-model="loginForm.password"
-                type="password"
-                show-password
-                placeholder="请输入密码"
-                autocomplete="current-password"
-                :disabled="loading"
-                @keyup.enter="handleLogin"
-              />
-            </ElFormItem>
-          </div>
+          <ElCheckbox v-model="oauthRemember" style="margin-bottom: 12px"> 记住授权，下次自动登录 </ElCheckbox>
 
-          <div class="login-panel__actions">
+          <div style="display: flex; gap: 12px">
             <ElButton
-              type="primary"
-              size="large"
               native-type="button"
-              class="login-panel__submit"
+              type="default"
+              style="flex: 1; height: 48px"
               :loading="loading"
-              @click="handleLogin"
+              @click="handleOAuthDecision('deny')"
             >
-              登录
+              拒绝
             </ElButton>
-            <p class="login-panel__hint">暂无账号？请联系系统管理员</p>
+            <ElButton
+              native-type="button"
+              type="primary"
+              style="flex: 1; height: 48px"
+              :loading="loading"
+              @click="handleOAuthDecision('allow')"
+            >
+              允许
+            </ElButton>
           </div>
-        </ElForm>
+        </template>
+
+        <!-- ── 默认 / OAuth 登录步骤 ── -->
+        <template v-else>
+          <p v-if="isOAuthMode" style="color: var(--text-secondary); margin: -16px 0 8px; font-size: 13px">
+            <strong>{{ oauthParams.client_name }}</strong> 请求访问您的账户
+          </p>
+
+          <div v-if="errorMessage" class="oauth-error">{{ errorMessage }}</div>
+
+          <ElForm
+            ref="loginFormRef"
+            :model="loginForm"
+            :rules="rules"
+            class="login-panel__form"
+            label-position="top"
+            hide-required-asterisk
+            size="large"
+            @submit.prevent="handleLogin"
+          >
+            <div class="login-panel__fields">
+              <ElFormItem label="账号名" prop="username">
+                <ElInput
+                  v-model="loginForm.username"
+                  placeholder="请输入账号名"
+                  autocomplete="username"
+                  :disabled="loading"
+                />
+              </ElFormItem>
+
+              <ElFormItem label="密码" prop="password">
+                <ElInput
+                  v-model="loginForm.password"
+                  type="password"
+                  show-password
+                  placeholder="请输入密码"
+                  autocomplete="current-password"
+                  :disabled="loading"
+                  @keyup.enter="handleLogin"
+                />
+              </ElFormItem>
+            </div>
+
+            <div class="login-panel__actions">
+              <ElButton
+                type="primary"
+                size="large"
+                native-type="button"
+                class="login-panel__submit"
+                :loading="loading"
+                @click="handleLogin"
+              >
+                登录
+              </ElButton>
+              <p class="login-panel__hint">暂无账号？请联系系统管理员</p>
+            </div>
+          </ElForm>
+        </template>
       </div>
     </section>
 
@@ -278,5 +427,13 @@ async function handleLogin() {
     flex-basis: 100%;
     padding: 24px 32px;
   }
+}
+
+.oauth-error {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+  font-size: 13px;
 }
 </style>

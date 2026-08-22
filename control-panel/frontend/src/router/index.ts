@@ -1,5 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import { appRouteTree, buildRouterRoutes, findAdminOnlyRouteNames, findDefaultLandingRouteName, overviewEnabled } from './menu';
+import {
+  appRouteTree,
+  buildRouterRoutes,
+  findAdminOnlyRouteNames,
+  findDefaultLandingRouteName,
+  overviewEnabled,
+} from './menu';
 
 const adminOnlyNames = new Set(findAdminOnlyRouteNames(appRouteTree));
 
@@ -11,6 +17,18 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: () => import('@/views/auth/LoginPage.vue'),
+      meta: { guest: true },
+    },
+    {
+      path: '/oauth/authorize',
+      name: 'oauth-authorize',
+      component: () => import('@/views/auth/LoginPage.vue'),
+      meta: { guest: true, mode: 'oauth' },
+    },
+    {
+      path: '/oauth/error',
+      name: 'oauth-error',
+      component: () => import('@/views/auth/OAuthErrorPage.vue'),
       meta: { guest: true },
     },
     {
@@ -29,7 +47,8 @@ router.beforeEach((to) => {
   const effectiveIsAdmin = isAdmin && !wsIsUser;
 
   // guest-only pages (login): redirect to default landing if already logged in
-  if (to.meta.guest && isLoggedIn) {
+  // Exception: /oauth/authorize must remain accessible when logged in (shows consent page)
+  if (to.meta.guest && isLoggedIn && to.name !== 'oauth-authorize') {
     return { name: findDefaultLandingRouteName(effectiveIsAdmin) };
   }
 

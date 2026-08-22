@@ -70,6 +70,9 @@ export function useAuth() {
     localStorage.removeItem('username');
     localStorage.removeItem('role');
     localStorage.removeItem('workspace');
+    // 保留 oauth_consent:* 记录：未登录场景下登录后仍会显示同意页
+    // （见 LoginPage.handleLogin），仅用历史记录预填复选框，
+    // 用户可借此取消"记住授权"。已登录场景才自动授权。
     workspace.value = 'admin';
   }
 
