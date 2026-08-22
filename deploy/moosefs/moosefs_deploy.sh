@@ -337,15 +337,17 @@ _mfs_get_host_list() {
 }
 
 # ===== 包检测函数（兼容 RPM 和 DEB）=====
+# 注意: 优先用 dpkg 检测，因为 Ubuntu 上可能装了 rpm 命令但 MooseFS 实际是 DEB 包。
+# 只要任一包管理器找到即视为已安装。
 _mfs_check_pkg_installed() {
     local pkg="$1"
-    if command -v rpm >/dev/null 2>&1; then
-        rpm -q "${pkg}" >/dev/null 2>&1
-    elif command -v dpkg >/dev/null 2>&1; then
-        dpkg -s "${pkg}" >/dev/null 2>&1
-    else
-        return 1
+    if command -v dpkg >/dev/null 2>&1 && dpkg -s "${pkg}" >/dev/null 2>&1; then
+        return 0
     fi
+    if command -v rpm >/dev/null 2>&1 && rpm -q "${pkg}" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
 }
 
 # ===== install 逻辑 =====

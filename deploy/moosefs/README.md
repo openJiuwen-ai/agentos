@@ -119,11 +119,12 @@ MooseFS 官方 DEB 源：`https://repository.moosefs.com/moosefs-4/apt/ubuntu/`
 
 ```bash
 # 安装 GPG key
-wget -O - https://repository.moosefs.com/moosefs.com.key | gpg --dearmor -o /usr/share/keyrings/moosefs.gpg
+mkdir -p /etc/apt/keyrings
+curl https://repository.moosefs.com/moosefs.key | gpg --dearmor -o /etc/apt/keyrings/moosefs.gpg
 
-# <codename> 替换为 jammy 或 noble
+# <codename> 替换为 jammy 或 noble，<arch> 替换为 amd64 或 arm64
 cat > /etc/apt/sources.list.d/moosefs.list << EOF
-deb [signed-by=/usr/share/keyrings/moosefs.gpg] https://repository.moosefs.com/moosefs-4/apt/ubuntu <codename> main
+deb [arch=<arch> signed-by=/etc/apt/keyrings/moosefs.gpg] https://repository.moosefs.com/moosefs-4/apt/ubuntu/<codename> <codename> main
 EOF
 
 apt-get update
