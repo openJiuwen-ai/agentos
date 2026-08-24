@@ -430,7 +430,7 @@ onUnmounted(() => {
           @command="handleNodeCommand"
           @visible-change="handleNodeMenuVisible"
         >
-          <button type="button" class="appliance-page__name-btn">
+          <ElButton text native-type="button" class="appliance-page__name-btn">
             <span class="appliance-page__device-name">{{ nodeId || '—' }}</span>
             <img
               :src="nodeMenuOpen ? arrowUpIcon : arrowDownIcon"
@@ -440,7 +440,7 @@ onUnmounted(() => {
               height="16"
               aria-hidden="true"
             />
-          </button>
+          </ElButton>
           <template #dropdown>
             <ElDropdownMenu class="appliance-node-menu">
               <ElDropdownItem
@@ -542,10 +542,11 @@ onUnmounted(() => {
         </div>
 
         <div class="appliance-page__view-switch" role="tablist" aria-label="设备视图">
-          <button
+          <ElButton
             v-for="item in DEVICE_VIEWS"
             :key="item.key"
-            type="button"
+            text
+            native-type="button"
             class="appliance-page__view-btn"
             :class="{ 'is-active': deviceView === item.key }"
             role="tab"
@@ -561,7 +562,7 @@ onUnmounted(() => {
               aria-hidden="true"
             />
             {{ item.label }}
-          </button>
+          </ElButton>
         </div>
       </div>
 
@@ -828,10 +829,11 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  height: auto;
+  min-height: 0;
   padding: 0 8px 0 0;
   border: none;
   background: transparent;
-  cursor: pointer;
   color: inherit;
 }
 
@@ -1071,6 +1073,9 @@ onUnmounted(() => {
   justify-content: center;
   gap: 8px;
   width: 120px;
+  height: auto;
+  min-height: 0;
+  margin: 0;
   padding: 7px 16px;
   border: none;
   border-radius: 999px;
@@ -1078,7 +1083,6 @@ onUnmounted(() => {
   color: rgba(0, 0, 0, 0.6);
   font-size: 14px;
   line-height: 22px;
-  cursor: pointer;
 }
 
 .appliance-page__view-btn.is-active {
@@ -1184,10 +1188,6 @@ onUnmounted(() => {
   height: auto;
   font-size: 14px;
   line-height: 22px;
-  --el-button-text-color: var(--color-primary);
-  --el-button-hover-text-color: var(--color-primary);
-  --el-button-hover-link-text-color: var(--color-primary);
-  color: var(--color-primary);
 }
 
 .metric-card__body {

@@ -18,7 +18,7 @@ import {
 } from 'element-plus';
 import { getMe, changeMyPassword } from '@/api/users';
 import { useAuth } from '@/composables/useAuth';
-import profileBannerImg from '@/assets/images/bg.svg';
+import profileBannerImg from '@/assets/images/bg.png';
 import profileAvatarImg from '@/assets/images/avatar.svg';
 
 const route = useRoute();
@@ -37,8 +37,6 @@ const profile = ref({
   username: '',
   user_id: '',
   role: '',
-  is_active: true,
-  created_at: null as string | null,
 });
 
 const showResetDialog = ref(false);
@@ -82,12 +80,11 @@ const passwordChecks = computed(() => ({
 
 const passwordCategoryCount = computed(() => {
   const c = passwordChecks.value;
-  return (c.hasLower ? 1 : 0) + (c.hasUpper ? 1 : 0) +
-         (c.hasDigit ? 1 : 0) + (c.hasSpecial ? 1 : 0);
+  return (c.hasLower ? 1 : 0) + (c.hasUpper ? 1 : 0) + (c.hasDigit ? 1 : 0) + (c.hasSpecial ? 1 : 0);
 });
 
-const passwordLengthOk = computed(() =>
-  resetForm.value.newPassword.length >= 8 && resetForm.value.newPassword.length <= 64
+const passwordLengthOk = computed(
+  () => resetForm.value.newPassword.length >= 8 && resetForm.value.newPassword.length <= 64,
 );
 
 const passwordHasUsername = computed(() => {
@@ -95,8 +92,8 @@ const passwordHasUsername = computed(() => {
   return resetForm.value.newPassword.toLowerCase().includes(profile.value.username.toLowerCase());
 });
 
-const passwordStrengthValid = computed(() =>
-  passwordLengthOk.value && passwordCategoryCount.value >= 2 && !passwordHasUsername.value
+const passwordStrengthValid = computed(
+  () => passwordLengthOk.value && passwordCategoryCount.value >= 2 && !passwordHasUsername.value,
 );
 
 async function loadProfile() {
@@ -171,7 +168,7 @@ async function handleLogout() {
             <ElTag
               v-if="profile.role"
               size="small"
-              effect="dark"
+              effect="plain"
               :class="profile.role === 'admin' ? 'role-tag role-tag--admin' : 'role-tag role-tag--user'"
             >
               {{ roleLabel(profile.role) }}
@@ -185,48 +182,39 @@ async function handleLogout() {
         <ElTabPane label="个人信息" name="profile">
           <section class="profile-card">
             <h2 class="profile-card__title">基本信息</h2>
-            <div class="info-grid">
-              <div class="info-item">
+            <div class="info-section">
+              <div class="info-row info-row--avatar">
                 <span class="info-label">头像</span>
                 <img class="info-avatar" :src="profileAvatarImg" alt="" />
               </div>
-              <div class="info-item">
-                <span class="info-label">用户ID</span>
-                <span class="info-value info-value--mono">{{ profile.user_id || '—' }}</span>
+
+              <div class="info-row info-row--double">
+                <div class="info-cell">
+                  <span class="info-label">用户名</span>
+                  <span class="info-value">{{ profile.username || '—' }}</span>
+                </div>
+                <div class="info-cell">
+                  <span class="info-label">用户ID</span>
+                  <span class="info-value">{{ profile.user_id || '—' }}</span>
+                </div>
               </div>
-              <div class="info-item">
-                <span class="info-label">用户名</span>
-                <span class="info-value">{{ profile.username || '—' }}</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">账号状态</span>
-                <span
-                  class="login-status"
-                  :class="profile.is_active ? 'login-status--online' : 'login-status--offline'"
-                >
-                  <span class="login-status__dot" />
-                  {{ profile.is_active ? '正常' : '停用' }}
-                </span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">用户角色</span>
-                <ElTag
-                  v-if="profile.role"
-                  size="small"
-                  effect="dark"
-                  :class="profile.role === 'admin' ? 'role-tag role-tag--admin' : 'role-tag role-tag--user'"
-                >
-                  {{ roleLabel(profile.role) }}
-                </ElTag>
-                <span v-else class="info-value">—</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">手机号</span>
-                <span class="info-value">—</span>
-              </div>
-              <div class="info-item">
-                <span class="info-label">邮箱</span>
-                <span class="info-value">—</span>
+
+              <div class="info-row">
+                <div class="info-cell">
+                  <span class="info-label">用户角色</span>
+                  <ElTag
+                    v-if="profile.role"
+                    size="small"
+                    effect="plain"
+                    :class="[
+                      profile.role === 'admin' ? 'role-tag role-tag--admin' : 'role-tag role-tag--user',
+                      'role-tag--compact',
+                    ]"
+                  >
+                    {{ roleLabel(profile.role) }}
+                  </ElTag>
+                  <span v-else class="info-value">—</span>
+                </div>
               </div>
             </div>
           </section>
@@ -240,8 +228,10 @@ async function handleLogout() {
           </section>
 
           <section class="profile-card profile-card--row">
-            <h2 class="profile-card__title">退出登录</h2>
-            <ElButton type="danger" plain class="profile-action-btn" @click="handleLogout">退出</ElButton>
+            <h2 class="profile-card__title profile-card__title--solo">退出登录</h2>
+            <ElButton type="danger" plain class="profile-action-btn profile-action-btn--logout" @click="handleLogout">
+              退出
+            </ElButton>
           </section>
         </ElTabPane>
 
@@ -324,12 +314,8 @@ async function handleLogout() {
               </span>
               <span class="strength-label">特殊字符 (!@#$...)</span>
             </div>
-            <div v-if="passwordCategoryCount < 2" class="strength-msg strength-msg--warn">
-              需至少满足两类
-            </div>
-            <div v-if="passwordHasUsername" class="strength-msg strength-msg--error">
-              密码不能包含用户名
-            </div>
+            <div v-if="passwordCategoryCount < 2" class="strength-msg strength-msg--warn">需至少满足两类</div>
+            <div v-if="passwordHasUsername" class="strength-msg strength-msg--error">密码不能包含用户名</div>
           </div>
         </ElFormItem>
         <ElFormItem label="确认新密码" prop="confirmPassword">
@@ -352,50 +338,62 @@ async function handleLogout() {
 
 <style scoped>
 .profile-page {
+  display: grid;
+  grid-template-columns: 1fr;
   min-height: 100%;
-  background: var(--bg-page);
+  background: var(--bg-1);
 }
 
 .profile-banner {
+  grid-row: 1;
+  grid-column: 1;
   display: block;
   width: 100%;
-  height: 224px;
+  aspect-ratio: 1920 / 527;
+  max-height: 527px;
   object-fit: cover;
+  object-position: center;
 }
 
 .profile-content {
-  max-width: 1200px;
+  grid-row: 1;
+  grid-column: 1;
+  z-index: 1;
+  width: 100%;
+  max-width: 1232px;
   margin: 0 auto;
-  padding: 0 32px 32px;
+  padding: 56px 32px 32px;
+  display: flex;
+  flex-direction: column;
 }
 
 .profile-header {
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 24px 0 16px;
+  min-height: 100px;
 }
 
 .profile-avatar {
   width: 100px;
   height: 100px;
-  margin-top: -56px;
-  border: 4px solid #fff;
   border-radius: 50%;
-  background: var(--bg-1);
+  background: var(--bg-2);
   object-fit: cover;
+  flex-shrink: 0;
 }
 
 .profile-meta {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .profile-name-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .profile-name {
@@ -412,11 +410,11 @@ async function handleLogout() {
 }
 
 .profile-tabs {
-  margin-top: 8px;
+  margin-top: 68px;
 }
 
 .profile-tabs :deep(.el-tabs__header) {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .profile-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -426,8 +424,9 @@ async function handleLogout() {
 
 .profile-tabs :deep(.el-tabs__item) {
   font-size: 16px;
-  height: 48px;
-  line-height: 48px;
+  height: 32px;
+  line-height: 24px;
+  padding-bottom: 6px;
   color: var(--text-secondary);
 }
 
@@ -451,12 +450,12 @@ async function handleLogout() {
 .profile-card {
   padding: 20px 24px 24px;
   background: var(--bg-2);
-  border-radius: 12px;
+  border-radius: var(--radius-2xl, 24px);
 }
 
 .profile-card--row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 20px;
@@ -471,10 +470,14 @@ async function handleLogout() {
 
 .profile-card__title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
   color: var(--text-primary);
+}
+
+.profile-card__title--solo {
+  margin-top: 4px;
 }
 
 .profile-card__desc {
@@ -485,73 +488,63 @@ async function handleLogout() {
 }
 
 .profile-action-btn {
-  width: 96px;
+  flex-shrink: 0;
+  min-width: 88px;
   height: 32px;
   margin: 0;
   padding: 5px 16px;
-  border-radius: 4px;
   font-size: 14px;
   font-weight: 400;
 }
 
-.profile-action-btn.el-button {
-  --el-button-bg-color: var(--bg-2);
-  --el-button-text-color: var(--text-primary);
-  --el-button-border-color: var(--border);
-  --el-button-hover-bg-color: var(--bg-mask);
-  --el-button-hover-text-color: var(--text-primary);
-  --el-button-hover-border-color: var(--border);
-  --el-button-active-bg-color: var(--bg-mask);
-  --el-button-active-text-color: var(--text-primary);
-  --el-button-active-border-color: var(--border);
+.profile-action-btn--logout {
+  min-width: 88px;
+  padding: 5px 30px;
 }
 
-.profile-action-btn.el-button--danger.is-plain {
-  --el-button-bg-color: var(--bg-2);
-  --el-button-text-color: var(--error);
-  --el-button-border-color: var(--error);
-  --el-button-hover-bg-color: var(--error-subtler);
-  --el-button-hover-text-color: var(--error);
-  --el-button-hover-border-color: var(--error);
-  --el-button-active-bg-color: var(--error-subtle);
-  --el-button-active-text-color: var(--error);
-  --el-button-active-border-color: var(--error);
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px 32px;
+.info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   margin-top: 20px;
 }
 
-.info-item {
+.info-row--avatar {
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 40px;
+}
+
+.info-row--double {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px 64px;
+}
+
+.info-cell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 24px;
 }
 
 .info-label {
   width: 80px;
   flex-shrink: 0;
   font-size: 14px;
+  line-height: 22px;
   color: var(--text-secondary);
 }
 
 .info-value {
   font-size: 16px;
+  line-height: 24px;
   color: var(--text-primary);
 }
 
-.info-value--mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 14px;
-}
-
 .info-avatar {
-  width: 48px;
-  height: 48px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background: var(--bg-1);
   object-fit: cover;
@@ -562,32 +555,27 @@ async function handleLogout() {
 }
 
 .role-tag--admin {
-  color: var(--tag-text-alert) !important;
-  background: var(--tag-bg-alert) !important;
+  color: var(--tag-text-admin) !important;
+  background: var(--tag-bg-admin) !important;
+}
+
+.role-tag--admin.el-tag--small {
+  height: 28px;
+  padding: 3px 8px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.role-tag--admin.role-tag--compact.el-tag--small {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 .role-tag--user {
   color: var(--tag-text-info) !important;
   background: var(--tag-bg-info) !important;
-}
-
-.login-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.login-status__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--bg-mask);
-}
-
-.login-status--online .login-status__dot {
-  background: var(--success);
 }
 
 .reset-hint {
@@ -597,12 +585,26 @@ async function handleLogout() {
 }
 
 @media (max-width: 768px) {
-  .info-grid {
-    grid-template-columns: 1fr;
+  .profile-content {
+    padding: 32px 16px 24px;
   }
 
-  .profile-content {
-    padding: 0 16px 24px;
+  .profile-tabs {
+    margin-top: 32px;
+  }
+
+  .info-row--double {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .profile-card--row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .profile-action-btn {
+    align-self: flex-start;
   }
 }
 
@@ -677,48 +679,5 @@ async function handleLogout() {
 
 .msg--error {
   color: #e02128;
-}
-
-/* ── buttons ── */
-.btn {
-  padding: 5px 20px;
-  font-size: 14px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btn--primary {
-  color: #ffffff;
-  background: #0067d1;
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: #0055b3;
-}
-
-.btn--primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn--secondary {
-  color: #191919;
-  background: #f3f3f3;
-}
-
-.btn--secondary:hover {
-  background: #e8e8e8;
-}
-
-.btn--danger {
-  color: #ffffff;
-  background: #e02128;
-  padding: 5px 34px;
-}
-
-.btn--danger:hover {
-  background: #c01c22;
 }
 </style>

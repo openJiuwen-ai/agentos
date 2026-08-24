@@ -119,7 +119,6 @@ export const appRouteTree: AppRouteNode[] = [
             order: 2,
             path: '/resources/agent/framework',
             name: 'agent-framework',
-            adminOnly: true,
             component: () => import('@/views/resources/agent/FrameworkPage.vue'),
           },
         ],

@@ -221,20 +221,22 @@ onMounted(loadFrameworks);
         @input="onSearchInput"
       />
       <div class="framework-page__toggle">
-        <button
+        <ElButton
+          text
           class="framework-page__toggle-btn"
           :class="{ 'framework-page__toggle-btn--active': viewMode === 'grid' }"
           @click="viewMode = 'grid'"
         >
           <img :src="gridViewIcon" alt="网格视图" class="framework-page__toggle-icon" />
-        </button>
-        <button
+        </ElButton>
+        <ElButton
+          text
           class="framework-page__toggle-btn"
           :class="{ 'framework-page__toggle-btn--active': viewMode === 'list' }"
           @click="viewMode = 'list'"
         >
           <img :src="listViewIcon" alt="列表视图" class="framework-page__toggle-icon" />
-        </button>
+        </ElButton>
       </div>
     </div>
 
@@ -270,9 +272,9 @@ onMounted(loadFrameworks);
       <template #header>
         <div class="dialog-header">
           <span class="dialog-title">接入新智能体</span>
-          <button class="dialog-close" @click="showUpload = false">
+          <ElButton text class="dialog-close" @click="showUpload = false">
             <img :src="closeDialogIcon" alt="关闭" />
-          </button>
+          </ElButton>
         </div>
       </template>
       <div class="dialog-body">
@@ -302,8 +304,8 @@ onMounted(loadFrameworks);
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-cancel" @click="showUpload = false">取消</button>
-          <button class="btn-primary" :disabled="!selectedFile" @click="startUpload">上传</button>
+          <ElButton class="dialog-footer__btn" @click="showUpload = false">取消</ElButton>
+          <ElButton type="primary" class="dialog-footer__btn" :disabled="!selectedFile" @click="startUpload">上传</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -313,9 +315,9 @@ onMounted(loadFrameworks);
       <template #header>
         <div class="dialog-header">
           <span class="dialog-title">接入新智能体</span>
-          <button class="dialog-close" @click="showParsing = false">
+          <ElButton text class="dialog-close" @click="showParsing = false">
             <img :src="closeDialogIcon" alt="关闭" />
-          </button>
+          </ElButton>
         </div>
       </template>
       <div class="dialog-body dialog-body--center">
@@ -327,7 +329,7 @@ onMounted(loadFrameworks);
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-cancel" @click="showParsing = false">取消</button>
+          <ElButton class="dialog-footer__btn" @click="showParsing = false">取消</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -337,9 +339,9 @@ onMounted(loadFrameworks);
       <template #header>
         <div class="dialog-header">
           <span class="dialog-title">确认智能体信息</span>
-          <button class="dialog-close" @click="showConfirm = false">
+          <ElButton text class="dialog-close" @click="showConfirm = false">
             <img :src="closeDialogIcon" alt="关闭" />
-          </button>
+          </ElButton>
         </div>
       </template>
       <div class="dialog-body">
@@ -366,8 +368,8 @@ onMounted(loadFrameworks);
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-cancel" @click="showConfirm = false">取消</button>
-          <button class="btn-primary" @click="confirmBuild">确认</button>
+          <ElButton class="dialog-footer__btn" @click="showConfirm = false">取消</ElButton>
+          <ElButton type="primary" class="dialog-footer__btn" @click="confirmBuild">确认</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -396,7 +398,7 @@ onMounted(loadFrameworks);
       </div>
       <template #footer>
         <div class="dialog-footer" v-if="!building">
-          <button class="btn-cancel" @click="closeBuild">关闭</button>
+          <ElButton class="dialog-footer__btn" @click="closeBuild">关闭</ElButton>
         </div>
       </template>
     </ElDialog>
@@ -444,14 +446,12 @@ onMounted(loadFrameworks);
 .framework-page__toggle-btn {
   width: 28px;
   height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
   border: none;
   border-radius: 4px;
-  cursor: pointer;
   background: transparent;
-  padding: 0;
 }
 
 .framework-page__toggle-btn--active {
@@ -533,14 +533,10 @@ onMounted(loadFrameworks);
 .dialog-close {
   width: 14px;
   height: 14px;
+  min-height: 14px;
   margin-top: 7px;
-  border: none;
-  background: none;
-  cursor: pointer;
   padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border: none;
 }
 
 .dialog-close img {
@@ -575,36 +571,8 @@ onMounted(loadFrameworks);
   padding: 24px 24px 20px 24px;
 }
 
-.btn-cancel {
+.dialog-footer__btn {
   width: 88px;
-  height: 32px;
-  background: #ffffff;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 400;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.btn-primary {
-  width: 88px;
-  height: 32px;
-  background: var(--color-primary);
-  border-radius: 4px;
-  border: none;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 400;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
 }
 
 /* ── Upload dialog ── */

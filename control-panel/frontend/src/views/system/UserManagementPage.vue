@@ -967,52 +967,15 @@ function roleLabel(role: string) {
 }
 
 .user-mgmt__btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   height: 32px;
   padding: 5px 16px;
   font-size: 14px;
   font-weight: 400;
   line-height: 22px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  background: transparent;
-  font-family: inherit;
-  transition: all 0.15s ease;
-  box-sizing: border-box;
 }
 
 .user-mgmt__btn.el-button {
   margin: 0;
-}
-
-.user-mgmt__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.user-mgmt__btn--secondary {
-  background: var(--bg-2);
-  border-color: var(--border-separator);
-  color: var(--text-primary);
-}
-
-.user-mgmt__btn--secondary:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.user-mgmt__btn--primary {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--text-inverse);
-}
-
-.user-mgmt__btn--primary:hover:not(:disabled) {
-  background: #0058b0;
-  border-color: #0058b0;
 }
 
 .user-mgmt__table-area {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem, ElButton } from 'element-plus';
 import { appRouteTree, findAdminOnlyRouteNames, findDefaultLandingRouteName, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
@@ -358,8 +358,8 @@ function handleProfileCommand(command: string | number | object) {
 }
 
 .role-tag--admin {
-  color: var(--tag-text-alert);
-  background: var(--tag-bg-alert);
+  color: var(--tag-text-admin);
+  background: var(--tag-bg-admin);
 }
 
 .role-tag--user {

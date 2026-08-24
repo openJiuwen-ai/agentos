@@ -15,16 +15,22 @@ const route = useRoute();
 const router = useRouter();
 const { effectiveIsAdmin } = useAuth();
 
-const visibleMenus = computed(() =>
-  effectiveIsAdmin.value
-    ? props.menus
-    : props.menus
-        .filter((m) => !m.adminOnly)
-        .map((m) => ({
-          ...m,
-          children: m.children?.filter((c) => !c.adminOnly),
-        })),
-);
+const visibleMenus = computed(() => {
+  if (effectiveIsAdmin.value) {
+    return props.menus;
+  }
+
+  return props.menus
+    .filter((m) => !m.adminOnly)
+    .map((m) => {
+      const children = m.children?.filter((c) => !c.adminOnly);
+      return {
+        ...m,
+        children: children?.length ? children : undefined,
+      };
+    })
+    .filter((m) => m.routeName || m.children?.length);
+});
 
 const openedKeys = ref<string[]>([]);
 const menuKey = ref(0);
