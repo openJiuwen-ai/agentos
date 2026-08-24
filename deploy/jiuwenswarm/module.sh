@@ -63,6 +63,37 @@ jiuwenswarm_install() {
         warning "No jiuwenswarm whl found at ${AGENTOS_ROOT}/jiuwenswarm-*-py3-none-any.whl, skipping jiuwenswarm install"
         warning "Please place jiuwenswarm-<version>-py3-none-any.whl in ${AGENTOS_ROOT}/ before install"
     fi
+
+    # 工具沙箱镜像提示（install 不自动拉取镜像，up 也不检测，需用户手动 docker pull）
+    _jiuwenswarm_warn_sandbox_image
+}
+
+# 提示用户手动拉取工具沙箱镜像
+# install/up 均不自动下载镜像，用户需按 README 说明手动 docker pull
+_jiuwenswarm_warn_sandbox_image() {
+    local env_file="${JIUWENSWARM_DEPLOY_DIR}/.env.custom"
+    local sandbox_type="" sandbox_enable="" sandbox_image=""
+
+    # 从 .env.custom 读取工具沙箱配置
+    if [ -f "${env_file}" ]; then
+        sandbox_type=$(grep -E '^TOOL_SANDBOX_TYPE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
+        sandbox_enable=$(grep -E '^TOOL_SANDBOX_ENABLE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
+        sandbox_image=$(grep -E '^TOOL_SANDBOX_IMAGE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
+    fi
+
+    # 仅当工具沙箱启用时提示
+    if [ "${sandbox_enable}" = "true" ] && [ -n "${sandbox_image}" ]; then
+        echo ""
+        warning "Tool sandbox is enabled (TOOL_SANDBOX_ENABLE=true) but the sandbox image is NOT auto-pulled during install/up."
+        warning "You MUST manually pull the image before using tool sandbox, otherwise jiuwen agent tool sandbox will not work:"
+        echo ""
+        echo "    docker pull ${sandbox_image}"
+        echo ""
+        warning "See deploy/README.md (Tool Sandbox Image section) for details."
+        if [ -n "${sandbox_type}" ]; then
+            info "Current TOOL_SANDBOX_TYPE: ${sandbox_type}"
+        fi
+    fi
 }
 
 # 停用并禁用 jiuwenswarm-gateway 的 systemd 服务（本机），清理 unit 文件与 drop-in

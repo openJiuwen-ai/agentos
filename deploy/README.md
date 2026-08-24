@@ -351,6 +351,23 @@ whl 包来源：`install` 时从 agentos 根目录匹配 `a2x_registry-*-py3-non
 | `WEB_STATIC_PORT` | web 前端静态资源服务端口 |
 | `SANDBOX_TYPE` / `TOOL_SANDBOX_*` | 沙箱类型与工具沙箱配置 |
 
+> **工具沙箱镜像需手动拉取**：`install` 和 `up` 均**不会**自动拉取 `TOOL_SANDBOX_IMAGE` 指定的镜像。当 `TOOL_SANDBOX_ENABLE=true` 时，`install` 会打印提示，但用户需自行在目标主机上执行 `docker pull` 拉取镜像，否则 jiuwen agent 工具沙箱功能不可用。
+
+```bash
+# 拉取工具沙箱镜像（镜像地址对应 .env.custom 中的 TOOL_SANDBOX_IMAGE）
+docker pull swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
+```
+
+若目标主机无法访问华为云 SWR 镜像仓库，可在有网络的机器上拉取后通过 `docker save` / `docker load` 离线导入：
+
+```bash
+# 在有网络的机器上导出
+docker save -o yr-runtime-sandbox.tar swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
+
+# 传输到目标主机后导入
+docker load -i yr-runtime-sandbox.tar
+```
+
 #### whl 包来源
 
 `install` 时统一从 agentos 根目录（`deploy` 的同级目录）获取 whl 包：
