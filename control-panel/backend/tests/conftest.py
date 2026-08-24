@@ -11,10 +11,17 @@ import os
 import shutil
 from pathlib import Path
 
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+# OAuth2 Provider 测试开关：必须在导入 app.config / app.main 之前设置环境变量。
+# app.main 的模块级 _OAUTH2_ENABLED 在首次导入时求值并决定是否注册 oauth2 路由，
+# 而部分测试模块（test_main.py 等）在 fixture 运行前就模块级导入了 app.main。
+os.environ["OAUTH2_CLIENT_ID"] = "skillhub"
+os.environ["OAUTH2_CLIENT_SECRET"] = "test-secret"
+os.environ["OAUTH2_CLIENT_NAME"] = "SkillHub"
 
-from app.config import settings
+import pytest_asyncio  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+
+from app.config import settings  # noqa: E402
 
 # 临时 home 目录，避免污染真实路径
 TEST_HOME = "/tmp/agentos_test_home"
@@ -46,6 +53,12 @@ def _configure_for_test(data: dict) -> None:
     settings.LITELLM_MASTER_KEY = "test-master-key"
     settings.LITELLM_KEY_ENCRYPTION_KEY = "0" * 64
     settings.LITELLM_DATABASE_URL = "sqlite+aiosqlite://"
+    # OAuth2 Provider 测试配置（与模块级环境变量保持一致，redirect/frontend 供路由拼接）
+    settings.OAUTH2_CLIENT_ID = "skillhub"
+    settings.OAUTH2_CLIENT_SECRET = "test-secret"
+    settings.OAUTH2_CLIENT_NAME = "SkillHub"
+    settings.OAUTH2_REDIRECT_URI = "http://localhost:9002/api/v1/auth/oauth/agentos/callback"
+    settings.OAUTH2_FRONTEND_ORIGIN = "https://test"
 
 
 def _cleanup_test_home() -> None:
