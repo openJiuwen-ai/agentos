@@ -153,7 +153,10 @@ class ParamikoSshTunnelClient:
 
         import paramiko
 
-        channel = client.invoke_shell()
+        # 使用本地终端类型（默认 xterm-256color），避免 vt100 导致
+        # vi 中 Delete 键失效、粘贴丢失前两行等问题。
+        term = os.environ.get("TERM", "xterm-256color")
+        channel = client.invoke_shell(term=term)
 
         # 立即发送内容，不要等待——sandbox 可能快速关闭 channel。
         # 如果 channel 已关闭，send 会抛出 OSError。
