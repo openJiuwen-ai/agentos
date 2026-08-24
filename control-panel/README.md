@@ -34,7 +34,7 @@ OAUTH2_CLIENT_ID=
 # 可以使用命令 openssl rand -hex 32 生成
 OAUTH2_CLIENT_SECRET=
 # redirect_uri 必须是浏览器可访问的 SkillHub 回调地址，与客户端配置完全一致
-OAUTH2_REDIRECT_URI=http://localhost:9002/api/v1/auth/oauth/agentos/callback
+OAUTH2_REDIRECT_URI=http://localhost:8098/api/v1/auth/oauth/agentos/callback
 OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES=1440
 # OAUTH2_FRONTEND_ORIGIN 必须是浏览器可访问的 SkillHub 前端地址
 OAUTH2_FRONTEND_ORIGIN=http://localhost:8090

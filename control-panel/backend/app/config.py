@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     AGENTOS_SYS_UID: int = 1000
     AGENTOS_SYS_GID: int = 1000
 
+    # ── Preset skills (user preinstall on create_user) ──
+    AGENTOS_PRESET_SKILLS_DIR: str = ""  # 解压后的预装 skill 源目录；空则不预装
+    AGENTOS_USER_SKILLS_SUBDIR: str = ".jiuwenswarm/agent/workspace/skills"
+
     # ── Logging ──
     LOG_DIR: str = "/home/agentos/logs"
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB

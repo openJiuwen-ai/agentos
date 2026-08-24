@@ -89,6 +89,34 @@ def _chown_home(username: str) -> None:
             os.chown(fp, uid, gid, follow_symlinks=False)
 
 
+def _user_skills_dir(username: str) -> Path:
+    """用户 skill 目录路径：AGENTOS_HOME_BASE/<username>/<skills_subdir>。"""
+    return _home_path(username) / settings.AGENTOS_USER_SKILLS_SUBDIR
+
+
+def _preset_skills(username: str) -> None:
+    """拷贝预装 skill 到用户目录（未配置源目录时跳过；拷贝失败则清理并抛出）。"""
+    src_str = settings.AGENTOS_PRESET_SKILLS_DIR
+    if not src_str:
+        return
+    src = Path(src_str)
+    if not src.is_dir():
+        return
+    dest = _user_skills_dir(username)
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        for skill_dir in src.iterdir():
+            if not skill_dir.is_dir():
+                continue
+            target = dest / skill_dir.name
+            if target.exists():
+                continue
+            shutil.copytree(str(skill_dir), str(target), dirs_exist_ok=False)
+    except Exception:
+        shutil.rmtree(str(dest), ignore_errors=True)
+        raise
+
+
 def _remove_home(username: str) -> None:
     path = _home_path(username)
     if path.is_dir():
@@ -633,8 +661,9 @@ class LocalUsersBackend(AbstractUserBackend):
                 try:
                     _ensure_home(username)
                     _create_jwswarm_config(username)
+                    _preset_skills(username)
                 except Exception:
-                    logger.warning("用户 %s 建家目录 / 复制模板失败", username, exc_info=True)
+                    logger.warning("用户 %s 建家目录 / 复制模板 / 拷贝预装skill 失败", username, exc_info=True)
             elif not config_path.is_file():
                 try:
                     src = Path(settings.AGENTOS_SWARM_TEMPLATE_DIR) / "config" / "config.yaml"

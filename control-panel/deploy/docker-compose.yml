@@ -54,6 +54,8 @@ services:
       OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES: ${OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
       OAUTH2_FRONTEND_ORIGIN: ${OAUTH2_FRONTEND_ORIGIN:-http://localhost:80}
       OAUTH2_CLIENT_NAME: ${OAUTH2_CLIENT_NAME}
+      # ── Preset Skills (for user skill preinstall) ──
+      AGENTOS_PRESET_SKILLS_DIR: ${AGENTOS_PRESET_SKILLS_DIR:-}
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/agentos.conf:ro
       # agentos 不再挂 docker.sock；构建由 image-process 服务负责
@@ -64,7 +66,9 @@ services:
       - ${JIUWENBOX_LOG_DIR:-/tmp/jiuwenbox}:/tmp/jiuwenbox:ro
       - /root:/home/agentos/host_root:ro
       - /var/log/agentos:/var/log/agentos
-
+      # 预装 skill 源目录（--with-skillhub 时由 deploy.sh 写入 .env）
+      # 未配置时挂 /dev/null（文件）→ 容器内 Path.is_dir() 为 False → backend _preset_skills 自动跳过，安全
+      - ${AGENTOS_PRESET_SKILLS_DIR:-/dev/null}:${AGENTOS_PRESET_SKILLS_DIR:-/dev/null}:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

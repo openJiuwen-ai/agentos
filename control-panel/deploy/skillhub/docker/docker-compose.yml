@@ -1,0 +1,134 @@
+# SkillHub 部署编排（AgentOS 一键部署态）
+#
+# 此文件为预修改版本，直接提交到 agent-os 仓库，构建时不再 patch。
+# 相比 skillhub 仓库原始版本的改动：
+#   1. backend/frontend 加 image: 标签（docker load 后 compose 可找到镜像）
+#   2. FRONTEND_PORT → SKILLHUB_FRONTEND_PORT（避免与 control-panel .env 同名变量冲突）
+#   3. frontend 端口绑定 0.0.0.0（允许外部浏览器访问）
+#   4. env_file: ../.env（统一用 .env，不用 .env.docker）
+#   5. 移除 ../sql 和 ./mysql-init 卷挂载（部署态不需要，backend create_all 自动建表）
+#
+# 用法（在 skillhub/ 目录下执行）：
+#   docker compose -f docker/docker-compose.yml --env-file .env up -d
+
+name: skillhub
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${STORE_DB_NAME:-openjiuwen_market}
+      MYSQL_USER: skillhub
+      MYSQL_PASSWORD: ${DB_PASSWORD:-root}
+    ports:
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3001}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysql", "-uroot", "-p${DB_PASSWORD:-root}", "-e", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MARKET_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MARKET_S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "0.0.0.0:${MINIO_API_PORT:-3003}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MARKET_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MARKET_S3_SECRET_KEY:-minioadmin}
+      MARKET_BUCKET_NAME: ${MARKET_BUCKET_NAME:-openjiuwen-market-test}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" > /dev/null 2>&1; do echo 'waiting for minio...'; sleep 2; done && mc mb --ignore-existing "local/$$MARKET_BUCKET_NAME" && echo 'bucket ready'
+
+  backend:
+    image: skillhub-backend:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.skillhub-backend
+      args:
+        INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.org}
+        APT_MIRROR: ${APT_MIRROR:-}
+    env_file: ../.env
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: skillhub
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      STORE_HOST: "0.0.0.0"
+      STORE_PORT: "8100"
+      MARKET_DEBUG: ${MARKET_DEBUG:-false}
+      MARKET_S3_ENDPOINT: ${MARKET_S3_ENDPOINT:-http://minio:${MINIO_API_PORT:-3003}}
+    extra_hosts:
+      - "minio:host-gateway"
+    ports:
+      - "127.0.0.1:${STORE_PORT:-8100}:8100"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as r; r.urlopen('http://127.0.0.1:8100/api/health', timeout=2).read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  frontend:
+    image: skillhub-frontend:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.skillhub-frontend
+    environment:
+      BACKEND_URL: backend
+      BACKEND_PORT: "8100"
+    ports:
+      - "${SKILLHUB_FRONTEND_PORT:-8098}:9002"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:

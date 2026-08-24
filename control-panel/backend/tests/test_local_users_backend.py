@@ -759,3 +759,173 @@ class TestSyncAllUsersAgentos:
         )
         text = config_path.read_text(encoding="utf-8")
         assert "skip-model" not in text
+
+
+# ── 预装 Skill（_preset_skills）─────────────────────────────────────
+class TestPresetSkills:
+    """_preset_skills 单元+集成测试：预装 skill 拷贝到用户目录。
+
+    覆盖场景：未配置跳过、源目录不存在跳过、正常拷贝、跳过非目录、
+    幂等（已存在不覆盖）、失败清理、create_user 集成触发。
+    """
+
+    @staticmethod
+    def test_not_configured_skips(tmp_path, monkeypatch):
+        """AGENTOS_PRESET_SKILLS_DIR 为空 → 直接返回，不创建任何目录。"""
+        import app.services.local_users.backend as backend_module
+
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", "")
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(tmp_path))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        getattr(backend_module, "_preset_skills")("someuser")
+
+        skills_dir = tmp_path / "someuser" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        assert not skills_dir.exists()
+
+    @staticmethod
+    def test_source_not_exists_skips(tmp_path, monkeypatch):
+        """源目录不存在 → 直接返回，不创建任何目录。"""
+        import app.services.local_users.backend as backend_module
+
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", str(tmp_path / "nonexistent"))
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(tmp_path))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        getattr(backend_module, "_preset_skills")("someuser2")
+
+        skills_dir = tmp_path / "someuser2" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        assert not skills_dir.exists()
+
+    @staticmethod
+    def test_copies_skills_to_user_dir(tmp_path, monkeypatch):
+        """正常场景：源目录含多个 skill 子目录 → 全部拷贝到用户 skills 目录。"""
+        import app.services.local_users.backend as backend_module
+
+        src = tmp_path / "preset_skills"
+        src.mkdir()
+        (src / "code-review").mkdir()
+        (src / "code-review" / "SKILL.md").write_text("# Code Review", encoding="utf-8")
+        (src / "doc-generator").mkdir()
+        (src / "doc-generator" / "SKILL.md").write_text("# Doc Gen", encoding="utf-8")
+
+        home_base = tmp_path / "home"
+        home_base.mkdir()
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", str(src))
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(home_base))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        getattr(backend_module, "_preset_skills")("skilluser1")
+
+        dest = home_base / "skilluser1" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        assert dest.is_dir()
+        assert (dest / "code-review" / "SKILL.md").read_text(encoding="utf-8") == "# Code Review"
+        assert (dest / "doc-generator" / "SKILL.md").read_text(encoding="utf-8") == "# Doc Gen"
+
+    @staticmethod
+    def test_skips_non_directories_in_source(tmp_path, monkeypatch):
+        """源目录中的文件（非目录）被跳过，只拷贝子目录。"""
+        import app.services.local_users.backend as backend_module
+
+        src = tmp_path / "preset_skills"
+        src.mkdir()
+        (src / "README.md").write_text("readme", encoding="utf-8")
+        (src / "code-review").mkdir()
+        (src / "code-review" / "SKILL.md").write_text("# Code Review", encoding="utf-8")
+
+        home_base = tmp_path / "home"
+        home_base.mkdir()
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", str(src))
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(home_base))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        getattr(backend_module, "_preset_skills")("skilluser2")
+
+        dest = home_base / "skilluser2" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        assert (dest / "code-review" / "SKILL.md").read_text(encoding="utf-8") == "# Code Review"
+        assert not (dest / "README.md").exists()
+
+    @staticmethod
+    def test_skips_existing_skill_dirs(tmp_path, monkeypatch):
+        """目标 skill 目录已存在 → 跳过（不覆盖），其余新 skill 正常拷贝。"""
+        import app.services.local_users.backend as backend_module
+
+        src = tmp_path / "preset_skills"
+        src.mkdir()
+        (src / "code-review").mkdir()
+        (src / "code-review" / "SKILL.md").write_text("# New", encoding="utf-8")
+        (src / "doc-generator").mkdir()
+        (src / "doc-generator" / "SKILL.md").write_text("# Doc", encoding="utf-8")
+
+        home_base = tmp_path / "home"
+        home_base.mkdir()
+        dest = home_base / "skilluser3" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        (dest / "code-review").mkdir(parents=True)
+        (dest / "code-review" / "SKILL.md").write_text("# Old", encoding="utf-8")
+
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", str(src))
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(home_base))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        getattr(backend_module, "_preset_skills")("skilluser3")
+
+        assert (dest / "code-review" / "SKILL.md").read_text(encoding="utf-8") == "# Old"
+        assert (dest / "doc-generator" / "SKILL.md").read_text(encoding="utf-8") == "# Doc"
+
+    @staticmethod
+    def test_cleans_dest_on_failure(tmp_path, monkeypatch):
+        """拷贝过程中失败 → 清理整个 skills 目录并重新抛出异常。"""
+        import app.services.local_users.backend as backend_module
+
+        src = tmp_path / "preset_skills"
+        src.mkdir()
+        (src / "skill-a").mkdir()
+        (src / "skill-a" / "SKILL.md").write_text("A", encoding="utf-8")
+        (src / "skill-b").mkdir()
+        (src / "skill-b" / "SKILL.md").write_text("B", encoding="utf-8")
+
+        home_base = tmp_path / "home"
+        home_base.mkdir()
+        monkeypatch.setattr(settings, "AGENTOS_PRESET_SKILLS_DIR", str(src))
+        monkeypatch.setattr(settings, "AGENTOS_HOME_BASE", str(home_base))
+        monkeypatch.setattr(settings, "AGENTOS_USER_SKILLS_SUBDIR", ".jiuwenswarm/agent/workspace/skills")
+
+        original_copytree = shutil.copytree
+        call_count = {"n": 0}
+
+        def failing_copytree(src_str, dst_str, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                raise OSError("simulated failure")
+            return original_copytree(src_str, dst_str, **kwargs)
+
+        monkeypatch.setattr(shutil, "copytree", failing_copytree)
+
+        with pytest.raises(OSError, match="simulated failure"):
+            getattr(backend_module, "_preset_skills")("skilluser4")
+
+        dest = home_base / "skilluser4" / ".jiuwenswarm" / "agent" / "workspace" / "skills"
+        assert not dest.exists()
+
+    async def test_create_user_triggers_preset_skills(self, backend, tmp_path):
+        """集成测试：create_user 时 _preset_skills 自动拷贝 skill 到新用户目录。"""
+        src = tmp_path / "preset_skills"
+        src.mkdir()
+        (src / "code-review").mkdir()
+        (src / "code-review" / "SKILL.md").write_text("# Code Review", encoding="utf-8")
+        (src / "doc-generator").mkdir()
+        (src / "doc-generator" / "SKILL.md").write_text("# Doc Gen", encoding="utf-8")
+
+        settings.AGENTOS_PRESET_SKILLS_DIR = str(src)
+
+        username = "presetinteg"
+        await backend.create_user(username)
+
+        dest = (
+            Path(settings.AGENTOS_HOME_BASE)
+            / username
+            / settings.AGENTOS_USER_SKILLS_SUBDIR
+        )
+        assert dest.is_dir()
+        assert (dest / "code-review" / "SKILL.md").read_text(encoding="utf-8") == "# Code Review"
+        assert (dest / "doc-generator" / "SKILL.md").read_text(encoding="utf-8") == "# Doc Gen"

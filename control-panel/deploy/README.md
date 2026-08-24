@@ -55,6 +55,12 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | 容器镜像 | `grafana/loki` | `3.6.0` |
 | 容器镜像 | `grafana/alloy` | `v1.18.1` |
 | 容器镜像 | `grafana/grafana` | `12.4.2` |
+| 容器镜像（SkillHub） | `skillhub-backend` | `latest` |
+| 容器镜像（SkillHub） | `skillhub-frontend` | `latest` |
+| 容器镜像（SkillHub） | `mysql` | `8.0` |
+| 容器镜像（SkillHub） | `redis` | `7-alpine` |
+| 容器镜像（SkillHub） | `minio/minio` | `RELEASE.2025-09-07T16-13-09Z` |
+| 容器镜像（SkillHub） | `minio/mc` | `RELEASE.2025-08-13T08-35-41Z` |
 | 二进制文件 | `node_exporter` | `v1.12.1` |
 | 二进制文件 | `npu-exporter` | `>26.0.0` |
 
@@ -164,6 +170,34 @@ docker save -o agent-base_1.0.tar agent-base:1.0
 # 目标机：
 docker load -i agentos-image-process_latest.tar
 docker load -i agent-base_1.0.tar
+```
+
+**SkillHub 镜像（仅 `--with-skillhub` 时需要）**
+
+```bash
+docker pull mysql:8.0
+docker pull redis:7-alpine
+docker pull minio/minio:RELEASE.2025-09-07T16-13-09Z
+docker pull minio/mc:RELEASE.2025-08-13T08-35-41Z
+
+# skillhub-backend / skillhub-frontend 为私有镜像，需预先构建或从制品库获取
+# docker build -t skillhub-backend:latest <path-to-skillhub-backend>
+# docker build -t skillhub-frontend:latest <path-to-skillhub-frontend>
+
+docker save -o mysql_8.0.tar mysql:8.0
+docker save -o redis_7-alpine.tar redis:7-alpine
+docker save -o minio_minio.tar minio/minio:RELEASE.2025-09-07T16-13-09Z
+docker save -o minio_mc.tar minio/mc:RELEASE.2025-08-13T08-35-41Z
+docker save -o skillhub-backend_latest.tar skillhub-backend:latest
+docker save -o skillhub-frontend_latest.tar skillhub-frontend:latest
+
+# 目标机：
+docker load -i mysql_8.0.tar
+docker load -i redis_7-alpine.tar
+docker load -i minio_minio.tar
+docker load -i minio_mc.tar
+docker load -i skillhub-backend_latest.tar
+docker load -i skillhub-frontend_latest.tar
 ```
 
 ### Exporter 准备
@@ -277,6 +311,27 @@ sudo bash deploy.sh up
 > - worker 节点安装后 `up`/`down` 只管理本机 exporter 与 Alloy，不涉及 docker compose。
 > - `up` 时若 `WORKER_NODES` 含重复 IP 或与 master 本机相同，脚本会自动规范化并写回 `.env`。
 
+#### 含 SkillHub 部署（预装 skill + OAuth2 SSO）
+
+```bash
+# 1. 安装（含 SkillHub 初始化 + 预装 skill 源目录配置）：
+sudo bash deploy.sh install --with-skillhub
+
+# 2. 进入安装目录：
+cd ~/.agentos/.agent-manager
+
+# 3. 启动服务（含 SkillHub 启动 + 预装 skill 上传到市场）：
+sudo PRESET_SKILLS_ZIP=/path/to/preset-skills.zip bash deploy.sh up --with-skillhub
+
+# 4. 查看状态（含 SkillHub 健康检查）：
+sudo bash deploy.sh status
+```
+
+> - `--with-skillhub` 需预先准备 SkillHub 镜像（见上方"镜像准备"）。
+> - `PRESET_SKILLS_ZIP` 指向预装 skill 的 zip 包，启动时自动解压并上传到 SkillHub 市场。
+> - SkillHub 前端默认端口 `8098`（`SKILLHUB_FRONTEND_PORT` 可调）。
+> - 云服务器部署时需传入公网 IP：`sudo SKILLHUB_HOST=<公网IP> ... bash deploy.sh up --with-skillhub`。
+
 #### 指定模型配置（up）
 
 ```bash
@@ -352,6 +407,7 @@ sudo bash deploy.sh up --models-file /path/to/models.json
 | `--master-ip <ip>` | 仅 `--role worker`；master 节点 IP（Alloy 日志上报） |
 | `--models '<JSON>'` | `up` 时手动指定模型配置 JSON |
 | `--models-file <path>` | `up` 时从文件读取模型配置 JSON |
+| `--with-skillhub` | 同时部署/启动 SkillHub（默认不启动；需预先准备 SkillHub 镜像） |
 
 ---
 

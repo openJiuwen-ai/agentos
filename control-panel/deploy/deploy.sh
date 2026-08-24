@@ -548,6 +548,17 @@ _init_env_noninteractive() {
     sys_gid="${AGENTOS_SYS_GID:-$(id -g agentos 2>/dev/null || echo 1000)}"
     sed -i "s/^AGENTOS_SYS_UID=.*/AGENTOS_SYS_UID=${sys_uid}/" "$env_file"
     sed -i "s/^AGENTOS_SYS_GID=.*/AGENTOS_SYS_GID=${sys_gid}/" "$env_file"
+    # OAuth2 (for SkillHub SSO) — 用 FRONTEND_PORT / SKILLHUB_FRONTEND_PORT 变量，不写死端口
+    local cp_port sh_port
+    cp_port=$(grep -E "^FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
+    cp_port="${cp_port:-8090}"
+    sh_port=$(grep -E "^SKILLHUB_FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
+    sh_port="${sh_port:-8098}"
+    sed -i "s/^OAUTH2_CLIENT_ID=.*/OAUTH2_CLIENT_ID=skillhub/" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=agentos-secret/" "$env_file"
+    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${detected_ip}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
+    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${detected_ip}:${cp_port}|" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_NAME=.*/OAUTH2_CLIENT_NAME=SkillHub/" "$env_file"
 
     local worker_json
     worker_json=$(_resolve_worker_nodes_for_master "$ne_host")
@@ -637,6 +648,18 @@ _init_env_interactive() {
     else
         log "  AGENT_REGISTER_URL = (已禁用)"
     fi
+
+    # OAuth2 (for SkillHub SSO) — 用 FRONTEND_PORT / SKILLHUB_FRONTEND_PORT 变量，不写死端口
+    local cp_port sh_port
+    cp_port=$(grep -E "^FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
+    cp_port="${cp_port:-8090}"
+    sh_port=$(grep -E "^SKILLHUB_FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
+    sh_port="${sh_port:-8098}"
+    sed -i "s/^OAUTH2_CLIENT_ID=.*/OAUTH2_CLIENT_ID=skillhub/" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=agentos-secret/" "$env_file"
+    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${detected_ip}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
+    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${detected_ip}:${cp_port}|" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_NAME=.*/OAUTH2_CLIENT_NAME=SkillHub/" "$env_file"
 
     echo ""
     read -rp "启用多机监控? (y/N): " val
@@ -1057,6 +1080,23 @@ do_install() {
         log "[5/5] worker 节点跳过 Docker 镜像拉取"
     fi
 
+    # skillhub（仅 master + --with-skillhub）
+    if is_master && [ "$WITH_SKILLHUB" -eq 1 ]; then
+        log "[skillhub] install"
+        AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" install
+
+        # 配置预装 skill 源目录（供 control-panel backend 创建用户时拷贝）
+        local preset_dir="/home/agentos/agent_preset/skills"
+        mkdir -p "$preset_dir"
+        local env_file="${DEPLOY_DIR}/.env"
+        if ! grep -q "^AGENTOS_PRESET_SKILLS_DIR=" "$env_file" 2>/dev/null; then
+            echo "AGENTOS_PRESET_SKILLS_DIR=${preset_dir}" >> "$env_file"
+        else
+            sed -i "s|^AGENTOS_PRESET_SKILLS_DIR=.*|AGENTOS_PRESET_SKILLS_DIR=${preset_dir}|" "$env_file"
+        fi
+        log "  AGENTOS_PRESET_SKILLS_DIR=${preset_dir}"
+    fi
+
     log "install 完成。"
     echo ""
     log "提示: 如需修改端口等配置，可直接编辑 ${DEPLOY_DIR}/.env"
@@ -1074,6 +1114,10 @@ do_uninstall() {
 
     if is_master; then
         log "[1/4] 停止 Docker 服务"
+        # skillhub 先卸载（含数据卷）— 无论是否带 --with-skillhub 都尝试卸载
+        # skillhub.sh 内部会检查 .env 是否存在，未安装时安全跳过
+        log "[skillhub] uninstall"
+        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" uninstall
         cd "$DEPLOY_DIR"
         if [ "$CLEAN" -eq 1 ]; then
             docker compose down -v || true
@@ -1514,6 +1558,12 @@ do_up() {
         log "等待服务就绪 ..."
         sleep 3
 
+        # skillhub（control-panel 之后启动，OAuth2 provider 已就绪）
+        if [ "$WITH_SKILLHUB" -eq 1 ]; then
+            log "[skillhub] up"
+            PRESET_SKILLS_ZIP="${PRESET_SKILLS_ZIP:-}" AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" up
+        fi
+
         do_status
     else
         log "  worker 节点跳过 Docker 服务"
@@ -1530,6 +1580,11 @@ do_down() {
 
     log "[1/4] 停止 Docker 服务"
     if is_master; then
+        # skillhub 先停（逆序）
+        if [ "$WITH_SKILLHUB" -eq 1 ]; then
+            log "[skillhub] down"
+            bash "${DEPLOY_DIR}/skillhub/skillhub.sh" down
+        fi
         cd "$DEPLOY_DIR"
         docker compose down
     else
@@ -1639,6 +1694,11 @@ do_status() {
         && _check "alloy            (127.0.0.1:12345)" 1 \
         || _check "alloy            (127.0.0.1:12345)" 0
 
+    # skillhub 健康检查
+    if [ "$WITH_SKILLHUB" -eq 1 ]; then
+        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" status
+    fi
+
     unset -f _check
     echo ""
 }
@@ -1707,6 +1767,7 @@ INSTALL_WORKERS=""
 INSTALL_MASTER_IP=""
 UP_MODELS_JSON=""
 UP_MODELS_FILE=""
+WITH_SKILLHUB=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1747,6 +1808,10 @@ while [ $# -gt 0 ]; do
             [ -n "${2:-}" ] || fail "--models-file 需要文件路径参数"
             UP_MODELS_FILE="$2"
             shift 2
+            ;;
+        --with-skillhub)
+            WITH_SKILLHUB=1
+            shift
             ;;
         *)
             fail "未知参数: $1"
@@ -1795,6 +1860,7 @@ case "$ACTION" in
         echo "选项:"
         echo "  --interactive, -i  交互式安装（可选 master/worker、多机监控；与下方拓扑参数互斥）"
         echo "  --clean            uninstall 时删除数据卷、.env 和安装目录"
+        echo "  --with-skillhub    同时部署/启动 skillhub（默认不启动）"
         echo ""
         echo "install 拓扑参数（非交互，与 -i 互斥）:"
         echo "  --role master|worker   节点角色，默认 master"
