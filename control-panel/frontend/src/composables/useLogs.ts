@@ -3,7 +3,6 @@ import {
   getLogComponents,
   getLogCategories,
   getExports,
-  getComponentFiles,
   type LogCategoryItem,
   type LogComponent,
   type LogExportTask,
@@ -70,15 +69,6 @@ export function useLogs() {
     }
   }
 
-  async function fetchComponentFiles(componentId: string, subpath?: string) {
-    fileEntriesLoading.value = true;
-    try {
-      fileEntries.value = await getComponentFiles(componentId, subpath);
-    } finally {
-      fileEntriesLoading.value = false;
-    }
-  }
-
   return {
     categories,
     categoriesLoading,
@@ -93,7 +83,6 @@ export function useLogs() {
     exportTasksLoading,
     fetchCategories,
     fetchComponents,
-    fetchComponentFiles,
     addLogLines,
     clearLogLines,
     fetchLogExportTasks,

@@ -951,6 +951,11 @@ uninstall_npu_exporter() {
 
 # ── alloy 安装/卸载（仅 worker 节点；master 由 docker compose 管理）──────────────
 
+# 获取本机 IP：hostname -I 列出所有地址，取第一个（通常为业务网卡 IP）
+get_host_ip() {
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
+
 install_alloy() {
     is_worker || { log "  master 节点：Alloy 由 docker compose 管理，跳过独立安装"; return; }
 
@@ -974,10 +979,14 @@ install_alloy() {
 
     mkdir -p "$ALLOY_DATA_HOST"
 
-    # 生成 worker 端 config.alloy（替换 Loki endpoint）
-    sed "s|http://loki:8096/loki/api/v1/push|$(sed_escape "$loki_endpoint")|g" \
+    # 生成 worker 端 config.alloy（模板默认 ip 为 127.0.0.1，替换为本机 IP；替换 Loki endpoint）
+    local host_ip
+    host_ip=$(get_host_ip)
+    [ -n "$host_ip" ] || host_ip="127.0.0.1"
+    sed -e "s|\"127.0.0.1\"|\"$(sed_escape "$host_ip")\"|g" \
+        -e "s|http://loki:8096/loki/api/v1/push|$(sed_escape "$loki_endpoint")|g" \
         "$cfg" > "$ALLOY_CONFIG_HOST"
-    log "  Alloy 配置已生成: ${ALLOY_CONFIG_HOST} (loki: ${loki_endpoint})"
+    log "  Alloy 配置已生成: ${ALLOY_CONFIG_HOST} (host_ip: ${host_ip}, loki: ${loki_endpoint})"
 
     # 检测/拉取镜像
     if docker image inspect "$ALLOY_IMAGE" &>/dev/null; then
@@ -1492,6 +1501,13 @@ do_up() {
 
     log "[7/7] 启动 Docker 服务"
     if is_master; then
+        # 主节点：config.alloy 的 ip 由 127.0.0.1 替换为本机检测 IP
+        if grep -q '"127.0.0.1"' "${ALLOY_DIR}/config.alloy"; then
+            local master_host_ip
+            master_host_ip=$(detect_host_ip)
+            sed -i "s|\"127.0.0.1\"|\"$(sed_escape "$master_host_ip")\"|g" "${ALLOY_DIR}/config.alloy"
+            log "  config.alloy ip 已替换为: ${master_host_ip}"
+        fi
         cd "$DEPLOY_DIR"
         docker compose up -d
 

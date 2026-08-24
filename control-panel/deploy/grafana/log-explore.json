@@ -24,7 +24,7 @@
         {
           "datasource": { "type": "loki", "uid": "agentos-loki" },
           "refId": "A",
-          "expr": "{category=~\"$category\",host=~\"$host\",filename=~\"$filename\"} |~ \"(?i)$keyword\""
+          "expr": "{category=~\"$category\",filename=~\"$filename\"} |~ \"(?i)$keyword\""
         }
       ],
       "title": "",
@@ -62,16 +62,6 @@
       },
       {
         "current": { "selected": true, "text": "全部", "value": ".+" },
-        "label": "主机名",
-        "name": "host",
-        "options": [
-          { "selected": true, "text": "全部", "value": ".+" }
-        ],
-        "query": "",
-        "type": "textbox"
-      },
-      {
-        "current": { "selected": false, "text": "全部", "value": ".+" },
         "label": "文件名",
         "name": "filename",
         "options": [

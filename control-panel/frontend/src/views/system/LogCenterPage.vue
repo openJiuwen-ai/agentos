@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   ElButton,
@@ -9,12 +9,15 @@ import {
   ElMessage,
   ElBreadcrumb,
   ElBreadcrumbItem,
+  ElSelect,
+  ElOption,
 } from "element-plus";
-import { Monitor, Download, Search } from "@element-plus/icons-vue";
+import { Monitor, Search } from "@element-plus/icons-vue";
 import {
-  createArchive,
+  getLokiFilenames,
   type FileEntry,
 } from "@/api/logs";
+import { fetchHardwareNodes } from "@/api/appliance";
 import { useLogs } from "@/composables/useLogs";
 import jiuwenswarmIcon from "@/assets/images/log-center/jiuwen.png";
 import vllmIcon from "@/assets/images/log-center/vllm.png";
@@ -39,7 +42,6 @@ const {
   fileEntries,
   fileEntriesLoading,
   fetchCategories,
-  fetchComponentFiles,
 } = useLogs();
 
 const activeCategoryKey = ref<string>("");
@@ -53,25 +55,120 @@ const selectedComponent = ref<{ id: string; name: string } | null>(null);
 const MAX_DEPTH = 5;
 const currentPathStack = ref<{ name: string; path: string }[]>([]);
 const currentDepth = computed(() => currentPathStack.value.length + 1);
-const currentSubpath = computed(() =>
-  currentPathStack.value.map((s) => s.name).join("/"),
-);
 
-async function loadCurrentFiles() {
+interface DirNode {
+  name: string;
+  path: string;
+  isDir: boolean;
+  children: Map<string, DirNode>;
+}
+
+const nodeOptions = ref<{ label: string; value: string }[]>([]);
+const nodesLoading = ref(false);
+const selectedNodeIp = ref("");
+const treeRoot = ref<Map<string, DirNode>>(new Map());
+
+// 将 Loki 返回的文件路径列表解析为树状目录结构
+function buildFileTree(paths: string[]): Map<string, DirNode> {
+  const root = new Map<string, DirNode>();
+  for (const rawPath of paths) {
+    const segments = rawPath.split("/").filter(Boolean);
+    let level = root;
+    let currentPath = "";
+    segments.forEach((segment, index) => {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      let node = level.get(segment);
+      if (!node) {
+        node = {
+          name: segment,
+          path: currentPath,
+          isDir: index < segments.length - 1,
+          children: new Map(),
+        };
+        level.set(segment, node);
+      }
+      level = node.children;
+    });
+  }
+  return root;
+}
+
+// 根据当前目录栈从树中取出当前层级的文件/目录列表
+function deriveEntries() {
+  let level = treeRoot.value;
+  for (const seg of currentPathStack.value) {
+    const child = level.get(seg.name);
+    if (!child) {
+      level = new Map();
+      break;
+    }
+    level = child.children;
+  }
+  const entries: FileEntry[] = Array.from(level.values()).map((node) => ({
+    name: node.name,
+    path: node.path,
+    size: 0,
+    modified: "",
+    is_dir: node.isDir,
+  }));
+  entries.sort((a, b) =>
+    a.is_dir === b.is_dir
+      ? a.name.localeCompare(b.name)
+      : a.is_dir
+        ? -1
+        : 1,
+  );
+  fileEntries.value = entries;
+}
+
+// 通过 Loki 获取选中节点的文件路径，并重建目录树
+async function loadTree() {
   if (!selectedComponent.value) return;
+  if (!selectedNodeIp.value) {
+    fileEntries.value = [];
+    return;
+  }
   fileEntries.value = [];
   fileEntriesLoading.value = true;
   try {
-    await fetchComponentFiles(
-      selectedComponent.value.id,
-      currentSubpath.value || undefined,
+    const paths = await getLokiFilenames(
+      selectedNodeIp.value,
+      activeCategoryKey.value || undefined,
     );
+    treeRoot.value = buildFileTree(paths);
   } catch {
     ElMessage.error("读取目录失败");
+    treeRoot.value = new Map();
   } finally {
     fileEntriesLoading.value = false;
+    deriveEntries();
   }
 }
+
+// 获取主节点/从节点 IP 列表，默认选中主节点
+async function ensureNodes() {
+  if (nodeOptions.value.length > 0) return;
+  nodesLoading.value = true;
+  try {
+    const { nodes } = await fetchHardwareNodes();
+    nodeOptions.value = nodes.map((node) => ({
+      label: `${node.role.toLowerCase() === "master" ? "主节点" : "从节点"} (${node.host})`,
+      value: node.host,
+    }));
+    const master = nodes.find((node) => node.role.toLowerCase() === "master");
+    selectedNodeIp.value = (master ?? nodes[0])?.host ?? "";
+  } catch {
+    ElMessage.error("获取节点列表失败");
+  } finally {
+    nodesLoading.value = false;
+  }
+}
+
+watch(selectedNodeIp, () => {
+  if (!showComponentDrawer.value) return;
+  currentPathStack.value = [];
+  loadTree();
+});
 
 function navigateToDir(row: FileEntry) {
   if (currentDepth.value >= MAX_DEPTH) {
@@ -79,7 +176,7 @@ function navigateToDir(row: FileEntry) {
     return;
   }
   currentPathStack.value.push({ name: row.name, path: row.path });
-  loadCurrentFiles();
+  deriveEntries();
 }
 
 function navigateToBreadcrumb(index: number) {
@@ -88,7 +185,7 @@ function navigateToBreadcrumb(index: number) {
   } else {
     currentPathStack.value = currentPathStack.value.slice(0, index + 1);
   }
-  loadCurrentFiles();
+  deriveEntries();
 }
 
 async function onCategoryClick(key: string) {
@@ -98,7 +195,8 @@ async function onCategoryClick(key: string) {
   showComponentDrawer.value = true;
   selectedComponent.value = { id: cat.component_id, name: cat.label };
   currentPathStack.value = [];
-  await loadCurrentFiles();
+  await ensureNodes();
+  await loadTree();
 }
 
 function onComponentDrawerClose() {
@@ -106,6 +204,7 @@ function onComponentDrawerClose() {
   selectedComponent.value = null;
   fileEntries.value = [];
   currentPathStack.value = [];
+  treeRoot.value = new Map();
 }
 
 function openLiveLog(fileEntry: FileEntry) {
@@ -113,68 +212,20 @@ function openLiveLog(fileEntry: FileEntry) {
     name: "log-explore",
     query: {
       category: activeCategoryKey.value,
-      component_id: selectedComponent.value?.id || "",
+      ip: selectedNodeIp.value || undefined,
       file_path: fileEntry.path || fileEntry.name,
     },
   });
-}
-
-function buildTaskMessage(type: string, taskId: string) {
-  return h("span", [
-    `${type}已创建: ${taskId} `,
-    h(
-      "a",
-      {
-        href: "#",
-        onClick: (e: Event) => {
-          e.preventDefault();
-          router.push({ name: "task-center" });
-        },
-        style: { color: "var(--el-color-primary)", textDecoration: "underline" },
-      },
-      "查看任务",
-    ),
-  ]);
-}
-
-async function handleDownloadFile(fileEntry: FileEntry) {
-  if (!selectedComponent.value) {
-    ElMessage.error("请先选择日志组件");
-    return;
-  }
-  try {
-    const result = await createArchive(selectedComponent.value.id, fileEntry.path);
-    ElMessage({ message: buildTaskMessage("下载任务", result.task_id), type: "success" });
-  } catch {
-    ElMessage.error("创建下载任务失败");
-  }
-}
-
-async function handleArchiveDir(fileEntry: FileEntry) {
-  if (!selectedComponent.value) {
-    ElMessage.error("请先选择日志组件");
-    return;
-  }
-  try {
-    const result = await createArchive(selectedComponent.value.id, fileEntry.path);
-    ElMessage({ message: buildTaskMessage("打包任务", result.task_id), type: "success" });
-  } catch {
-    ElMessage.error("创建打包任务失败");
-  }
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + units[i];
 }
 
 function goToTaskCenter() {
   router.push({ name: "task-center" });
 }
 
-onMounted(() => fetchCategories());
+onMounted(() => {
+  fetchCategories();
+  ensureNodes();
+});
 </script>
 
 <template>
@@ -231,6 +282,24 @@ onMounted(() => fetchCategories());
         </div>
       </template>
 
+      <div class="drawer-node-row">
+        <span class="drawer-node-label">节点</span>
+        <el-select
+          v-model="selectedNodeIp"
+          v-loading="nodesLoading"
+          placeholder="选择节点"
+          size="small"
+          style="width: 260px"
+        >
+          <el-option
+            v-for="opt in nodeOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+      </div>
+
       <div class="drawer-breadcrumb" v-if="currentPathStack.length > 0">
         <el-breadcrumb separator="/">
           <el-breadcrumb-item>
@@ -275,15 +344,10 @@ onMounted(() => fetchCategories());
         </el-table-column>
         <el-table-column label="修改时间" width="190">
           <template #default="{ row }">
-            {{ new Date(row.modified).toLocaleString() }}
+            {{ row.modified ? new Date(row.modified).toLocaleString() : "—" }}
           </template>
         </el-table-column>
-        <el-table-column label="大小" width="100">
-          <template #default="{ row }">
-            {{ row.is_dir ? "—" : formatFileSize(row.size) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <template v-if="!row.is_dir">
               <el-button
@@ -293,22 +357,6 @@ onMounted(() => fetchCategories());
                 size="small"
                 @click="openLiveLog(row)"
               >日志预览</el-button>
-              <el-button
-                type="primary"
-                link
-                :icon="Download"
-                size="small"
-                @click="handleDownloadFile(row)"
-              >下载日志</el-button>
-            </template>
-            <template v-else>
-              <el-button
-                type="primary"
-                link
-                :icon="Download"
-                size="small"
-                @click="handleArchiveDir(row)"
-              >打包下载</el-button>
             </template>
           </template>
         </el-table-column>
@@ -440,6 +488,20 @@ onMounted(() => fetchCategories());
 
 .entry-file {
   font-weight: 400;
+}
+
+.drawer-node-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.drawer-node-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .drawer-breadcrumb {

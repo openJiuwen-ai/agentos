@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     LOG_EXPORT_MAX_SIZE_BYTES: int = 536_870_912  # 512 MB
 
     # ── Loki ──
-    LOKI_BASE_URL: str = "http://loki:8096"
+    LOKI_BASE_URL: str = "http://loki:8096/loki/api/v1"
     # ── Thirdparty Agents ──
     AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB

@@ -3,14 +3,16 @@ local.file_match "control_panel" {
     __path__  = "/home/agentos/logs/*.log",
     category  = "control_panel",
     host      = constants.hostname,
+    ip        = "127.0.0.1",
   }]
 }
 
 local.file_match "jiuwenswarm" {
   path_targets = [{
-    __path__  = "/home/agentos/users/**/.jiuwenswarm/**/*.log",
+    __path__  = "/home/agentos/users/*/.jiuwenswarm/**/*.log",
     category  = "jiuwenswarm",
     host      = constants.hostname,
+    ip        = "127.0.0.1",
   }]
 }
 
@@ -20,6 +22,7 @@ local.file_match "agent_gateway" {
     __path__  = "/var/log/agentos/gateway.log",
     category  = "agent-gateway",
     host      = constants.hostname,
+    ip        = "127.0.0.1",
   }]
 }
 
@@ -28,6 +31,7 @@ local.file_match "agent_registry" {
     __path__  = "/var/log/agentos/agent-registry.log",
     category  = "agent-registry",
     host      = constants.hostname,
+    ip        = "127.0.0.1",
   }]
 }
 
@@ -36,6 +40,7 @@ local.file_match "agent_runtime" {
       __path__  = "/var/log/agentos/yr_sessions/latest/logs/**/*.{log,err,out}",
       category  = "agent-runtime",
       host      = constants.hostname,
+      ip        = "127.0.0.1",
   }]
 }
 
@@ -44,6 +49,7 @@ local.file_match "jiuwenbox" {
     __path__  = "/tmp/jiuwenbox/*.log",
     category  = "jiuwenbox",
     host      = constants.hostname,
+    ip        = "127.0.0.1",
   }]
 }
 

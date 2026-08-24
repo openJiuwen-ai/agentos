@@ -44,11 +44,6 @@ export interface FileEntry {
   is_dir: boolean;
 }
 
-export interface ExportCreate {
-  component_id: string;
-  line_count: number;
-}
-
 const BASE = "/api/v1/logs";
 
 export function getLogCategories(): Promise<LogCategoryItem[]> {
@@ -62,24 +57,14 @@ export function getLogComponents(category?: string): Promise<LogComponent[]> {
   );
 }
 
-export function getComponentFiles(
-  componentId: string,
-  subpath?: string,
-): Promise<FileEntry[]> {
-  return get<FileEntry[]>(
-    `${BASE}/components/${componentId}/files`,
-    subpath ? { subpath } : undefined,
-  );
-}
-
-export function getFileDownloadUrl(componentId: string, filePath: string): string {
-  return `${BASE}/components/${componentId}/files/download?path=${encodeURIComponent(filePath)}`;
-}
-
-export function createExport(
-  data: ExportCreate,
-): Promise<{ task_id: string; status: string }> {
-  return post<{ task_id: string; status: string }>(`${BASE}/export`, data);
+export function getLokiFilenames(
+  ip: string,
+  category?: string,
+): Promise<string[]> {
+  return get<string[]>(`${BASE}/loki/filenames`, {
+    ip,
+    ...(category ? { category } : {}),
+  });
 }
 
 export function resolveFilePath(
@@ -92,26 +77,21 @@ export function resolveFilePath(
   );
 }
 
-export function createArchive(
-  componentId: string,
-  path?: string,
-): Promise<{ task_id: string; status: string }> {
-  return post<{ task_id: string; status: string }>(
-    `${BASE}/components/${componentId}/files/archive`,
-    undefined,
-    { params: path ? { path } : undefined },
-  );
+export interface LokiExportParams {
+  category?: string;
+  keyword?: string;
+  host?: string;
+  ip?: string;
+  filename?: string;
+  start: string;
+  end: string;
+  limit?: number;
 }
 
-export function createFileDownloadTask(
-  componentId: string,
-  name: string,
+export function createLokiExport(
+  data: LokiExportParams,
 ): Promise<{ task_id: string; status: string }> {
-  return post<{ task_id: string; status: string }>(
-    `${BASE}/files/download-task`,
-    undefined,
-    { params: { component_id: componentId, name } },
-  );
+  return post<{ task_id: string; status: string }>(`${BASE}/loki/export`, data);
 }
 
 export function getExports(): Promise<LogExportTask[]> {

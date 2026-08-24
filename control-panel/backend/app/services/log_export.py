@@ -1,16 +1,19 @@
 import asyncio
+import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from app.services.log_reader import shutdown_file_executor
+from app.services.log_component_config import find_merge_virtual_name
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.log import LogExportTask, LogComponent
+from app.models.log import LogExportTask
 
 import app.database as _db
 
@@ -91,34 +94,9 @@ async def get_export_tasks_by_user(
     return list(result.scalars().all())
 
 
-async def create_export_task(
+async def create_loki_export_task(
     session: AsyncSession,
-    component_id: str,
-    line_count: int,
-    user_id: uuid.UUID,
-) -> str:
-    component_uuid = uuid.UUID(component_id)
-    task_id = str(uuid.uuid4())
-
-    task = LogExportTask(
-        task_id=task_id,
-        task_type="export",
-        component_id=component_uuid,
-        line_count=line_count,
-        status="pending",
-        created_by=user_id,
-    )
-    session.add(task)
-    await session.flush()
-
-    asyncio.create_task(_process_one_export(task_id))
-
-    return task_id
-
-
-async def create_archive_task(
-    session: AsyncSession,
-    source_path: str,
+    query_spec: dict,
     source_name: str,
     user_id: uuid.UUID,
 ) -> str:
@@ -126,8 +104,8 @@ async def create_archive_task(
 
     task = LogExportTask(
         task_id=task_id,
-        task_type="archive",
-        source_path=source_path,
+        task_type="loki-export",
+        query_spec=json.dumps(query_spec, ensure_ascii=False),
         source_name=source_name,
         status="pending",
         created_by=user_id,
@@ -217,33 +195,14 @@ async def _process_one_export(task_id: str) -> None:
                 return
 
             try:
-                loop = asyncio.get_running_loop()
-                if task.task_type == "archive":
-                    file_path, file_size = await loop.run_in_executor(
-                        None,
-                        _do_archive_sync,
+                if task.task_type == "loki-export":
+                    file_path, file_size = await _do_loki_export(
                         task_id,
-                        task.source_path,
-                        task.source_name or "archive",
+                        task.query_spec or "{}",
+                        task.source_name or "loki",
                     )
                 else:
-                    result = await session.execute(
-                        select(LogComponent).where(
-                            LogComponent.id == task.component_id
-                        )
-                    )
-                    component = result.scalars().first()
-                    if not component:
-                        raise ValueError("组件不存在或已删除")
-
-                    file_path, file_size = await loop.run_in_executor(
-                        None,
-                        _do_export_sync,
-                        task_id,
-                        component.log_path,
-                        component.name,
-                        task.line_count or 500,
-                    )
+                    raise ValueError(f"未知的任务类型: {task.task_type}")
 
                 task.file_path = file_path
                 task.file_size_bytes = file_size
@@ -269,108 +228,89 @@ async def _get_task_by_id(
     return result.scalars().first()
 
 
-def _do_export_sync(
-    task_id: str,
-    log_path: str,
-    component_name: str,
-    line_count: int,
-) -> tuple[str, int]:
-    import tempfile
+_EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
 
-    from app.services.log_reader import _read_last_lines_sync
-
-    export_path = settings.LOG_EXPORT_PATH
-    os.makedirs(export_path, exist_ok=True)
-    export_file = os.path.join(export_path, f"export-{task_id}.zip")
-
-    max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
-    if max_size > 0 and os.path.isfile(log_path):
-        try:
-            fsize = os.path.getsize(log_path)
-            if fsize > max_size:
-                raise ValueError(f"文件大小超过限制 {_format_size(max_size)}")
-        except OSError:
-            pass
-
-    tmp_dir = tempfile.mkdtemp(prefix="log-export-")
-    try:
-        if os.path.isfile(log_path):
-            lines = _read_last_lines_sync(log_path, line_count)
-            tmp_path = os.path.join(tmp_dir, f"{component_name}.log")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-        import zipfile
-
-        with zipfile.ZipFile(export_file, "w", zipfile.ZIP_DEFLATED) as z:
-            for fname in os.listdir(tmp_dir):
-                z.write(os.path.join(tmp_dir, fname), arcname=fname)
-    finally:
-        import shutil
-
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    file_size = os.path.getsize(export_file)
-    return export_file, file_size
+_LOKI_EXPORT_MAX_PAGES = 2000
+_LOKI_EXPORT_PAGE_LIMIT = 5000
 
 
-def _do_archive_sync(
-    task_id: str,
-    source_path: str,
-    source_name: str,
-) -> tuple[str, int]:
+def _write_loki_export_zip_sync(archive_file: str, log_name: str, lines: list[str]) -> None:
     import shutil
     import tempfile
     import zipfile
 
-    source_name = os.path.basename(source_name) or "archive"
+    tmp_dir = tempfile.mkdtemp(prefix="log-loki-export-")
+    try:
+        tmp_log = os.path.join(tmp_dir, log_name)
+        with open(tmp_log, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        with zipfile.ZipFile(archive_file, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(tmp_log, arcname=log_name)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+async def _do_loki_export(
+    task_id: str,
+    query_spec_raw: str,
+    source_name: str,
+) -> tuple[str, int]:
+    """通过 Loki 分页拉取日志并打包为 zip（loki-export 任务）。"""
+    from app.services.loki_export import LokiPagedQuery, LokiQueryClient, query_range_pages
+
+    try:
+        spec = json.loads(query_spec_raw)
+        query = spec.get("query", "")
+        if not query:
+            raise ValueError("查询参数缺失: query")
+        start = datetime.fromisoformat(spec["start"])
+        end = datetime.fromisoformat(spec["end"])
+        limit = int(spec.get("limit", _LOKI_EXPORT_PAGE_LIMIT))
+    except (KeyError, TypeError, ValueError) as e:
+        raise ValueError(f"查询参数无效: {e}") from e
+    if limit <= 0:
+        raise ValueError("查询参数无效: limit 必须大于 0")
 
     export_path = settings.LOG_EXPORT_PATH
     os.makedirs(export_path, exist_ok=True)
-    archive_file = os.path.join(export_path, f"archive-{task_id}.zip")
+    archive_file = os.path.join(export_path, f"export-{task_id}.zip")
 
-    if not os.path.exists(source_path):
-        raise FileNotFoundError(f"源路径不存在: {source_path}")
-
-    max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
-    if max_size > 0:
-        if os.path.isfile(source_path):
-            total = os.path.getsize(source_path)
-        else:
-            total = 0
-            for _dirpath, _dirnames, filenames in os.walk(source_path):
-                for f in filenames:
-                    fp = os.path.join(_dirpath, f)
-                    try:
-                        total += os.path.getsize(fp)
-                    except OSError:
-                        continue
-                    if total > max_size:
-                        break
-                if total > max_size:
-                    break
-        if total > max_size:
-            raise ValueError(f"文件大小超过限制 {_format_size(max_size)}")
-
-    if os.path.isfile(source_path):
-        with zipfile.ZipFile(archive_file, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(source_path, arcname=os.path.basename(source_path))
-    else:
-        tmp_dir = tempfile.mkdtemp(prefix="log-archive-")
-        try:
-            tmp_archive = os.path.join(tmp_dir, f"{source_name}.zip")
-            shutil.make_archive(
-                os.path.join(tmp_dir, source_name),
-                "zip",
-                os.path.dirname(source_path),
-                os.path.basename(source_path),
+    client = LokiQueryClient()
+    try:
+        lines: list[str] = []
+        total_size = 0
+        max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
+        async for batch in query_range_pages(
+            LokiPagedQuery(
+                client=client,
+                query=query,
+                start=start,
+                end=end,
+                limit=limit,
+                max_pages=_LOKI_EXPORT_MAX_PAGES,
             )
-            shutil.move(tmp_archive, archive_file)
-        except Exception:
-            if os.path.exists(archive_file):
-                os.remove(archive_file)
-            raise
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        ):
+            for ts, line in batch:
+                ts_iso = (_EPOCH + timedelta(microseconds=ts // 1000)).isoformat()
+                entry = f"{ts_iso} {line}\n"
+                total_size += len(entry.encode("utf-8"))
+                if max_size > 0 and total_size > max_size:
+                    raise ValueError(f"导出数据超过大小限制 {_format_size(max_size)}")
+                lines.append(entry)
+
+        lines.reverse()  # 分页结果为时间降序，翻转为升序
+
+        raw_filename = (spec.get("filename") or "").strip()
+        basename = os.path.basename(raw_filename) if raw_filename else ""
+        if basename and re.fullmatch(r"[0-9A-Za-z._-]+", basename):
+            log_name = basename
+        else:
+            log_name = find_merge_virtual_name(raw_filename) or (
+                f"{os.path.basename(source_name) or 'loki-export'}.log"
+            )
+        await asyncio.to_thread(_write_loki_export_zip_sync, archive_file, log_name, lines)
+    finally:
+        await client.close()
 
     file_size = os.path.getsize(archive_file)
     return archive_file, file_size

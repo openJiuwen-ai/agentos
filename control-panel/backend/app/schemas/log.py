@@ -94,19 +94,6 @@ class LogCategoryItem(BaseModel):
     component_id: str = ""
 
 
-class ExportCreate(BaseModel):
-    component_id: str = Field(...)
-    line_count: int = Field(default=500, ge=0, le=50000)
-
-
-class FileEntry(BaseModel):
-    name: str
-    path: str
-    size: int
-    modified: str
-    is_dir: bool
-
-
 class LogExportTaskRead(BaseModel):
     task_id: str
     task_type: str = "export"
@@ -115,6 +102,7 @@ class LogExportTaskRead(BaseModel):
     component_category: str = ""
     source_path: str | None = None
     source_name: str | None = None
+    query_spec: str | None = None
     line_count: int | None = None
     status: str
     file_path: str | None

@@ -1,19 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { h, ref, computed, watch, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElButton, ElInput, ElSelect, ElOption } from "element-plus";
-import { ArrowLeft, Search } from "@element-plus/icons-vue";
+import { ElButton, ElInput, ElSelect, ElOption, ElMessage } from "element-plus";
+import { ArrowLeft, Download } from "@element-plus/icons-vue";
 import { useAuth } from "@/composables/useAuth";
-import { resolveFilePath } from "@/api/logs";
+import { resolveFilePath, createLokiExport } from "@/api/logs";
 
 const route = useRoute();
 const router = useRouter();
-const { accessToken, setGrafanaCookie } = useAuth();
+const { setGrafanaCookie } = useAuth();
 
 const categoryFromQuery = (route.query.category as string) || "";
 const keywordFromQuery = (route.query.keyword as string) || "";
-const componentIdFromQuery = (route.query.component_id as string) || "";
 const filePathFromQuery = (route.query.file_path as string) || "";
+const ipFromQuery = (route.query.ip as string) || "";
 
 const TIME_RANGE_OPTIONS = [
   { value: "now-1h", label: "最近 1 小时" },
@@ -26,16 +26,21 @@ const TIME_RANGE_OPTIONS = [
 const selectedCategory = ref(categoryFromQuery);
 const keyword = ref(keywordFromQuery);
 const filename = ref("");
-const hostname = ref("");
 const timeRange = ref("now-1h");
 
 onMounted(async () => {
   // 写入 Grafana 鉴权 cookie，供 nginx auth_request 验证
   setGrafanaCookie();
 
-  if (componentIdFromQuery && filePathFromQuery) {
+  // iframe 只在挂载时设置一次 src，后续时间范围等参数变化走 location.replace，
+  // 避免每次导航都在浏览器联合历史中新增记录
+  if (iframeRef.value) {
+    iframeRef.value.src = grafanaUrl.value;
+  }
+
+  if (categoryFromQuery && filePathFromQuery) {
     try {
-      const result = await resolveFilePath(componentIdFromQuery, filePathFromQuery);
+      const result = await resolveFilePath(categoryFromQuery, filePathFromQuery);
       filename.value = result.resolved_path;
     } catch {
       filename.value = filePathFromQuery;
@@ -67,9 +72,6 @@ const grafanaUrl = computed(() => {
   if (filename.value.trim()) {
     params.set("var-filename", filename.value.trim());
   }
-  if (hostname.value.trim()) {
-    params.set("var-host", hostname.value.trim());
-  }
   params.set("from", timeRange.value);
   params.set("to", "now");
   params.set("refresh", "10s");
@@ -80,13 +82,74 @@ function goBack() {
   router.push({ name: "log-center" });
 }
 
-watch(grafanaUrl, () => {
-  if (iframeRef.value) {
-    iframeRef.value.src = grafanaUrl.value;
+const downloadLoading = ref(false);
+
+function parseTimeRange(value: string): { start: Date; end: Date } {
+  const end = new Date();
+  const match = /^now-(\d+)([smhd])$/.exec(value);
+  let durationMs = 60 * 60 * 1000;
+  if (match) {
+    const amount = parseInt(match[1], 10);
+    const unitMs: Record<string, number> = {
+      s: 1000,
+      m: 60_000,
+      h: 3_600_000,
+      d: 86_400_000,
+    };
+    durationMs = amount * (unitMs[match[2]] ?? 3_600_000);
   }
-});
+  return { start: new Date(end.getTime() - durationMs), end };
+}
+
+function buildTaskMessage(type: string, taskId: string) {
+  return h("span", [
+    `${type}已创建: ${taskId} `,
+    h(
+      "a",
+      {
+        href: "#",
+        onClick: (e: Event) => {
+          e.preventDefault();
+          router.push({ name: "task-center" });
+        },
+        style: { color: "var(--el-color-primary)", textDecoration: "underline" },
+      },
+      "查看任务",
+    ),
+  ]);
+}
+
+async function handleDownload() {
+  const { start, end } = parseTimeRange(timeRange.value);
+  downloadLoading.value = true;
+  try {
+    const result = await createLokiExport({
+      category: selectedCategory.value || undefined,
+      keyword: keyword.value.trim() || undefined,
+      ip: ipFromQuery || undefined,
+      filename: filename.value.trim() || undefined,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    });
+    ElMessage({ message: buildTaskMessage("下载任务", result.task_id), type: "success" });
+  } catch {
+    ElMessage.error("创建下载任务失败");
+  } finally {
+    downloadLoading.value = false;
+  }
+}
 
 const iframeRef = ref<HTMLIFrameElement | null>(null);
+
+watch(grafanaUrl, (url) => {
+  const frame = iframeRef.value;
+  if (!frame) return;
+  if (!frame.src) {
+    frame.src = url;
+    return;
+  }
+  frame.contentWindow?.location.replace(url);
+});
 </script>
 
 <template>
@@ -113,17 +176,6 @@ const iframeRef = ref<HTMLIFrameElement | null>(null);
         </div>
 
         <div class="search-field">
-          <label class="search-label">主机名</label>
-          <el-input
-            v-model="hostname"
-            placeholder="输入主机名..."
-            clearable
-            size="default"
-            style="width: 180px"
-          />
-        </div>
-
-        <div class="search-field">
           <label class="search-label">时间范围</label>
           <el-select
             v-model="timeRange"
@@ -138,6 +190,15 @@ const iframeRef = ref<HTMLIFrameElement | null>(null);
             />
           </el-select>
         </div>
+
+        <div class="search-field search-field--download">
+          <el-button
+            type="primary"
+            :icon="Download"
+            :loading="downloadLoading"
+            @click="handleDownload"
+          >下载日志</el-button>
+        </div>
       </div>
 
       <div class="logql-preview">
@@ -149,7 +210,6 @@ const iframeRef = ref<HTMLIFrameElement | null>(null);
     <div class="iframe-wrapper">
       <iframe
         ref="iframeRef"
-        :src="grafanaUrl"
         class="grafana-iframe"
         allow="fullscreen"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
@@ -198,6 +258,10 @@ const iframeRef = ref<HTMLIFrameElement | null>(null);
   font-size: 13px;
   color: #777777;
   line-height: 20px;
+}
+
+.search-field--download {
+  margin-left: auto;
 }
 
 .logql-preview {

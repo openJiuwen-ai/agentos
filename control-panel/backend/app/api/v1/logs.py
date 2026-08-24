@@ -1,6 +1,5 @@
 import os
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -12,8 +11,6 @@ from app.iam.security import require_admin
 from app.iam.tokens import TokenData
 from app.schemas.litellm import ApiResponse
 from app.schemas.log import (
-    ExportCreate,
-    FileEntry,
     LogCategoryItem,
     LogExportTaskRead,
     LogComponentRead,
@@ -24,15 +21,12 @@ from app.services.log_component_config import (
     get_components,
     get_component_by_id,
     get_category_counts,
+    build_merge_regex,
 )
-from app.config import settings
 from app.services.log_export import (
-    create_export_task,
-    create_archive_task,
     get_export_task,
     get_export_tasks_by_user,
     delete_export_task,
-    _format_size,
 )
 from app.services.local_users.models import User
 from app.services.log_component import get_component_by_id as _db_get_component_by_id
@@ -109,16 +103,6 @@ def _resolve_safe_path(base_dir: str, user_path: str) -> str:
     return resolved
 
 
-def _get_component_path(component_id: str, username: str = "") -> str | None:
-    comp = get_component_by_id(component_id)
-    if not comp:
-        return None
-    path = comp.path
-    if username:
-        path = path.replace("{username}", username)
-    return path
-
-
 @router.get(
     "/components/{component_id}/resolve-path",
     summary="根据组件和相对路径解析完整文件路径",
@@ -129,138 +113,22 @@ async def resolve_file_path(
     subpath: str = Query(...),
     admin: TokenData = Depends(require_admin),
 ):
-    base_dir = _get_component_path(component_id, admin.username)
-    if not base_dir:
+    comp = get_component_by_id(component_id)
+    if not comp:
         raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
+    base_dir = comp.path
+    if admin.username:
+        base_dir = base_dir.replace("{username}", admin.username)
 
     if os.path.isfile(base_dir):
         return ApiResponse(data={"resolved_path": os.path.realpath(base_dir)})
 
+    merge_regex = build_merge_regex(comp, subpath)
+    if merge_regex:
+        return ApiResponse(data={"resolved_path": merge_regex})
+
     resolved = _resolve_safe_path(base_dir, subpath)
     return ApiResponse(data={"resolved_path": resolved})
-
-
-@router.get(
-    "/components/{component_id}/files",
-    summary="获取组件目录下的文件和子目录列表（支持子目录导航，最多5级）",
-    response_model=ApiResponse[list[FileEntry]],
-)
-async def list_component_files(
-    component_id: str,
-    subpath: str = Query(""),
-    session: AsyncSession = Depends(get_session),
-    admin: TokenData = Depends(require_admin),
-):
-    base_dir = _get_component_path(component_id, admin.username)
-    if not base_dir:
-        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
-
-    target_dir = _resolve_safe_path(base_dir, subpath) if subpath else base_dir
-    if not os.path.isdir(target_dir):
-        if os.path.isfile(target_dir):
-            st = os.stat(target_dir)
-            entry = FileEntry(
-                name=os.path.basename(target_dir),
-                path="",
-                size=st.st_size,
-                modified=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
-                is_dir=False,
-            )
-            return ApiResponse(data=[entry])
-        return ApiResponse(data=[])
-
-    db_usernames: set[str] | None = None
-    if component_id == "jiuwenswarm" and not subpath:
-        result = await session.execute(select(User.username))
-        db_usernames = {row[0] for row in result.all()}
-
-    entries: list[FileEntry] = []
-    try:
-        with os.scandir(target_dir) as it:
-            for entry in it:
-                try:
-                    st = entry.stat()
-                except OSError:
-                    continue
-                if db_usernames is not None:
-                    if not entry.is_dir() or entry.name not in db_usernames:
-                        continue
-                rel_path = os.path.relpath(entry.path, base_dir)
-                entries.append(FileEntry(
-                    name=entry.name,
-                    path=rel_path,
-                    size=st.st_size if entry.is_file() else 0,
-                    modified=datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
-                    is_dir=entry.is_dir(),
-                ))
-    except OSError:
-        return ApiResponse(data=[])
-
-    entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
-    return ApiResponse(data=entries)
-
-
-@router.post(
-    "/components/{component_id}/files/archive",
-    summary="创建文件/目录打包下载任务",
-    status_code=201,
-    response_model=ApiResponse[dict],
-)
-async def create_archive(
-    component_id: str,
-    path: str = Query(""),
-    session: AsyncSession = Depends(get_session),
-    admin: TokenData = Depends(require_admin),
-):
-    base_dir = _get_component_path(component_id, admin.username)
-    if not base_dir:
-        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
-
-    target_path = _resolve_safe_path(base_dir, path) if path else base_dir
-    if not os.path.exists(target_path):
-        raise HTTPException(status_code=404, detail="PATH_NOT_FOUND")
-
-    task_id = await create_archive_task(
-        session,
-        target_path,
-        os.path.basename(target_path),
-        uuid.UUID(admin.user_id),
-    )
-    return ApiResponse(data={"task_id": task_id, "status": "pending"})
-
-
-@router.post(
-    "/files/download-task",
-    summary="创建文件下载任务（进入任务中心）",
-    status_code=201,
-    response_model=ApiResponse[dict],
-)
-async def create_file_download_task(
-    component_id: str = Query(...),
-    name: str = Query(...),
-    session: AsyncSession = Depends(get_session),
-    admin: TokenData = Depends(require_admin),
-):
-    base_dir = _get_component_path(component_id, admin.username)
-    if not base_dir:
-        raise HTTPException(status_code=404, detail="COMPONENT_NOT_FOUND")
-
-    target_path = _resolve_safe_path(base_dir, name)
-    if not os.path.isfile(target_path):
-        raise HTTPException(status_code=404, detail="FILE_NOT_FOUND")
-
-    max_size = settings.LOG_EXPORT_MAX_SIZE_BYTES
-    if max_size > 0 and os.path.getsize(target_path) > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"文件大小超过限制 {_format_size(max_size)}",
-        )
-
-    task_id = await create_archive_task(
-        session, target_path, name, uuid.UUID(admin.user_id)
-    )
-    return ApiResponse(data={"task_id": task_id, "status": "pending"})
-
 
 
 @router.get(
@@ -276,7 +144,7 @@ async def list_exports(
     result = []
     for t in tasks:
         item = LogExportTaskRead.model_validate(t)
-        if t.task_type == "archive" and t.source_name:
+        if t.task_type in ("archive", "loki-export") and t.source_name:
             item.component_name = t.source_name
         elif t.component_id:
             component = await _db_get_component_by_id(session, t.component_id)

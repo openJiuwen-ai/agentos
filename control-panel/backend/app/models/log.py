@@ -41,6 +41,7 @@ class LogExportTask(Base):
     )
     source_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    query_spec: Mapped[str | None] = mapped_column(Text, nullable=True)
     line_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=500)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)

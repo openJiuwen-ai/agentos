@@ -123,10 +123,15 @@ async def lifespan(fastapi_app: FastAPI):
 async def _create_log_tables(engine):
     from app.models.base import Base
     from app.models.log import LogComponent, LogExportTask  # noqa: F401
+    from sqlalchemy import text
     from app.models.user_default_key import UserDefaultKey  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all 不会为已存在的表补充新列，这里做轻量迁移
+        await conn.execute(
+            text("ALTER TABLE log_export_task ADD COLUMN IF NOT EXISTS query_spec TEXT")
+        )
 
 
 async def _seed_initial_model(litellm_svc: LitellmService) -> None:
