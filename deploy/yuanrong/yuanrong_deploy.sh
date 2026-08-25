@@ -688,7 +688,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=${py_bindir}/yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
+ExecStart=yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'mode.master.etcd=false' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
@@ -702,7 +702,7 @@ ExecStart=${py_bindir}/yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=${py_bindir}/yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
+ExecStop=yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -727,7 +727,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=${py_bindir}/yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
+ExecStart=yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
@@ -740,7 +740,7 @@ ExecStart=${py_bindir}/yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=${py_bindir}/yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
+ExecStop=yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -786,15 +786,13 @@ deploy_yr_up_systemd() {
     success "${YR_EXECUTOR_SVC} up"
 }
 
-# ===== systemd down: disable → 删除 executor unit =====
+# ===== systemd down: 只停服务，不删 unit 文件（删文件留给 uninstall） =====
 # etcd 停止已拆到 deploy/etcd.sh down，此处不再触碰 etcd
 deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
-    systemctl disable --now "${YR_EXECUTOR_SVC}" 2>/dev/null || true
-    rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
+    systemctl stop "${YR_EXECUTOR_SVC}" 2>/dev/null || true
 
-    systemctl daemon-reload 2>/dev/null || true
     success "yuanrong executor stopped"
 }
 
@@ -929,9 +927,14 @@ deploy_yr_uninstall() {
     local local_host
     local_host=$(get_local_ip)
 
-    # 卸载前先停服务：systemd 模式注销 unit（保留 etcd 数据）。进程模式的停止由用户显式 down。
+    # 卸载前先停服务并清理 unit 文件（保留 etcd 数据）。
+    # 进程模式的停止由用户显式 down。
     if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd; then
         deploy_yr_down_systemd
+        # down 只 stop，unit 文件的 disable + 删除留给 uninstall
+        systemctl disable "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+        rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
+        systemctl daemon-reload 2>/dev/null || true
     fi
 
     info "Uninstalling openyuanrong packages on local machine"

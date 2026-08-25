@@ -814,10 +814,10 @@ deploy_mfs_down() {
         return 0
     fi
 
-    # systemd 模式：通过 systemctl disable --now 停止服务
+    # systemd 模式：通过 systemctl stop 停止服务（不 disable，不删 unit 文件，留给 uninstall）
     if _mfs_should_use_systemd; then
         [ -z "${master_host}" ] && master_host="$(get_local_ip)"
-        info "Stopping MooseFS via systemd (disable --now)"
+        info "Stopping MooseFS via systemd (stop)"
 
         # 先 lazy umount（防止 master 已停止时 FUSE 挂载点 stale 导致 hang）
         umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
@@ -828,9 +828,9 @@ deploy_mfs_down() {
         fi
 
         if [ "${is_master}" = "true" ]; then
-            systemctl disable --now moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
         else
-            systemctl disable --now moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-chunkserver moosefs-client 2>/dev/null || true
         fi
 
         # 清理残留 mfsmount 进程
@@ -1003,7 +1003,7 @@ Usage: ./$(basename "$0") [COMMAND] [OPTIONS]
 
 Commands (Required):
   up        启动 MooseFS 集群（systemd 模式下执行 systemctl enable --now）
-  down      停止 MooseFS 集群（systemd 模式下执行 systemctl disable --now）
+  down      停止 MooseFS 集群（systemd 模式下执行 systemctl stop）
   restart   重启 MooseFS 集群
   install   验证 RPM 已安装 + 生成配置 + systemd 模式下生成 unit（不启动，由 up 启动）
   uninstall 停止服务 + 清理配置、数据和 systemd unit（不卸载 RPM，可重新 install 还原）
@@ -1039,7 +1039,7 @@ Configuration File:
 
 Deployment Modes:
   1. SSH 多机模式: --hosts 指定 2+ IP，Master 取第一个 IP（非 systemd，install+up/down+uninstall）
-  2. systemd 模式: 无 --hosts，默认部署（install=配置+unit生成，up=enable--now，down=disable--now，uninstall=停止+清理）
+  2. systemd 模式: 无 --hosts，默认部署（install=配置+unit生成，up=enable--now，down=stop，uninstall=停止+清理）
   3. 关闭: MOOSEFS_ENABLED=no，不部署 MooseFS（使用本地文件系统）
 
 Examples:
