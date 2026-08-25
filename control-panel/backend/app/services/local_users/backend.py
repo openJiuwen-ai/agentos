@@ -79,9 +79,16 @@ def _create_jwswarm_config(username: str) -> None:
 
 def _chown_home(username: str) -> None:
     """递归地将用户家目录的所有权和权限，使用 AGENTOS_SYS_UID/GID。"""
-    path = _home_path(username)
+    _chown_path(_home_path(username))
+
+
+def _chown_path(path: Path) -> None:
+    """chown 路径到 AGENTOS_SYS_UID/GID：文件直接改，目录递归遍历其下所有文件。"""
     uid = settings.AGENTOS_SYS_UID
     gid = settings.AGENTOS_SYS_GID
+    if path.is_file() or path.is_symlink():
+        os.chown(str(path), uid, gid, follow_symlinks=False)
+        return
     for dirpath, _, filenames in os.walk(str(path)):
         os.chown(dirpath, uid, gid, follow_symlinks=False)
         for fn in filenames:

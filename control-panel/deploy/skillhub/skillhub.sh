@@ -8,7 +8,8 @@ set -euo pipefail
 #   bash skillhub.sh install     # 初始化 .env + 校验镜像存在
 #   bash skillhub.sh up          # 启动 docker compose + 健康检查 + 预装 skill 导入
 #   bash skillhub.sh down        # 停止 docker compose（保留数据卷）
-#   bash skillhub.sh uninstall   # 停止并删除数据卷
+#   bash skillhub.sh uninstall   # 停止（保留数据卷）
+#   bash skillhub.sh uninstall --clean   # 停止并删除数据卷
 #   bash skillhub.sh status      # 健康检查
 #
 # 被 control-panel/deploy/deploy.sh 在 --with-skillhub 时调用。
@@ -123,9 +124,9 @@ init_env() {
     # compose environment 块将容器内 STORE_PORT 固定为 8100，仅宿主机映射端口变 8300
     sed -i "s/^STORE_PORT=.*/STORE_PORT=8300/" "$env_file"
 
-    # MinIO: 部署态用 host_ip（compose 端口映射 0.0.0.0:3003:9000，浏览器预签名 URL 需可达）
-    sed -i "s/^MINIO_API_PORT=.*/MINIO_API_PORT=3003/" "$env_file"
-    sed -i "s|^MARKET_S3_ENDPOINT=.*|MARKET_S3_ENDPOINT=http://${host_ip}:3003|" "$env_file"
+    # MinIO: 部署态用 host_ip（compose 端口映射 0.0.0.0:8099:8099，浏览器预签名 URL 需可达）
+    sed -i "s/^MINIO_API_PORT=.*/MINIO_API_PORT=8099/" "$env_file"
+    sed -i "s|^MARKET_S3_ENDPOINT=.*|MARKET_S3_ENDPOINT=http://${host_ip}:8099|" "$env_file"
     sed -i "s|^MARKET_OAUTH_FRONTEND_ORIGIN=.*|MARKET_OAUTH_FRONTEND_ORIGIN=http://${host_ip}:${SKILLHUB_FRONTEND_PORT}|" "$env_file"
 
     # 密钥
@@ -284,12 +285,21 @@ cmd_uninstall() {
     _available || return 0
     [ -f "$(_skillhub_env)" ] || { log "  .env 不存在，跳过"; return 0; }
     local d="$(_skillhub_dir)"
-    log "uninstall (down -v)"
-    (
-        cd "${d}/docker"
-        docker compose -f docker-compose.yml --env-file ../.env down -v
-    )
-    log "  uninstalled (volumes removed)"
+    if [ "${1:-}" = "--clean" ]; then
+        log "uninstall (down -v)"
+        (
+            cd "${d}/docker"
+            docker compose -f docker-compose.yml --env-file ../.env down -v
+        )
+        log "  uninstalled (volumes removed)"
+    else
+        log "uninstall (down)"
+        (
+            cd "${d}/docker"
+            docker compose -f docker-compose.yml --env-file ../.env down
+        )
+        log "  uninstalled (data volumes retained)"
+    fi
 }
 
 cmd_status() {
@@ -308,7 +318,7 @@ case "${1:-}" in
     up)        cmd_up ;;
     down)      cmd_down ;;
     restart)   cmd_down; cmd_up ;;
-    uninstall) cmd_uninstall ;;
+    uninstall) cmd_uninstall "${2:-}" ;;
     status)    cmd_status ;;
     *)
         echo "用法: bash $0 <command>"
@@ -318,7 +328,8 @@ case "${1:-}" in
         echo "  up         启动 + 健康检查 + 预装 skill 导入（离线模式，--no-build）"
         echo "  down       停止（保留数据卷）"
         echo "  restart    重启（down + up）"
-        echo "  uninstall  停止 + 删除数据卷"
+        echo "  uninstall  停止（保留数据卷）"
+        echo "  uninstall --clean  停止 + 删除数据卷"
         echo "  status     健康检查"
         exit 1
         ;;

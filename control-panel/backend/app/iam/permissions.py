@@ -17,6 +17,7 @@ class Resource:
     HARDWARE = "hardware"
     NODE_SERVICE = "node_service"
     SETTINGS = "settings"
+    SKILLS = "skills"
 
 
 class Action:
@@ -39,6 +40,7 @@ _ROLE_PERMISSIONS: dict[str, dict[str, set[str]]] = {
         Resource.INFERENCE_USAGE: {Action.READ},
         Resource.APPS: {Action.READ},
         Resource.ALERTS: {Action.READ},
+        Resource.SKILLS: {Action.READ, Action.WRITE},
     },
 }
 
@@ -55,6 +57,7 @@ _ALL_RESOURCES = [
     Resource.HARDWARE,
     Resource.NODE_SERVICE,
     Resource.SETTINGS,
+    Resource.SKILLS,
 ]
 
 _ALL_ACTIONS = [Action.READ, Action.WRITE, Action.DELETE, Action.MANAGE]

@@ -26,6 +26,19 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | `alloy` | `grafana/alloy:v1.18.1` | -- | 12345 | 日志采集（master 由 compose 管理；worker 独立安装，仅监听 127.0.0.1） |
 | `grafana` | `grafana/grafana:12.4.2` | `GRAFANA_PORT` | 8093 | 监控面板（控制台 iframe 走 `FRONTEND_PORT` 的 `/grafana/` 反代） |
 
+**SkillHub 服务（仅 `--with-skillhub` 时部署）：**
+
+| 服务 | 镜像 | 环境变量 | 默认端口 | 说明 |
+|------|------|----------|----------|------|
+| `skillhub-frontend` | `skillhub-frontend:latest` | `SKILLHUB_FRONTEND_PORT` | 8098 | 浏览器访问 SkillHub 市场；nginx 反代 `/api/` → backend:8100 |
+| `skillhub-backend` | `skillhub-backend:latest` | -- | （不对宿主暴露） | SkillHub 后端；经 frontend nginx 反代访问 |
+| `skillhub-mysql` | `mysql:8.0` | -- | （不对宿主暴露） | SkillHub 数据库；仅 compose 内部网络可达 |
+| `skillhub-redis` | `redis:7-alpine` | -- | （不对宿主暴露） | SkillHub 缓存；仅 compose 内部网络可达 |
+| `skillhub-minio` | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | `MINIO_API_PORT` | 8099 | S3 对象存储；浏览器预签名 URL 需外部访问 |
+| `skillhub-minio-init` | `minio/mc:RELEASE.2025-08-13T08-35-41Z` | -- | （一次性容器） | MinIO 初始化（创建 bucket 后退出） |
+
+> SkillHub 端口配置在 `skillhub/.env` 中，由 `skillhub.sh init_env()` 自动生成。除 frontend(8098) 和 MinIO(8099) 外，其余服务不暴露端口到宿主机。
+
 **宿主机原生服务（非容器）：**
 
 | 服务 | 二进制安装路径 | 默认端口 | 说明 |
@@ -115,6 +128,15 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | `LITELLM_PORT` | 8100 | LiteLLM 宿主端口 |
 | `NODE_EXPORTER_PORT` | 8091 | node_exporter 监听端口 |
 | `NPU_EXPORTER_PORT` | 8092 | npu-exporter 监听端口 |
+
+**SkillHub 端口（`skillhub/.env` 可调）：**
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `SKILLHUB_FRONTEND_PORT` | 8098 | SkillHub 前端宿主端口（`0.0.0.0` 绑定，浏览器可外部访问） |
+| `MINIO_API_PORT` | 8099 | MinIO S3 API 宿主端口（`0.0.0.0` 绑定，浏览器预签名 URL 需可达） |
+
+> MySQL、Redis、Backend 不暴露端口到宿主机，仅 compose 内部网络可达。
 
 ### 镜像准备
 

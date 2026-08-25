@@ -1057,6 +1057,83 @@ uninstall_alloy() {
     fi
 }
 
+# ── skillhub 安装/卸载/启停（仅 master + --with-skillhub；委托 skillhub.sh）────────
+
+# 是否需要部署/操作 skillhub：master 且开启 --with-skillhub
+_skillhub_enabled() {
+    is_master && [ "$WITH_SKILLHUB" -eq 1 ]
+}
+
+# 检测 skillhub 的 docker compose 是否有容器在运行（restart 自动带 skillhub 用）
+_skillhub_running() {
+    local compose="${DEPLOY_DIR}/skillhub/docker/docker-compose.yml"
+    [ -f "$compose" ] || return 1
+    [ -n "$(docker compose -f "$compose" --env-file "${DEPLOY_DIR}/skillhub/.env" ps -q --status running 2>/dev/null)" ]
+}
+
+# 配置预装 skill 源目录（供 control-panel backend 创建用户时拷贝）
+_configure_skillhub_preset_dir() {
+    local env_file="${DEPLOY_DIR}/.env" preset_dir
+    preset_dir="/home/agentos/agent_preset/skills"
+    mkdir -p "$preset_dir"
+    if ! grep -q "^AGENTOS_PRESET_SKILLS_DIR=" "$env_file" 2>/dev/null; then
+        echo "AGENTOS_PRESET_SKILLS_DIR=${preset_dir}" >> "$env_file"
+    else
+        sed -i "s|^AGENTOS_PRESET_SKILLS_DIR=.*|AGENTOS_PRESET_SKILLS_DIR=${preset_dir}|" "$env_file"
+    fi
+    log "  AGENTOS_PRESET_SKILLS_DIR=${preset_dir}"
+}
+
+# 配置 SkillHub 访问地址（管理面 backend 下载 skill 用；与 skillhub.sh 的 host_ip 保持一致）
+_configure_skillhub_base_url() {
+    local env_file="${DEPLOY_DIR}/.env" detected_ip skillhub_frontend_port skillhub_url
+    detected_ip=$(detect_host_ip)
+    skillhub_frontend_port="${SKILLHUB_FRONTEND_PORT:-8098}"
+    skillhub_url="http://${SKILLHUB_HOST:-${detected_ip}}:${skillhub_frontend_port}"
+    if ! grep -q "^SKILLHUB_BASE_URL=" "$env_file" 2>/dev/null; then
+        echo "SKILLHUB_BASE_URL=${skillhub_url}" >> "$env_file"
+    else
+        sed -i "s|^SKILLHUB_BASE_URL=.*|SKILLHUB_BASE_URL=${skillhub_url}|" "$env_file"
+    fi
+    log "  SKILLHUB_BASE_URL=${skillhub_url}"
+}
+
+# 安装 skillhub，并回写管理面所需配置到 .env
+install_skillhub() {
+    _skillhub_enabled || { log "  跳过：非 master 或未指定 --with-skillhub"; return 0; }
+    AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" install
+    _configure_skillhub_preset_dir
+    _configure_skillhub_base_url
+}
+
+# 卸载 skillhub（master 无论是否带 --with-skillhub 都尝试卸载；skillhub.sh 内部安全跳过）
+# --clean 时删除数据卷，否则保留（与 do_uninstall 的整体语义一致）
+uninstall_skillhub() {
+    is_master || { log "  跳过：worker 节点不部署 skillhub"; return 0; }
+    if [ "$CLEAN" -eq 1 ]; then
+        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" uninstall --clean
+    else
+        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" uninstall
+    fi
+}
+
+up_skillhub() {
+    _skillhub_enabled || return 0
+    log "[skillhub] up"
+    PRESET_SKILLS_ZIP="${PRESET_SKILLS_ZIP:-}" AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" up
+}
+
+down_skillhub() {
+    _skillhub_enabled || return 0
+    log "[skillhub] down"
+    bash "${DEPLOY_DIR}/skillhub/skillhub.sh" down
+}
+
+status_skillhub() {
+    [ "$WITH_SKILLHUB" -eq 1 ] || return 0
+    bash "${DEPLOY_DIR}/skillhub/skillhub.sh" status
+}
+
 # ── node-service 安装/卸载 ──────────────────────────────────────────────
 
 install_node_service() {
@@ -1177,45 +1254,31 @@ do_install() {
     need_root
     log "========== install =========="
 
-    log "[1/6] 初始化 .env"
+    log "[1/7] 初始化 .env"
     init_env
     load_env
 
-    log "[2/6] 安装 node_exporter"
+    log "[2/7] 安装 node_exporter"
     install_node_exporter || true
 
-    log "[3/6] 安装 npu_exporter"
+    log "[3/7] 安装 npu_exporter"
     install_npu_exporter || true
 
-    log "[4/6] 安装 node-service"
+    log "[4/7] 安装 node-service"
     install_node_service || true
 
-    log "[5/6] 安装 Alloy"
+    log "[5/7] 安装 Alloy"
     install_alloy || true
 
     if is_master; then
-        log "[6/6] 拉取 Docker 镜像"
+        log "[6/7] 拉取 Docker 镜像"
         pull_images
     else
-        log "[6/6] worker 节点跳过 Docker 镜像拉取"
+        log "[6/7] worker 节点跳过 Docker 镜像拉取"
     fi
 
-    # skillhub（仅 master + --with-skillhub）
-    if is_master && [ "$WITH_SKILLHUB" -eq 1 ]; then
-        log "[skillhub] install"
-        AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" install
-
-        # 配置预装 skill 源目录（供 control-panel backend 创建用户时拷贝）
-        local preset_dir="/home/agentos/agent_preset/skills"
-        mkdir -p "$preset_dir"
-        local env_file="${DEPLOY_DIR}/.env"
-        if ! grep -q "^AGENTOS_PRESET_SKILLS_DIR=" "$env_file" 2>/dev/null; then
-            echo "AGENTOS_PRESET_SKILLS_DIR=${preset_dir}" >> "$env_file"
-        else
-            sed -i "s|^AGENTOS_PRESET_SKILLS_DIR=.*|AGENTOS_PRESET_SKILLS_DIR=${preset_dir}|" "$env_file"
-        fi
-        log "  AGENTOS_PRESET_SKILLS_DIR=${preset_dir}"
-    fi
+    log "[7/7] 安装 skillhub"
+    install_skillhub
 
     log "install 完成。"
     echo ""
@@ -1234,11 +1297,8 @@ do_uninstall() {
 
     if is_master; then
         log "[1/5] 停止 Docker 服务"
-        # skillhub 先卸载（含数据卷）— 无论是否带 --with-skillhub 都尝试卸载
-        # skillhub.sh 内部会检查 .env 是否存在，未安装时安全跳过
-        log "[skillhub] uninstall"
-        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" uninstall
         cd "$DEPLOY_DIR"
+        uninstall_skillhub
         if [ "$CLEAN" -eq 1 ]; then
             docker compose down -v || true
             log "  已停止并删除数据卷"
@@ -1612,10 +1672,10 @@ do_up() {
 
     # --models / --models-file 由全局参数解析存入 UP_MODELS_JSON / UP_MODELS_FILE
 
-    log "[1/7] 更新 exporter 配置"
+    log "[1/8] 更新 exporter 配置"
     update_exporter_configs
 
-    log "[2/7] 启动 node_exporter"
+    log "[2/8] 启动 node_exporter"
     if systemctl is-active "$SERVICE_NAME" &>/dev/null; then
         log "  node_exporter 已在运行"
     elif systemctl cat "$SERVICE_NAME" &>/dev/null; then
@@ -1628,7 +1688,7 @@ do_up() {
         && log "  node_exporter: running" \
         || log "  WARNING: node_exporter 未运行"
 
-    log "[3/7] 启动 npu_exporter"
+    log "[3/8] 启动 npu_exporter"
     if systemctl cat "$NPU_SERVICE" &>/dev/null; then
         systemctl start "$NPU_SERVICE" 2>/dev/null || true
         systemctl start "$NPU_TIMER" 2>/dev/null || true
@@ -1639,7 +1699,7 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[4/7] 启动 node-service"
+    log "[4/8] 启动 node-service"
     if systemctl cat "$NS_SERVICE" &>/dev/null; then
         systemctl start "$NS_SERVICE" 2>/dev/null || true
         systemctl is-active "$NS_SERVICE" &>/dev/null \
@@ -1649,7 +1709,7 @@ do_up() {
         log "  跳过：node-service 未安装"
     fi
 
-    log "[5/7] 启动 Alloy"
+    log "[5/8] 启动 Alloy"
     if is_worker; then
         if docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
             docker start "$ALLOY_CONTAINER" 2>/dev/null || true
@@ -1661,7 +1721,7 @@ do_up() {
         log "  master 节点：Alloy 由 docker compose 管理"
     fi
 
-    log "[5/7] 生成 hardware-metrics.json"
+    log "[6/8] 生成 hardware-metrics.json"
     if is_master; then
         sync_worker_nodes_env
         generate_hardware_metrics_json
@@ -1669,14 +1729,14 @@ do_up() {
         log "  跳过：worker 节点无需生成"
     fi
 
-    log "[6/7] 配置推理服务模型"
+    log "[7/8] 配置推理服务模型"
     if is_master; then
         _sniff_initial_models "$UP_MODELS_JSON" "$UP_MODELS_FILE"
     else
         log "  跳过：worker 节点无需配置"
     fi
 
-    log "[7/7] 启动 Docker 服务"
+    log "[8/8] 启动 Docker 服务"
     if is_master; then
         # 主节点：config.alloy 的 ip 由 127.0.0.1 替换为本机检测 IP
         if grep -q '"127.0.0.1"' "${ALLOY_DIR}/config.alloy"; then
@@ -1692,10 +1752,7 @@ do_up() {
         sleep 3
 
         # skillhub（control-panel 之后启动，OAuth2 provider 已就绪）
-        if [ "$WITH_SKILLHUB" -eq 1 ]; then
-            log "[skillhub] up"
-            PRESET_SKILLS_ZIP="${PRESET_SKILLS_ZIP:-}" AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" up
-        fi
+        up_skillhub
 
         do_status
     else
@@ -1714,10 +1771,7 @@ do_down() {
     log "[1/5] 停止 Docker 服务"
     if is_master; then
         # skillhub 先停（逆序）
-        if [ "$WITH_SKILLHUB" -eq 1 ]; then
-            log "[skillhub] down"
-            bash "${DEPLOY_DIR}/skillhub/skillhub.sh" down
-        fi
+        down_skillhub
         cd "$DEPLOY_DIR"
         docker compose down
     else
@@ -1752,6 +1806,12 @@ do_down() {
 
 do_restart() {
     need_install_dir
+    # 重启前检测 skillhub 是否在跑：在跑则本次 restart 自动带上（无需 --with-skillhub），
+    # 不在跑则不动它（避免把已主动 down 掉的 skillhub 拉活）
+    if is_master && _skillhub_running; then
+        WITH_SKILLHUB=1
+        log "  检测到 skillhub 正在运行，restart 自动包含 skillhub"
+    fi
     do_down
     do_up
 }
@@ -1837,9 +1897,7 @@ do_status() {
         || _check "alloy            (127.0.0.1:12345)" 0
 
     # skillhub 健康检查
-    if [ "$WITH_SKILLHUB" -eq 1 ]; then
-        bash "${DEPLOY_DIR}/skillhub/skillhub.sh" status
-    fi
+    status_skillhub
 
     unset -f _check
     echo ""
@@ -1995,7 +2053,7 @@ case "$ACTION" in
         echo "  uninstall 卸载：停止服务 + 注销 systemd（默认保留数据和 .env）"
         echo "  up        启动：更新 exporter 配置 → 启动服务"
         echo "  down      停止：docker compose → node/npu_exporter（反序）"
-        echo "  restart   重启：down → up"
+        echo "  restart   重启：down → up（自动带上正在运行的 skillhub，无需 --with-skillhub）"
         echo "  status    查看服务状态"
         echo ""
         echo "注意: up/down/restart/status/uninstall 需在安装目录 ~/.agentos/.agent-manager 下执行"

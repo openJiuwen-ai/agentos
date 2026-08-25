@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     AGENTOS_PRESET_SKILLS_DIR: str = ""  # 解压后的预装 skill 源目录；空则不预装
     AGENTOS_USER_SKILLS_SUBDIR: str = ".jiuwenswarm/agent/workspace/skills"
 
+    # ── SkillHub 市场 ──
+    SKILLHUB_BASE_URL: str = ""  # 本地 SkillHub 前端地址，如 http://192.168.1.10:8098；为空时安装接口返回 503
+    SKILLHUB_REQUEST_TIMEOUT: float = 30.0
+    SKILLHUB_MAX_FILE_SIZE: int = 524_288_000  # 500 MB，与 thirdparty_agent 的 THIRDPARTY_AGENT_INSTALLER_MAX_BYTES 一致
+
     # ── Logging ──
     LOG_DIR: str = "/home/agentos/logs"
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.v1.thirdparty_agent import router as thirdparty_agent_router
+from app.api.v1.skills import router as skills_router
 from app.api.v1.agent import router as agent_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.litellm_key import router as litellm_key_router
@@ -282,6 +283,7 @@ app.include_router(logs_router)
 app.include_router(logs_ws_router)
 app.include_router(log_loki_router)
 app.include_router(thirdparty_agent_router)
+app.include_router(skills_router)
 
 # OAuth2 Provider — 仅当 client_id / client_secret / client_name 均已配置时才启用
 if not _OAUTH2_ENABLED:
