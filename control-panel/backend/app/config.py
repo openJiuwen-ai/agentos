@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     NPU_EXPORTER_PORT: int = 8092
     NODE_EXPORTER_HOST: str = "host.docker.internal"
     NODE_EXPORTER_PORT: int = 8091
+    NODE_SERVICE_HOST: str = ""
+    NODE_SERVICE_PORT: int = 8101
     WORKER_NODES: str = ""
     VICTORIAMETRICS_URL: str = ""
 

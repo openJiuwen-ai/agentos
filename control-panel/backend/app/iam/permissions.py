@@ -15,6 +15,7 @@ class Resource:
     APPS = "apps"
     ALERTS = "alerts"
     HARDWARE = "hardware"
+    NODE_SERVICE = "node_service"
     SETTINGS = "settings"
 
 
@@ -52,6 +53,7 @@ _ALL_RESOURCES = [
     Resource.APPS,
     Resource.ALERTS,
     Resource.HARDWARE,
+    Resource.NODE_SERVICE,
     Resource.SETTINGS,
 ]
 

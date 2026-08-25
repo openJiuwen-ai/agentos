@@ -30,11 +30,14 @@ fi
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 NE_DIR="${DEPLOY_DIR}/node-exporter"
 NPU_DIR="${DEPLOY_DIR}/npu-exporter"
+NS_DIR="${DEPLOY_DIR}/node-service"
 SERVICE_NAME="node_exporter"
 NPU_SERVICE="npu-exporter"
 NPU_TIMER="npu-exporter.timer"
+NS_SERVICE="agentos-node-service"
 NE_BINARY="/usr/bin/node_exporter"
 NPU_BINARY="/usr/local/bin/npu-exporter"
+NS_TARGET_DIR="/opt/agentos/agentos-node-service"
 NPU_RUN_USER="hwMindX"
 NPU_RUN_GROUP="hwMindX"
 NPU_DEVICE_GROUP="HwHiAiUser"
@@ -1054,30 +1057,147 @@ uninstall_alloy() {
     fi
 }
 
+# ── node-service 安装/卸载 ──────────────────────────────────────────────
+
+install_node_service() {
+    local ns_port ns_host
+    ns_port=$(env_default NODE_SERVICE_PORT 8101)
+    ns_host=$(env_default NODE_SERVICE_HOST "")
+
+    # 未配置则自动检测本机 IP
+    if [ -z "$ns_host" ]; then
+        ns_host=$(ip -o -4 route get 1 2>/dev/null | awk '{print $7}' | head -1)
+    fi
+    [ -z "$ns_host" ] && ns_host="127.0.0.1"
+
+    # 检查源码目录
+    if [ ! -d "$NS_DIR" ] || [ ! -f "${NS_DIR}/server.py" ]; then
+        log "  WARNING: node-service 源码不存在（${NS_DIR}），跳过安装"
+        return 1
+    fi
+
+    # 幂等：已安装则跳过
+    if systemctl is-active "$NS_SERVICE" &>/dev/null \
+       || [ -f "${NS_TARGET_DIR}/server.py" ]; then
+        log "  node-service 已安装，跳过"
+        return 0
+    fi
+
+    # 创建目标目录
+    mkdir -p "${NS_TARGET_DIR}/config"
+    mkdir -p "${NS_TARGET_DIR}/templates"
+    mkdir -p "${NS_TARGET_DIR}/user_templates"
+
+    # 拷贝源码
+    cp "${NS_DIR}/server.py"        "${NS_TARGET_DIR}/"
+    cp "${NS_DIR}/inference_ctl.py" "${NS_TARGET_DIR}/"
+    cp "${NS_DIR}/models.py"        "${NS_TARGET_DIR}/"
+    cp "${NS_DIR}/requirements.txt" "${NS_TARGET_DIR}/"
+    [ -f "${NS_DIR}/auth.py" ] && cp "${NS_DIR}/auth.py" "${NS_TARGET_DIR}/"
+    cp -r "${NS_DIR}/config/"*      "${NS_TARGET_DIR}/config/"
+    [ -d "${NS_DIR}/templates" ] && cp -r "${NS_DIR}/templates/"* "${NS_TARGET_DIR}/templates/"
+    log "  已拷贝源码到 ${NS_TARGET_DIR}"
+
+    # 创建 Python venv + 安装依赖
+    # 需要使用 Ascend 环境的 python3.11
+    if [ -f /usr/local/ascendrc ]; then
+        source /usr/local/ascendrc
+    fi
+    local py_cmd="python3.11"
+    if ! command -v python3.11 &>/dev/null; then
+        log "  WARNING: python3.11 未找到，回退到 python3，运行时可能报错"
+        py_cmd="python3"
+    fi
+    ${py_cmd} -m venv "${NS_TARGET_DIR}/venv"
+    "${NS_TARGET_DIR}/venv/bin/pip" install -q -r "${NS_TARGET_DIR}/requirements.txt"
+    log "  Python venv 已创建（${py_cmd}），依赖已安装"
+
+    # 生成 .env
+    # node-service 通过 nginx（FRONTEND_PORT）访问后端，不直连 8000
+    local cp_port="${FRONTEND_PORT:-8090}"
+    local cp_url="${CONTROL_PANEL_URL:-http://localhost:${cp_port}}"
+    cat > "${NS_TARGET_DIR}/.env" <<EOF
+NODE_SERVICE_PORT=${ns_port}
+NODE_SERVICE_HOST=${ns_host}
+CONTROL_PANEL_URL=${cp_url}
+NODE_AGENT_LOG_DIR=/var/log/agentos/agentos-node-service
+NODE_AGENT_LOG_LEVEL=INFO
+EOF
+    log "  .env 已生成"
+
+    # 创建日志目录
+    mkdir -p /var/log/agentos/agentos-node-service
+
+    # 生成 systemd unit（替换监听地址占位符）
+    if [ -f "${NS_DIR}/agentos-node-service.service" ]; then
+        sed -e "s|__LISTEN_HOST__|${ns_host}|g" \
+            -e "s|__LISTEN_PORT__|${ns_port}|g" \
+            "${NS_DIR}/agentos-node-service.service" \
+            > /etc/systemd/system/${NS_SERVICE}.service
+        systemctl daemon-reload
+        systemctl enable "$NS_SERVICE"
+        log "  systemd unit 已注册 (${ns_host}:${ns_port})"
+    else
+        log "  WARNING: systemd unit 模板不存在，跳过注册"
+    fi
+}
+
+uninstall_node_service() {
+    if ! systemctl cat "$NS_SERVICE" &>/dev/null && [ ! -d "$NS_TARGET_DIR" ]; then
+        log "  跳过：node-service 未安装"
+        return
+    fi
+
+    # 停止服务
+    if systemctl is-active "$NS_SERVICE" &>/dev/null; then
+        systemctl stop "$NS_SERVICE"
+    fi
+    if systemctl is-enabled "$NS_SERVICE" &>/dev/null; then
+        systemctl disable "$NS_SERVICE" 2>/dev/null
+    fi
+
+    # 移除 systemd unit
+    if [ -f "/etc/systemd/system/${NS_SERVICE}.service" ]; then
+        rm "/etc/systemd/system/${NS_SERVICE}.service"
+        log "  已移除 ${NS_SERVICE}.service"
+    fi
+
+    # 删除安装目录
+    if [ -d "$NS_TARGET_DIR" ]; then
+        rm -rf "$NS_TARGET_DIR"
+        log "  已删除 ${NS_TARGET_DIR}"
+    fi
+
+    systemctl daemon-reload 2>/dev/null || true
+}
+
 # ── install ─────────────────────────────────────────────────────────────────
 
 do_install() {
     need_root
     log "========== install =========="
 
-    log "[1/5] 初始化 .env"
+    log "[1/6] 初始化 .env"
     init_env
     load_env
 
-    log "[2/5] 安装 node_exporter"
+    log "[2/6] 安装 node_exporter"
     install_node_exporter || true
 
-    log "[3/5] 安装 npu_exporter"
+    log "[3/6] 安装 npu_exporter"
     install_npu_exporter || true
 
-    log "[4/5] 安装 Alloy"
+    log "[4/6] 安装 node-service"
+    install_node_service || true
+
+    log "[5/6] 安装 Alloy"
     install_alloy || true
 
     if is_master; then
-        log "[5/5] 拉取 Docker 镜像"
+        log "[6/6] 拉取 Docker 镜像"
         pull_images
     else
-        log "[5/5] worker 节点跳过 Docker 镜像拉取"
+        log "[6/6] worker 节点跳过 Docker 镜像拉取"
     fi
 
     # skillhub（仅 master + --with-skillhub）
@@ -1113,7 +1233,7 @@ do_uninstall() {
     log "========== uninstall =========="
 
     if is_master; then
-        log "[1/4] 停止 Docker 服务"
+        log "[1/5] 停止 Docker 服务"
         # skillhub 先卸载（含数据卷）— 无论是否带 --with-skillhub 都尝试卸载
         # skillhub.sh 内部会检查 .env 是否存在，未安装时安全跳过
         log "[skillhub] uninstall"
@@ -1127,16 +1247,19 @@ do_uninstall() {
             log "  已停止（数据卷保留）"
         fi
     else
-        log "[1/4] worker 节点跳过 Docker 服务"
+        log "[1/5] worker 节点跳过 Docker 服务"
     fi
 
-    log "[2/4] 注销 Alloy"
+    log "[2/5] 注销 Alloy"
     uninstall_alloy
 
-    log "[3/4] 注销 node_exporter"
+    log "[3/5] 注销 node-service"
+    uninstall_node_service
+
+    log "[4/5] 注销 node_exporter"
     uninstall_node_exporter
 
-    log "[4/4] 注销 npu_exporter"
+    log "[5/5] 注销 npu_exporter"
     uninstall_npu_exporter
 
     if [ "$CLEAN" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
@@ -1516,7 +1639,17 @@ do_up() {
         log "  跳过：npu_exporter 未安装"
     fi
 
-    log "[4/7] 启动 Alloy"
+    log "[4/7] 启动 node-service"
+    if systemctl cat "$NS_SERVICE" &>/dev/null; then
+        systemctl start "$NS_SERVICE" 2>/dev/null || true
+        systemctl is-active "$NS_SERVICE" &>/dev/null \
+            && log "  node-service: running" \
+            || log "  WARNING: node-service 启动失败"
+    else
+        log "  跳过：node-service 未安装"
+    fi
+
+    log "[5/7] 启动 Alloy"
     if is_worker; then
         if docker ps -a --format '{{.Names}}' | grep -q "^${ALLOY_CONTAINER}$"; then
             docker start "$ALLOY_CONTAINER" 2>/dev/null || true
@@ -1578,7 +1711,7 @@ do_down() {
     need_install_dir
     log "========== down =========="
 
-    log "[1/4] 停止 Docker 服务"
+    log "[1/5] 停止 Docker 服务"
     if is_master; then
         # skillhub 先停（逆序）
         if [ "$WITH_SKILLHUB" -eq 1 ]; then
@@ -1591,7 +1724,7 @@ do_down() {
         log "  worker 节点跳过 Docker 服务"
     fi
 
-    log "[2/4] 停止 Alloy"
+    log "[2/5] 停止 Alloy"
     if is_worker; then
         docker stop "$ALLOY_CONTAINER" 2>/dev/null || true
         log "  Alloy: stopped"
@@ -1599,11 +1732,15 @@ do_down() {
         log "  master 节点：Alloy 由 docker compose 管理"
     fi
 
-    log "[3/4] 停止 node_exporter"
+    log "[3/5] 停止 node-service"
+    systemctl stop "$NS_SERVICE" 2>/dev/null || true
+    log "  node-service: stopped"
+
+    log "[4/5] 停止 node_exporter"
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     log "  node_exporter: stopped"
 
-    log "[4/4] 停止 npu_exporter"
+    log "[5/5] 停止 npu_exporter"
     systemctl stop "$NPU_TIMER" 2>/dev/null || true
     systemctl stop "$NPU_SERVICE" 2>/dev/null || true
     log "  npu_exporter: stopped"
@@ -1623,11 +1760,12 @@ do_restart() {
 do_status() {
     need_install_dir
     load_env
-    local ne_port ne_host npu_port npu_host frontend_port litellm_port litellm_host postgres_port victoriametrics_port grafana_port
+    local ne_port ne_host npu_port npu_host ns_port frontend_port litellm_port litellm_host postgres_port victoriametrics_port grafana_port
     ne_port=$(env_default NODE_EXPORTER_PORT 8091)
     ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
     npu_port=$(env_default NPU_EXPORTER_PORT 8092)
     npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
+    ns_port=$(env_default NODE_SERVICE_PORT 8101)
     frontend_port=$(env_default FRONTEND_PORT 8090)
     litellm_port=$(env_default LITELLM_PORT 8100)
     litellm_host=$(env_default LITELLM_HOST 127.0.0.1)
@@ -1663,6 +1801,10 @@ do_status() {
     curl --connect-timeout 3 --max-time 5 -sf "http://${npu_host}:${npu_port}/metrics" &>/dev/null \
         && _check "npu_exporter     (${npu_host}:${npu_port})" 1 \
         || _check "npu_exporter     (${npu_host}:${npu_port})" 0
+
+    curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${ns_port}/health" 2>/dev/null | grep -qi ok \
+        && _check "node-service     (127.0.0.1:${ns_port})" 1 \
+        || _check "node-service     (127.0.0.1:${ns_port})" 0
 
     curl --connect-timeout 3 --max-time 5 -sfI "http://127.0.0.1:${frontend_port}/" &>/dev/null \
         && _check "frontend         (:${frontend_port})" 1 \
@@ -1832,6 +1974,7 @@ if [ "$ACTION" = "install" ] && [ "$DEPLOY_DIR" != "$INSTALL_DIR" ]; then
     DEPLOY_DIR="$INSTALL_DIR"
     NE_DIR="${DEPLOY_DIR}/node-exporter"
     NPU_DIR="${DEPLOY_DIR}/npu-exporter"
+    NS_DIR="${DEPLOY_DIR}/node-service"
     ALLOY_DIR="${DEPLOY_DIR}/alloy"
 
     log "后续操作将使用 ${DEPLOY_DIR} 中的内容执行"

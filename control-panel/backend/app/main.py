@@ -18,6 +18,7 @@ from app.api.v1.log_loki import router as log_loki_router
 from app.api.v1.users import router as users_router
 from app.api.v1.oauth2 import oauth2_router
 from app.api.v1.hardware import router as hardware_router
+from app.api.v1.node_service import router as node_service_router
 from app.config import settings
 from app.core.logging import setup_file_logging
 from app.iam.engine import ensure_iam_tables, ensure_oauth2_tables
@@ -115,6 +116,8 @@ async def lifespan(fastapi_app: FastAPI):
     await hw_svc.close()
     await stop_log_services()
     await litellm_svc.close()
+    from app.api.v1.node_service import close_client as close_ns_client
+    await close_ns_client()
     await backend.on_shutdown()
     await database.dispose_engine()
     logger.info("backend-api shut down.")
@@ -274,6 +277,7 @@ app.include_router(mass_config_router)
 app.include_router(litellm_key_router)
 app.include_router(litellm_usage_router)
 app.include_router(hardware_router)
+app.include_router(node_service_router)
 app.include_router(logs_router)
 app.include_router(logs_ws_router)
 app.include_router(log_loki_router)

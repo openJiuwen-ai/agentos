@@ -34,6 +34,7 @@ DEFAULT_COMPONENTS: list[dict] = [
          {"pattern": r"^runtime-[^/]*[.](err|out)$", "name": "runtime-merged.log"},
      ]},
     {"id": "jiuwenbox", "name": "jiuwenbox", "path": "/tmp/jiuwenbox"},
+    {"id": "agentos-node-service", "name": "推理服务节点", "path": f"{_AGENT_LOG_DIR}/agentos-node-service"},
 ]
 
 _cached_components: Optional[list[ComponentConfig]] = None

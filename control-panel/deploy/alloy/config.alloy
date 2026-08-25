@@ -53,6 +53,14 @@ local.file_match "jiuwenbox" {
   }]
 }
 
+local.file_match "node_service" {
+  path_targets = [{
+    __path__  = "/var/log/agentos/agentos-node-service/*.log",
+    category  = "agentos-node-service",
+    host      = constants.hostname,
+  }]
+}
+
 loki.source.file "control_panel_logs" {
   targets    = local.file_match.control_panel.targets
   forward_to = [loki.write.default.receiver]
@@ -80,6 +88,11 @@ loki.source.file "agent_runtime_logs" {
 
 loki.source.file "jiuwenbox_logs" {
   targets    = local.file_match.jiuwenbox.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.source.file "node_service_logs" {
+  targets    = local.file_match.node_service.targets
   forward_to = [loki.write.default.receiver]
 }
 

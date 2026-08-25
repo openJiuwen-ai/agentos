@@ -87,6 +87,15 @@ export const appRouteTree: AppRouteNode[] = [
             hideSideMenu: true,
           },
           {
+            key: 'node-service',
+            label: '推理服务节点',
+            order: 4,
+            path: '/resources/inference-model/node-service',
+            name: 'node-service',
+            component: () => import('@/views/resources/inference-model/NodeServicePage.vue'),
+            adminOnly: true,
+          },
+          {
             key: 'inference-model-detail',
             label: '推理模型详情',
             order: 4,
