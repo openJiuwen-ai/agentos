@@ -282,7 +282,7 @@ configure_release() {
   MANAGER_VERSION="latest"
 
   BASE_URL="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com"
-  JIUWENSWARM_BASE="${BASE_URL}/jiuwenswarm/agentos_b050/package/release/last_successful_build/"
+  JIUWENSWARM_BASE="${BASE_URL}/jiuwenswarm/agentos_b050/package/release/last_successful_build"
 
   JIUWENSWARM_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
