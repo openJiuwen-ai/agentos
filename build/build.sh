@@ -281,12 +281,15 @@ configure_release() {
   OPENYUANRONG_VERSION="${YUANRONG_RELEASE_VERSION}"
   MANAGER_VERSION="latest"
 
-  JIUWENSWARM_BASE="https://gitcode.com/openJiuwen/jiuwenswarm/releases/download/${JIUWENSWARM_RELEASE_GIT_TAG}"
+  BASE_URL="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com"
+  JIUWENSWARM_BASE="${BASE_URL}/jiuwenswarm/agentos_b050/package/release/last_successful_build/"
 
   JIUWENSWARM_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-macosx_11_0_arm64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-win_amd64.whl"
+    "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_aarch64.whl"
+    "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_x86_64.whl"
   )
 
    if [[ -n "${YR_RELEASE_DOWNLOAD_BASE}" ]]; then
