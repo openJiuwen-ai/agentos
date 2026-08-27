@@ -168,7 +168,7 @@ function handleSave() {
   <ElDrawer :model-value="visible" title="模型信息" size="480px" @close="emit('close')">
     <div class="model-header" v-if="model">
       <div class="model-header__icon">
-        <el-icon :size="32" color="#2563eb"><Monitor /></el-icon>
+        <ElIcon :size="32" color="#2563eb"><Monitor /></ElIcon>
       </div>
       <span class="model-header__name">{{ model.model_name }}</span>
       <ElButton class="model-header__copy" text :icon="CopyDocument" title="复制模型名称" @click="copyModelName" />
@@ -198,9 +198,9 @@ function handleSave() {
     <template v-if="mode === 'edit' && model">
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
-          <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
+          <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
             ><ArrowDown
-          /></el-icon>
+          /></ElIcon>
           基础信息
         </h3>
         <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
@@ -250,10 +250,10 @@ function handleSave() {
 
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
-          <el-icon
+          <ElIcon
             :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
             ><ArrowDown
-          /></el-icon>
+          /></ElIcon>
           部署信息
         </h3>
         <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
@@ -268,10 +268,10 @@ function handleSave() {
 
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('service')">
-          <el-icon
+          <ElIcon
             :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
             ><ArrowDown
-          /></el-icon>
+          /></ElIcon>
           服务信息
         </h3>
         <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">

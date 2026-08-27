@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElTabs, ElTabPane, ElLink } from 'element-plus';
+import { ElMessage, ElTabs, ElTabPane, ElLink, ElButton } from 'element-plus';
 import { CopyDocument } from '@element-plus/icons-vue';
 
 const props = defineProps<{
@@ -100,7 +100,7 @@ const jiuwenswarmTuiCmd = computed(
                 <td><code>api_key</code></td>
                 <td>
                   API 认证密钥，用于验证调用方身份，请在
-                  <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
+                  <ElLink type="primary" underline="never" @click="goToApiKeyPage">API Key 管理</ElLink>
                   页面申请
                 </td>
                 <td><code>&lt;&lt;您的apikey&gt;&gt;</code></td>
@@ -135,13 +135,13 @@ const jiuwenswarmTuiCmd = computed(
       <ElTabPane label="curl 示例" name="curl">
         <p class="usage-guide-card__desc">
           通过 OpenAI 兼容接口直接调用已部署的模型，<code>&lt;&lt;您的apikey&gt;&gt;</code> 请替换为
-          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
+          <ElLink type="primary" underline="never" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥：
         </p>
         <div class="usage-guide-card__code-block">
           <div class="usage-guide-card__code-header">
             <span class="usage-guide-card__code-label">Shell</span>
-            <el-button
+            <ElButton
               class="usage-guide-card__copy-btn"
               :icon="CopyDocument"
               text
@@ -149,7 +149,7 @@ const jiuwenswarmTuiCmd = computed(
               @click="copyToClipboard(curlExample, 'curl 示例')"
             >
               复制
-            </el-button>
+            </ElButton>
           </div>
           <pre class="usage-guide-card__code"><code>{{ curlExample }}</code></pre>
         </div>
@@ -160,13 +160,13 @@ const jiuwenswarmTuiCmd = computed(
         <p class="usage-guide-card__desc">
           在 JiuwenSwarm 配置文件<code>config.yaml</code> 的 <code>models</code> 字段中添加以下内容，即可将模型接入
           Agent 编排流程。请将 <code>api_key</code> 替换为
-          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
+          <ElLink type="primary" underline="never" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥，<code>api_base</code> 和 <code>model_name</code> 替换为实际值：
         </p>
         <div class="usage-guide-card__code-block">
           <div class="usage-guide-card__code-header">
             <span class="usage-guide-card__code-label">YAML</span>
-            <el-button
+            <ElButton
               class="usage-guide-card__copy-btn"
               :icon="CopyDocument"
               text
@@ -174,7 +174,7 @@ const jiuwenswarmTuiCmd = computed(
               @click="copyToClipboard(jiuwenswarmYaml, 'JiuwenSwarm 配置')"
             >
               复制
-            </el-button>
+            </ElButton>
           </div>
           <pre class="usage-guide-card__code"><code>{{ jiuwenswarmYaml }}</code></pre>
         </div>
@@ -185,13 +185,13 @@ const jiuwenswarmTuiCmd = computed(
         <p class="usage-guide-card__desc">
           在 JiuwenSwarm TUI 中使用 <code>/model add</code> 命令添加模型，<code>&lt;&lt;您的apikey&gt;&gt;</code>
           请替换为
-          <ElLink type="primary" :underline="false" @click="goToApiKeyPage">API Key 管理</ElLink>
+          <ElLink type="primary" underline="never" @click="goToApiKeyPage">API Key 管理</ElLink>
           中申请的密钥：
         </p>
         <div class="usage-guide-card__code-block">
           <div class="usage-guide-card__code-header">
             <span class="usage-guide-card__code-label">Shell</span>
-            <el-button
+            <ElButton
               class="usage-guide-card__copy-btn"
               :icon="CopyDocument"
               text
@@ -199,7 +199,7 @@ const jiuwenswarmTuiCmd = computed(
               @click="copyToClipboard(jiuwenswarmTuiCmd, 'JiuwenSwarm TUI 命令')"
             >
               复制
-            </el-button>
+            </ElButton>
           </div>
           <pre class="usage-guide-card__code"><code>{{ jiuwenswarmTuiCmd }}</code></pre>
         </div>

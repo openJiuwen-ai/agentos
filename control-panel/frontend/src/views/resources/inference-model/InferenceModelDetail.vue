@@ -105,7 +105,7 @@ onMounted(() => {
       <div class="detail-header">
         <ElButton class="detail-back" text :icon="ArrowLeft" @click="goBack" />
         <div class="detail-header__icon" v-if="modelData">
-          <el-icon :size="28" color="#2563eb"><Monitor /></el-icon>
+          <ElIcon :size="28" color="#2563eb"><Monitor /></ElIcon>
         </div>
         <div class="detail-header__info">
           <div class="detail-header__name">

@@ -179,16 +179,6 @@ export const appRouteTree: AppRouteNode[] = [
         component: () => import('@/views/system/LogCenterPage.vue'),
       },
       {
-        key: 'task-center',
-        label: '任务中心',
-        order: 4,
-        path: '/system/task-center',
-        name: 'task-center',
-        icon: logCenterIcon,
-        component: () => import('@/views/system/TaskCenterPage.vue'),
-        hideInMenu: true,
-      },
-      {
         key: 'log-explore',
         label: '日志预览',
         order: 6,
@@ -200,6 +190,16 @@ export const appRouteTree: AppRouteNode[] = [
         adminOnly: true,
       },
     ],
+  },
+  {
+    key: 'task-center',
+    label: '任务中心',
+    order: 9,
+    path: '/task-center',
+    name: 'task-center',
+    component: () => import('@/views/system/TaskCenterPage.vue'),
+    hideInMenu: true,
+    hideSideMenu: true,
   },
   {
     key: 'profile',

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem, ElButton } from 'element-plus';
+import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem, ElButton, ElTooltip } from 'element-plus';
 import { appRouteTree, findAdminOnlyRouteNames, findDefaultLandingRouteName, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
 
 const adminOnlyRouteNames = new Set(findAdminOnlyRouteNames(appRouteTree));
 import { useAuth } from '@/composables/useAuth';
 import personIcon from '@/assets/images/person-line.svg';
 import helpIcon from '@/assets/images/help.svg';
+import taskIcon from '@/assets/images/task.svg';
 import rightArrow from '@/assets/images/right-arrow.svg';
 import arrowDownLine from '@/assets/images/arrow-down-line.svg';
 import logoutIcon from '@/assets/images/logout.svg';
@@ -33,6 +34,10 @@ function switchWorkspace(mode: 'admin' | 'user') {
 
 function goToProfile() {
   router.push({ name: 'profile' });
+}
+
+function goToTaskCenter() {
+  router.push({ name: 'task-center' });
 }
 
 function handleLogout() {
@@ -113,6 +118,12 @@ function handleProfileCommand(command: string | number | object) {
     </ElMenu>
 
     <div class="top-nav__right">
+      <ElTooltip content="任务中心" placement="bottom">
+        <ElButton text class="top-nav__icon-btn" @click="goToTaskCenter">
+          <img :src="taskIcon" alt="任务中心" width="20" height="20" />
+        </ElButton>
+      </ElTooltip>
+
       <ElDropdown trigger="click" placement="bottom-end">
         <ElButton text class="top-nav__icon-btn" title="帮助">
           <img :src="helpIcon" alt="帮助" width="20" height="20" />

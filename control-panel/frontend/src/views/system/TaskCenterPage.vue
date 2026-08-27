@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
-import { useRouter } from "vue-router";
 import {
   ElButton,
+  ElCard,
   ElTable,
   ElTableColumn,
   ElInput,
@@ -11,13 +11,13 @@ import {
   ElMessageBox,
   ElPagination,
   ElTooltip,
+  vLoading,
 } from "element-plus";
 import {
   Delete,
   Download,
   Search,
-  Refresh,
-  Monitor,
+  RefreshRight,
 } from "@element-plus/icons-vue";
 import {
   getExports,
@@ -28,12 +28,11 @@ import {
 import { http } from "@/api/index";
 import { formatDateTime } from '@/utils/datetime';
 
-const router = useRouter();
-
-function goToLogCenter() {
-  router.push({ name: "log-center" });
-}
-
+defineOptions({
+  directives: {
+    loading: vLoading,
+  },
+});
 const tasks = ref<LogExportTask[]>([]);
 const loading = ref(false);
 const searchKeyword = ref("");
@@ -192,118 +191,118 @@ onUnmounted(() => stopPolling());
   <section class="page">
     <div class="page-header-row">
       <h1 class="page-title">任务中心</h1>
-      <el-button
-        type="primary"
-        :icon="Monitor"
-        size="small"
-        @click="goToLogCenter"
-      >
-        日志中心
-      </el-button>
-    </div>
-
-    <div class="toolbar">
-      <div class="toolbar__left">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="请输入搜索内容"
-          :prefix-icon="Search"
-          clearable
-          size="small"
-          style="width: 220px"
-          @input="onPageChange"
-        />
-      </div>
-      <div class="toolbar__right">
+      <div class="page-header-row__meta">
         <span class="update-time">更新时间：{{ lastUpdateTime || "--" }}</span>
-        <el-button
-          :icon="Refresh"
-          size="small"
+        <ElButton
+          text
+          :loading="loading"
+          :icon="RefreshRight"
+          aria-label="刷新"
+          class="refresh-btn"
           @click="fetchTasks"
         />
       </div>
     </div>
 
-    <el-table :data="pagedTasks" v-loading="loading" stripe class="task-table">
-      <el-table-column label="任务名称" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span class="mono-text">{{ row.task_type === "archive" ? "日志打包" : "日志导出" }}-{{ formatDateTime(row.created_at) }}</span>
-        </template>
-      </el-table-column>
+    <ElCard shadow="never" class="task-panel" body-class="task-panel__body">
+      <div class="toolbar">
+        <ElInput
+          v-model="searchKeyword"
+          class="toolbar__search"
+          placeholder="请输入搜索内容"
+          :prefix-icon="Search"
+          clearable
+          @input="onPageChange"
+        />
+      </div>
 
-      <el-table-column label="操作对象" min-width="90">
-        <template #default="{ row }">
-          {{ row.component_name || row.source_name || "—" }}
-        </template>
-      </el-table-column>
+      <ElTable :data="pagedTasks" v-loading="loading" class="task-table">
+        <ElTableColumn label="任务名称" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="task-name">
+              {{ row.task_type === "archive" ? "日志打包" : "日志导出" }}-{{ formatDateTime(row.created_at) }}
+            </span>
+          </template>
+        </ElTableColumn>
 
-      <el-table-column label="状态" min-width="90">
-        <template #default="{ row }">
-          <el-tag :type="getStatusTagType(row.status)" size="small">
-            {{ getStatusText(row.status) }}
-          </el-tag>
-        </template>
-      </el-table-column>
+        <ElTableColumn label="操作对象" min-width="100">
+          <template #default="{ row }">
+            {{ row.component_name || row.source_name || "—" }}
+          </template>
+        </ElTableColumn>
 
-      <el-table-column label="创建时间" min-width="140">
-        <template #default="{ row }">
-          {{ new Date(row.created_at).toLocaleString() }}
-        </template>
-      </el-table-column>
-
-      <el-table-column label="结束时间" min-width="140">
-        <template #default="{ row }">
-          {{
-            row.completed_at
-              ? new Date(row.completed_at).toLocaleString()
-              : "--"
-          }}
-        </template>
-      </el-table-column>
-
-      <el-table-column label="耗时" min-width="80">
-        <template #default="{ row }">
-          {{ formatDuration(row) }}
-        </template>
-      </el-table-column>
-
-      <el-table-column label="操作" min-width="100" fixed="right">
-        <template #default="{ row }">
-          <el-tooltip content="下载" placement="top">
-            <el-button
-              v-if="row.status === 'completed'"
-              text
-              :icon="Download"
+        <ElTableColumn label="状态" min-width="100">
+          <template #default="{ row }">
+            <ElTag
+              :type="getStatusTagType(row.status)"
               size="small"
-              type="primary"
-              @click="downloadExportFile(row)"
-            />
-          </el-tooltip>
-          <el-tooltip content="删除" placement="top">
-            <el-button
-              text
-              :icon="Delete"
-              size="small"
-              type="danger"
-              @click="handleDelete(row.task_id)"
-            />
-          </el-tooltip>
-        </template>
-      </el-table-column>
-    </el-table>
+              effect="light"
+              class="status-tag"
+              :class="`status-tag--${row.status}`"
+            >
+              {{ getStatusText(row.status) }}
+            </ElTag>
+          </template>
+        </ElTableColumn>
 
-    <div class="pagination-row">
-      <span class="total-text">总计：{{ total }}</span>
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50]"
-        :total="total"
-        layout="sizes, prev, pager, next, jumper"
-        background
-        small
-      />
-    </div>
+        <ElTableColumn label="创建时间" min-width="170">
+          <template #default="{ row }">
+            {{ new Date(row.created_at).toLocaleString() }}
+          </template>
+        </ElTableColumn>
+
+        <ElTableColumn label="结束时间" min-width="170">
+          <template #default="{ row }">
+            {{
+              row.completed_at
+                ? new Date(row.completed_at).toLocaleString()
+                : "--"
+            }}
+          </template>
+        </ElTableColumn>
+
+        <ElTableColumn label="耗时" min-width="100">
+          <template #default="{ row }">
+            {{ formatDuration(row) }}
+          </template>
+        </ElTableColumn>
+
+        <ElTableColumn label="操作" min-width="100" fixed="right">
+          <template #default="{ row }">
+            <ElTooltip content="下载" placement="top">
+              <ElButton
+                v-if="row.status === 'completed'"
+                text
+                :icon="Download"
+                class="action-btn"
+                @click="downloadExportFile(row)"
+              />
+            </ElTooltip>
+            <ElTooltip content="删除" placement="top">
+              <ElButton
+                text
+                :icon="Delete"
+                class="action-btn action-btn--danger"
+                @click="handleDelete(row.task_id)"
+              />
+            </ElTooltip>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+
+      <div class="pagination-row">
+        <span class="total-text">总计：{{ total }}</span>
+        <ElPagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="sizes, prev, pager, next, jumper"
+          background
+          small
+        />
+      </div>
+    </ElCard>
   </section>
 </template>
 
@@ -312,74 +311,175 @@ onUnmounted(() => stopPolling());
   height: 100%;
   display: flex;
   flex-direction: column;
+  gap: 24px;
   overflow: hidden;
+  padding-bottom: 24px;
 }
 
 .page-header-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  flex-shrink: 0;
 }
 
 .page-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+  color: var(--text-primary);
+}
+
+.page-header-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
   flex-shrink: 0;
+}
+
+.update-time {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.refresh-btn {
+  padding: 0;
+  margin: 0;
+  width: 14px;
+  height: 22px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.refresh-btn :deep(.el-icon) {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.task-panel {
+  --el-card-border-color: transparent;
+  --el-card-border-radius: var(--radius-2xl, 24px);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: var(--radius-2xl, 24px);
+  background: var(--bg-2);
+}
+
+.task-panel :deep(.task-panel__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
   flex-shrink: 0;
 }
 
-.toolbar__left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.toolbar__search {
+  width: 280px;
 }
 
-.toolbar__right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.update-time {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
+.toolbar__search :deep(.el-input__wrapper) {
+  border-radius: var(--radius-base);
 }
 
 .task-table {
   flex: 1;
   min-height: 0;
+  width: 100%;
 }
 
-.task-table :deep(td),
-.task-table :deep(th) {
-  font-size: 15px;
-}
-
-.mono-text {
-  font-family: "Consolas", "Monaco", "Courier New", monospace;
+.task-table :deep(.el-table__header th) {
   font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-1);
+}
+
+.task-table :deep(.el-table__cell) {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.task-name {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
+.status-tag {
+  border: none;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 24px;
+}
+
+.status-tag--completed {
+  --el-tag-bg-color: var(--tag-bg-success);
+  --el-tag-text-color: var(--tag-text-success);
+  --el-tag-border-color: transparent;
+}
+
+.status-tag--failed {
+  --el-tag-bg-color: var(--tag-bg-error);
+  --el-tag-text-color: var(--tag-text-error);
+  --el-tag-border-color: transparent;
+}
+
+.status-tag--running,
+.status-tag--pending {
+  --el-tag-bg-color: var(--tag-bg-info);
+  --el-tag-text-color: var(--tag-text-info);
+  --el-tag-border-color: transparent;
+}
+
+.action-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+.action-btn:hover {
+  color: var(--color-primary);
+}
+
+.action-btn--danger:hover {
+  color: var(--error);
 }
 
 .pagination-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 16px;
   flex-shrink: 0;
+  padding-top: 8px;
 }
 
 .total-text {
   font-size: 14px;
-  color: var(--el-text-color-secondary);
+  line-height: 22px;
+  color: var(--text-secondary);
 }
 </style>

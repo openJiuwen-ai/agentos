@@ -8,6 +8,7 @@ import {
   ElMessage,
   ElUpload,
   ElPagination,
+  vLoading,
 } from 'element-plus';
 import { Plus, Search } from '@element-plus/icons-vue';
 import type { UploadFile } from 'element-plus';
@@ -25,6 +26,12 @@ import listViewIcon from '@/assets/images/framework-page/list-view-icon.png';
 import uploadIcon from '@/assets/images/framework-page/upload-icon.png';
 import closeDialogIcon from '@/assets/images/framework-page/close-icon.png';
 import parsingIcon from '@/assets/images/framework-page/parsing-icon.png';
+
+defineOptions({
+  directives: {
+    loading: vLoading,
+  },
+});
 
 
 // ── framework list ──

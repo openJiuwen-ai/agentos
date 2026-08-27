@@ -84,7 +84,7 @@ function handleSave() {
     <!-- 基础信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
-        <el-icon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+        <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
         基础信息
       </h3>
       <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
@@ -120,7 +120,7 @@ function handleSave() {
     <!-- 部署信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
-        <el-icon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+        <ElIcon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
         部署信息
       </h3>
       <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
@@ -144,7 +144,7 @@ function handleSave() {
     <!-- 服务访问信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('service')">
-        <el-icon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></el-icon>
+        <ElIcon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
         服务访问信息
       </h3>
       <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">

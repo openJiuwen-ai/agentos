@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import {
   ElButton,
+  ElCard,
   ElTable,
   ElTableColumn,
   ElDrawer,
@@ -11,40 +12,37 @@ import {
   ElBreadcrumbItem,
   ElSelect,
   ElOption,
-} from "element-plus";
-import { Monitor, Search } from "@element-plus/icons-vue";
-import {
-  getLokiFilenames,
-  type FileEntry,
-} from "@/api/logs";
-import { fetchHardwareNodes } from "@/api/appliance";
-import { useLogs } from "@/composables/useLogs";
-import jiuwenswarmIcon from "@/assets/images/log-center/jiuwen.png";
-import vllmIcon from "@/assets/images/log-center/vllm.png";
-import controlPanelIcon from "@/assets/images/log-center/control_panel.png";
+  vLoading,
+} from 'element-plus';
+import { Search } from '@element-plus/icons-vue';
+import { getLokiFilenames, type FileEntry } from '@/api/logs';
+import { fetchHardwareNodes } from '@/api/appliance';
+import { useLogs } from '@/composables/useLogs';
+import jiuwenswarmIcon from '@/assets/images/log-center/jiuwen.png';
+import vllmIcon from '@/assets/images/log-center/vllm.png';
+import controlPanelIcon from '@/assets/images/log-center/control_panel.png';
 
+defineOptions({
+  directives: {
+    loading: vLoading,
+  },
+});
 
 const categoryIcons: Record<string, string> = {
   vllm: vllmIcon,
   control_panel: controlPanelIcon,
   jiuwenswarm: jiuwenswarmIcon,
-  "agent-runtime": jiuwenswarmIcon,
-  "agent-gateway": jiuwenswarmIcon,
-  "agent-registry": jiuwenswarmIcon,
+  'agent-runtime': jiuwenswarmIcon,
+  'agent-gateway': jiuwenswarmIcon,
+  'agent-registry': jiuwenswarmIcon,
   jiuwenbox: jiuwenswarmIcon,
 };
 
 const router = useRouter();
 
-const {
-  categories,
-  categoriesLoading,
-  fileEntries,
-  fileEntriesLoading,
-  fetchCategories,
-} = useLogs();
+const { categories, categoriesLoading, fileEntries, fileEntriesLoading, fetchCategories } = useLogs();
 
-const activeCategoryKey = ref<string>("");
+const activeCategoryKey = ref<string>('');
 const activeCategoryLabel = computed(() => {
   const cat = categories.value.find((c) => c.key === activeCategoryKey.value);
   return cat?.label || activeCategoryKey.value;
@@ -65,16 +63,16 @@ interface DirNode {
 
 const nodeOptions = ref<{ label: string; value: string }[]>([]);
 const nodesLoading = ref(false);
-const selectedNodeIp = ref("");
+const selectedNodeIp = ref('');
 const treeRoot = ref<Map<string, DirNode>>(new Map());
 
 // 将 Loki 返回的文件路径列表解析为树状目录结构
 function buildFileTree(paths: string[]): Map<string, DirNode> {
   const root = new Map<string, DirNode>();
   for (const rawPath of paths) {
-    const segments = rawPath.split("/").filter(Boolean);
+    const segments = rawPath.split('/').filter(Boolean);
     let level = root;
-    let currentPath = "";
+    let currentPath = '';
     segments.forEach((segment, index) => {
       currentPath = currentPath ? `${currentPath}/${segment}` : segment;
       let node = level.get(segment);
@@ -108,16 +106,10 @@ function deriveEntries() {
     name: node.name,
     path: node.path,
     size: 0,
-    modified: "",
+    modified: '',
     is_dir: node.isDir,
   }));
-  entries.sort((a, b) =>
-    a.is_dir === b.is_dir
-      ? a.name.localeCompare(b.name)
-      : a.is_dir
-        ? -1
-        : 1,
-  );
+  entries.sort((a, b) => (a.is_dir === b.is_dir ? a.name.localeCompare(b.name) : a.is_dir ? -1 : 1));
   fileEntries.value = entries;
 }
 
@@ -131,13 +123,10 @@ async function loadTree() {
   fileEntries.value = [];
   fileEntriesLoading.value = true;
   try {
-    const paths = await getLokiFilenames(
-      selectedNodeIp.value,
-      activeCategoryKey.value || undefined,
-    );
+    const paths = await getLokiFilenames(selectedNodeIp.value, activeCategoryKey.value || undefined);
     treeRoot.value = buildFileTree(paths);
   } catch {
-    ElMessage.error("读取目录失败");
+    ElMessage.error('读取目录失败');
     treeRoot.value = new Map();
   } finally {
     fileEntriesLoading.value = false;
@@ -152,13 +141,13 @@ async function ensureNodes() {
   try {
     const { nodes } = await fetchHardwareNodes();
     nodeOptions.value = nodes.map((node) => ({
-      label: `${node.role.toLowerCase() === "master" ? "主节点" : "从节点"} (${node.host})`,
+      label: `${node.role.toLowerCase() === 'master' ? '主节点' : '从节点'} (${node.host})`,
       value: node.host,
     }));
-    const master = nodes.find((node) => node.role.toLowerCase() === "master");
-    selectedNodeIp.value = (master ?? nodes[0])?.host ?? "";
+    const master = nodes.find((node) => node.role.toLowerCase() === 'master');
+    selectedNodeIp.value = (master ?? nodes[0])?.host ?? '';
   } catch {
-    ElMessage.error("获取节点列表失败");
+    ElMessage.error('获取节点列表失败');
   } finally {
     nodesLoading.value = false;
   }
@@ -200,7 +189,7 @@ async function onCategoryClick(key: string) {
 }
 
 function onComponentDrawerClose() {
-  activeCategoryKey.value = "";
+  activeCategoryKey.value = '';
   selectedComponent.value = null;
   fileEntries.value = [];
   currentPathStack.value = [];
@@ -209,17 +198,13 @@ function onComponentDrawerClose() {
 
 function openLiveLog(fileEntry: FileEntry) {
   router.push({
-    name: "log-explore",
+    name: 'log-explore',
     query: {
       category: activeCategoryKey.value,
       ip: selectedNodeIp.value || undefined,
       file_path: fileEntry.path || fileEntry.name,
     },
   });
-}
-
-function goToTaskCenter() {
-  router.push({ name: "task-center" });
 }
 
 onMounted(() => {
@@ -232,43 +217,33 @@ onMounted(() => {
   <section class="page">
     <div class="page-header-row">
       <h1 class="page-title">日志中心</h1>
-      <el-button
-        type="primary"
-        :icon="Monitor"
-        size="small"
-        @click="goToTaskCenter"
-      >
-        任务中心
-      </el-button>
     </div>
 
     <div class="category-row" v-loading="categoriesLoading">
-      <div
+      <ElCard
         v-for="cat in categories"
         :key="cat.key"
+        shadow="never"
         class="category-card"
         :class="{ 'category-card--active': activeCategoryKey === cat.key }"
+        body-class="category-card__body"
         @click="onCategoryClick(cat.key)"
       >
         <div class="category-card__icon">
-          <img
-            :src="categoryIcons[cat.key] || controlPanelIcon"
-            :alt="cat.label"
-            class="category-card__icon-img"
-          />
+          <img :src="categoryIcons[cat.key] || controlPanelIcon" :alt="cat.label" class="category-card__icon-img" />
         </div>
         <div class="category-card__info">
           <div class="category-card__label">{{ cat.label }}</div>
           <div class="category-card__count">{{ cat.count }} 个组件</div>
         </div>
-      </div>
+      </ElCard>
     </div>
 
     <div v-if="!activeCategoryKey && !categoriesLoading" class="category-hint">
       请点击上方分类卡片查看对应的日志文件
     </div>
 
-    <el-drawer
+    <ElDrawer
       v-model="showComponentDrawer"
       direction="rtl"
       size="45%"
@@ -284,53 +259,41 @@ onMounted(() => {
 
       <div class="drawer-node-row">
         <span class="drawer-node-label">节点</span>
-        <el-select
+        <ElSelect
           v-model="selectedNodeIp"
           v-loading="nodesLoading"
           placeholder="选择节点"
           size="small"
           style="width: 260px"
         >
-          <el-option
-            v-for="opt in nodeOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
+          <ElOption v-for="opt in nodeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </ElSelect>
       </div>
 
       <div class="drawer-breadcrumb" v-if="currentPathStack.length > 0">
-        <el-breadcrumb separator="/">
-          <el-breadcrumb-item>
+        <ElBreadcrumb separator="/">
+          <ElBreadcrumbItem>
             <a href="#" @click.prevent="navigateToBreadcrumb(-1)">
               {{ activeCategoryLabel }}
             </a>
-          </el-breadcrumb-item>
-          <el-breadcrumb-item
-            v-for="(seg, idx) in currentPathStack"
-            :key="idx"
-          >
-            <a
-              v-if="idx < currentPathStack.length - 1"
-              href="#"
-              @click.prevent="navigateToBreadcrumb(idx)"
-            >{{ seg.name }}</a>
+          </ElBreadcrumbItem>
+          <ElBreadcrumbItem v-for="(seg, idx) in currentPathStack" :key="idx">
+            <a v-if="idx < currentPathStack.length - 1" href="#" @click.prevent="navigateToBreadcrumb(idx)">{{
+              seg.name
+            }}</a>
             <span v-else>{{ seg.name }}</span>
-          </el-breadcrumb-item>
-        </el-breadcrumb>
-        <span class="breadcrumb-depth-hint">
-          {{ currentDepth }} / {{ MAX_DEPTH }} 级
-        </span>
+          </ElBreadcrumbItem>
+        </ElBreadcrumb>
+        <span class="breadcrumb-depth-hint"> {{ currentDepth }} / {{ MAX_DEPTH }} 级 </span>
       </div>
 
-      <el-table
+      <ElTable
         :data="fileEntries"
         v-loading="fileEntriesLoading"
         stripe
         @row-click="(row: FileEntry) => row.is_dir && navigateToDir(row)"
       >
-        <el-table-column label="文件名" min-width="180">
+        <ElTableColumn label="文件名" min-width="180">
           <template #default="{ row }">
             <span
               :class="{
@@ -341,27 +304,21 @@ onMounted(() => {
               {{ row.name }}
             </span>
           </template>
-        </el-table-column>
-        <el-table-column label="修改时间" width="190">
+        </ElTableColumn>
+        <ElTableColumn label="修改时间" width="190">
           <template #default="{ row }">
-            {{ row.modified ? new Date(row.modified).toLocaleString() : "—" }}
+            {{ row.modified ? new Date(row.modified).toLocaleString() : '—' }}
           </template>
-        </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        </ElTableColumn>
+        <ElTableColumn label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <template v-if="!row.is_dir">
-              <el-button
-                type="primary"
-                link
-                :icon="Search"
-                size="small"
-                @click="openLiveLog(row)"
-              >日志预览</el-button>
+              <ElButton type="primary" link :icon="Search" size="small" @click="openLiveLog(row)">日志预览</ElButton>
             </template>
           </template>
-        </el-table-column>
-      </el-table>
-    </el-drawer>
+        </ElTableColumn>
+      </ElTable>
+    </ElDrawer>
   </section>
 </template>
 
@@ -376,90 +333,101 @@ onMounted(() => {
 
 .page-header-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 24px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+  color: var(--text-primary);
 }
 
 .category-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 24px;
   min-height: 80px;
 }
 
 .category-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 28px;
-  border-radius: 12px;
-  border: 1px solid var(--el-border-color);
-  background: var(--el-bg-color);
+  --el-card-border-color: transparent;
+  --el-card-border-radius: var(--radius-2xl, 24px);
+  border: none;
+  border-radius: var(--radius-2xl, 24px);
+  background: var(--bg-2);
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.category-card :deep(.category-card__body) {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 24px;
 }
 
 .category-card:hover {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 16px rgba(25, 25, 25, 0.06);
 }
 
 .category-card--active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  background: var(--bg-active);
 }
 
 .category-card__icon {
   width: 48px;
   height: 48px;
+  margin-top: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  border-radius: 16px;
+  border: 1px solid var(--bg-1);
+  background: var(--bg-2);
+  overflow: hidden;
 }
 
 .category-card__icon-img {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
   display: block;
+  object-fit: cover;
   object-position: center;
-}
-
-.category-card__icon-fallback {
-  font-size: 36px;
-  line-height: 1;
 }
 
 .category-card__info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .category-card__label {
   font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
+  font-weight: 500;
+  line-height: 26px;
+  color: var(--text-primary);
 }
 
 .category-card__count {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-secondary);
 }
 
 .category-hint {
   text-align: center;
   padding: 60px 0;
-  color: var(--el-text-color-placeholder);
+  color: var(--text-placeholder);
   font-size: 14px;
 }
 

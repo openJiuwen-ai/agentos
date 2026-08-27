@@ -155,14 +155,14 @@ watch(grafanaUrl, (url) => {
 <template>
   <section class="page">
     <div class="breadcrumb">
-      <el-button :icon="ArrowLeft" @click="goBack" text size="small">返回日志中心</el-button>
+      <ElButton :icon="ArrowLeft" @click="goBack" text size="small">返回日志中心</ElButton>
     </div>
 
     <div class="search-panel">
       <div class="search-row">
         <div class="search-field">
           <label class="search-label">关键词</label>
-          <el-input
+          <ElInput
             v-model="keyword"
             placeholder="输入关键词过滤..."
             clearable
@@ -174,14 +174,14 @@ watch(grafanaUrl, (url) => {
 
         <div class="search-field">
           <label class="search-label">时间范围</label>
-          <el-select v-model="timeRange" size="default" style="width: 160px">
-            <el-option v-for="opt in TIME_RANGE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-          </el-select>
+          <ElSelect v-model="timeRange" size="default" style="width: 160px">
+            <ElOption v-for="opt in TIME_RANGE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </ElSelect>
         </div>
 
         <div class="search-field search-field--download">
-          <el-button type="primary" :icon="Download" :loading="downloadLoading" @click="handleDownload"
-            >下载日志</el-button
+          <ElButton type="primary" :icon="Download" :loading="downloadLoading" @click="handleDownload"
+            >下载日志</ElButton
           >
         </div>
       </div>

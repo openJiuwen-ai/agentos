@@ -10,6 +10,7 @@ import {
   ElCheckboxGroup,
   ElCheckbox,
   ElMessage,
+  vLoading,
 } from 'element-plus';
 import { RefreshRight } from '@element-plus/icons-vue';
 import searchIcon from '@/assets/images/search-icon.png';
@@ -20,6 +21,12 @@ import { fetchInstances, type InstanceEntry } from '@/api/agent';
 import { ApiError } from '@/api';
 import { usePolling } from '@/composables/usePolling';
 import { formatDateTime } from '@/utils/datetime';
+
+defineOptions({
+  directives: {
+    loading: vLoading,
+  },
+});
 
 // ── 状态色（对齐 UI 设计稿） ──
 const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
