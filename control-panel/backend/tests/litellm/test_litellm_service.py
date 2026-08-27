@@ -66,7 +66,8 @@ class TestModelUpdateSchema:
 
     def test_minimal_valid(self):
         """场景: 仅传必填字段 litellm_params.
-        预期: model_info / instance_url / max_concurrent 均为 None, 验证通过."""
+        预期: model_info / instance_url / max_concurrent 均为 None, 验证通过;
+              allowed_openai_params 默认带上 reasoning_effort / tools / thinking 并出现在 model_dump 中."""
         from app.schemas.litellm import ModelUpdate
         body = ModelUpdate(
             litellm_params={"model": "openai/gpt-4o", "api_key": "sk-xxx"},
@@ -75,6 +76,16 @@ class TestModelUpdateSchema:
         assert body.model_info is None
         assert body.instance_url is None
         assert body.max_concurrent is None
+        assert body.litellm_params.allowed_openai_params == [
+            "reasoning_effort",
+            "tools",
+            "thinking",
+        ]
+        assert body.litellm_params.model_dump()["allowed_openai_params"] == [
+            "reasoning_effort",
+            "tools",
+            "thinking",
+        ]
 
     def test_full_fields(self):
         """场景: 传入所有可选字段.

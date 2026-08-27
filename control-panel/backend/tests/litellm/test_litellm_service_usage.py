@@ -91,6 +91,22 @@ class TestLitellmServiceUsage:
         assert len(result["items"]) == 2
         assert result["items"][0]["user_id"] == "bob"
 
+    # [场景] Token 用量与消费排序不一致：alice Token 多但消费低，bob Token 少但消费高
+    # [预期] 排行按 Token 用量降序（用量），alice 排第一，且 tokens 列单调递减
+    async def test_get_usage_by_user_orders_by_tokens(self, svc, db_session):
+        await self._setup_table(db_session, [
+            ("r1", "alice", "deepseek", 1000, 0.01, "2026-07-01 10:00:00"),
+            ("r2", "bob", "gpt-4", 500, 0.05, "2026-07-01 11:00:00"),
+            ("r3", "charlie", "qwen", 200, 0.02, "2026-07-01 12:00:00"),
+        ])
+
+        result = await svc.get_usage_by_user(
+            db_session, start_date="2026-07-01", end_date="2026-07-02", top=3,
+        )
+        assert [item["user_id"] for item in result["items"]] == ["alice", "bob", "charlie"]
+        tokens = [item["tokens"] for item in result["items"]]
+        assert tokens == sorted(tokens, reverse=True)
+
     # [场景] 查询 alice 的每日用量（2 天数据 + bob 干扰数据）
     # [预期] daily_activity 长度 2，user_id == "alice"
     async def test_get_user_usage(self, svc, db_session):

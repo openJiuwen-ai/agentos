@@ -51,6 +51,15 @@ def _ensure_home(username: str) -> None:
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
 
 
+def _ensure_workspace(username: str) -> None:
+    """创建用户工作目录 workspace；已存在则跳过。
+
+    其他组件约定用户目录下必须存在 workspace 空文件夹，作为用户项目存放位置。
+    """
+    path = _home_path(username) / "workspace"
+    path.mkdir(mode=0o700, exist_ok=True)
+
+
 def _copy_tree_overwrite(src: Path, dst: Path) -> None:
     """递归复制目录树，目标文件已存在时直接覆盖。"""
     dst.mkdir(parents=True, exist_ok=True)
@@ -173,7 +182,7 @@ def _build_agentos_entry(
         },
         "model_config_obj": {
             "temperature": 0.95,
-            "max_tokens": context_window if context_window is not None else "",
+            "context_window": context_window if context_window is not None else "",
         },
     }
 
@@ -187,7 +196,7 @@ def _append_agentos_entries(
     """往 config.yaml 的 models.agentos 列表追加模型条目。
 
     追加前先清理同 api_key 的旧条目，防止重复。
-    每个模型一条，max_tokens 用模型自己的 context_window。
+    每个模型一条，context_window 用模型自己的 context_window。
     """
     config_path = _home_path(username) / ".jiuwenswarm" / "config" / "config.yaml"
     if not config_path.is_file():
@@ -625,7 +634,7 @@ class LocalUsersBackend(AbstractUserBackend):
     ) -> dict:
         """为用户申请 Key 并写入九问 config.yaml。
 
-        流程：查已有Key → 申请(如无) → 标记默认 → commit → 检查家目录 → 建目录 → 复制模板 → 写agentos → chown
+        流程：查已有Key → 申请(如无) → 标记默认 → commit → 检查家目录 → 建目录(含workspace) → 复制模板 → 写agentos → chown
 
         幂等：已有 Key 跳过申请；目录已存在跳过模板复制；config.yaml 缺失只补 config.yaml。
 
@@ -667,6 +676,7 @@ class LocalUsersBackend(AbstractUserBackend):
             if not home.is_dir():
                 try:
                     _ensure_home(username)
+                    _ensure_workspace(username)
                     _create_jwswarm_config(username)
                     _preset_skills(username)
                 except Exception:

@@ -98,20 +98,25 @@ init_env() {
     sed -i "s/^SYSTEM_ADMIN_USER=.*/SYSTEM_ADMIN_USER=system_admin/" "$env_file"
     sed -i "s/^STORAGE_TYPE=.*/STORAGE_TYPE=MinIO/" "$env_file"
     sed -i "s/^MARKET_BUCKET_NAME=.*/MARKET_BUCKET_NAME=openjiuwen-market-test/" "$env_file"
-    sed -i "s/^MARKET_S3_ACCESS_KEY=.*/MARKET_S3_ACCESS_KEY=${MARKET_S3_ACCESS_KEY:-skillhub-admin}/" "$env_file"
     sed -i "s/^MARKET_SKILL_REVIEW_ENABLED=.*/MARKET_SKILL_REVIEW_ENABLED=false/" "$env_file"
-    # 审核管理员用户名匹配 agent-os 管理员（admin）
-    sed -i "s/^# *MARKET_REVIEW_ADMIN_USERNAMES=.*/MARKET_REVIEW_ADMIN_USERNAMES=admin/" "$env_file"
-    grep -q "^MARKET_REVIEW_ADMIN_USERNAMES=" "$env_file" || echo "MARKET_REVIEW_ADMIN_USERNAMES=admin" >> "$env_file"
 
     # Skill 审核 LLM 模型配置（从 control-panel .env 读 LiteLLM 连接信息）
     local cp_env="${DEPLOY_DIR}/.env"
-    local llm_host="" llm_key=""
+    local llm_host="" llm_key="" oauth_secret="" admin_user=""
     if [ -f "$cp_env" ]; then
         llm_host=$(grep "^LITELLM_HOST=" "$cp_env" | head -1 | cut -d= -f2-)
         llm_key=$(grep "^LITELLM_MASTER_KEY=" "$cp_env" | head -1 | cut -d= -f2-)
+        # OAuth2 客户端密钥与 control-panel 保持一致（由 deploy.sh 生成随机值）
+        oauth_secret=$(grep "^OAUTH2_CLIENT_SECRET=" "$cp_env" | head -1 | cut -d= -f2-)
+        # 审核管理员用户名与 agent-os 管理员保持一致
+        admin_user=$(grep "^AGENTOS_ADMIN_USERNAME=" "$cp_env" | head -1 | cut -d= -f2-)
     fi
     llm_host="${llm_host:-$host_ip}"
+    admin_user="${admin_user:-admin}"
+
+    # 审核管理员用户名匹配 agent-os 管理员（默认 admin）
+    sed -i "s/^# *MARKET_REVIEW_ADMIN_USERNAMES=.*/MARKET_REVIEW_ADMIN_USERNAMES=${admin_user}/" "$env_file"
+    grep -q "^MARKET_REVIEW_ADMIN_USERNAMES=" "$env_file" || echo "MARKET_REVIEW_ADMIN_USERNAMES=${admin_user}" >> "$env_file"
     sed -i "s|^MARKET_SKILL_REVIEW_MODEL_BASE_URL=.*|MARKET_SKILL_REVIEW_MODEL_BASE_URL=http://${llm_host}:8100|" "$env_file"
     sed -i "s/^MARKET_SKILL_REVIEW_MODEL_API_KEY=.*/MARKET_SKILL_REVIEW_MODEL_API_KEY=${llm_key}/" "$env_file"
     sed -i "s/^MARKET_SKILL_REVIEW_MODEL_NAME=.*/MARKET_SKILL_REVIEW_MODEL_NAME=gpt-4o/" "$env_file"
@@ -130,12 +135,15 @@ init_env() {
     sed -i "s|^MARKET_OAUTH_FRONTEND_ORIGIN=.*|MARKET_OAUTH_FRONTEND_ORIGIN=http://${host_ip}:${SKILLHUB_FRONTEND_PORT}|" "$env_file"
 
     # 密钥
-    local db_pass s3_sk admin_token
+    local db_pass s3_ak s3_sk admin_token
     db_pass="${DB_PASSWORD:-$(openssl rand -hex 16)}"
+    # MinIO 根用户（MINIO_ROOT_USER）限制 3-32 字符，hex 12 = 24 字符留出余量
+    s3_ak="${MARKET_S3_ACCESS_KEY:-$(openssl rand -hex 12)}"
     s3_sk="${MARKET_S3_SECRET_KEY:-$(openssl rand -hex 16)}"
     admin_token="${SYSTEM_ADMIN_TOKEN:-sk-$(openssl rand -hex 24)}"
 
     sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${db_pass}/" "$env_file"
+    sed -i "s/^MARKET_S3_ACCESS_KEY=.*/MARKET_S3_ACCESS_KEY=${s3_ak}/" "$env_file"
     sed -i "s/^MARKET_S3_SECRET_KEY=.*/MARKET_S3_SECRET_KEY=${s3_sk}/" "$env_file"
     sed -i "s/^SYSTEM_ADMIN_TOKEN=.*/SYSTEM_ADMIN_TOKEN=${admin_token}/" "$env_file"
 
@@ -143,7 +151,7 @@ init_env() {
     # control-panel 在独立 compose，skillhub backend 经宿主机端口访问
     sed -i "s/^MARKET_AGENTOS_OAUTH_ENABLED=.*/MARKET_AGENTOS_OAUTH_ENABLED=true/" "$env_file"
     sed -i "s/^MARKET_AGENTOS_OAUTH_CLIENT_ID=.*/MARKET_AGENTOS_OAUTH_CLIENT_ID=skillhub/" "$env_file"
-    sed -i "s/^MARKET_AGENTOS_OAUTH_CLIENT_SECRET=.*/MARKET_AGENTOS_OAUTH_CLIENT_SECRET=agentos-secret/" "$env_file"
+    sed -i "s/^MARKET_AGENTOS_OAUTH_CLIENT_SECRET=.*/MARKET_AGENTOS_OAUTH_CLIENT_SECRET=${oauth_secret}/" "$env_file"
     sed -i "s|^MARKET_AGENTOS_OAUTH_REDIRECT_URI=.*|MARKET_AGENTOS_OAUTH_REDIRECT_URI=http://${host_ip}:${SKILLHUB_FRONTEND_PORT}/api/v1/auth/oauth/agentos/callback|" "$env_file"
     sed -i "s|^MARKET_AGENTOS_OAUTH_AUTHORIZE_URL=.*|MARKET_AGENTOS_OAUTH_AUTHORIZE_URL=http://${host_ip}:${AGENTOS_PORT}/api/v1/oauth2/authorize|" "$env_file"
     sed -i "s|^MARKET_AGENTOS_OAUTH_TOKEN_URL=.*|MARKET_AGENTOS_OAUTH_TOKEN_URL=http://${host_ip}:${AGENTOS_PORT}/api/v1/oauth2/token|" "$env_file"

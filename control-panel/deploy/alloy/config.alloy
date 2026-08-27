@@ -28,7 +28,7 @@ local.file_match "agent_gateway" {
 
 local.file_match "agent_registry" {
   path_targets = [{
-    __path__  = "/var/log/agentos/agent-registry.log",
+    __path__  = "/var/log/agentos/a2x-registry.log",
     category  = "agent-registry",
     host      = constants.hostname,
     ip        = "127.0.0.1",

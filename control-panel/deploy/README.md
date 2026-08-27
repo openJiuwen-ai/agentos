@@ -7,30 +7,30 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 ## 部署架构
 
 | 拓扑 | 说明 |
-|------|------|
+| --- | --- |
 | 单机（master） | 容器由 docker compose 管理；`node_exporter` / `npu-exporter` 为宿主机 systemd 服务；Alloy 日志采集由 compose 内的 `alloy` 容器负责 |
-| 多机（master + worker） | master 与单机一致；worker 节点不跑 docker compose，仅安装 `node_exporter` / `npu-exporter` / 独立 `alloy`（日志上报到 master 的 Loki）；worker 的指标由 master 的 VictoriaMetrics 经 `WORKER_NODES` 采集 |
+| 多机（master + worker） | master 与单机一致；worker 节点不跑 docker compose，仅安装`node_exporter` / `npu-exporter` / 独立 `alloy`（日志上报到 master 的 Loki）；worker 的指标由 master 的 VictoriaMetrics 经 `WORKER_NODES` 采集 |
 
 ## 服务与端口
 
 宿主机端口在 `.env` 中配置（示例见 `.env.example`），compose 不设默认值。
 
 | 服务 | 镜像 | 环境变量 | 默认端口 | 说明 |
-|------|------|----------|----------|------|
+| --- | --- | --- | --- | --- |
 | `agentos` | `agentos-control-panel` | `FRONTEND_PORT` | 8090 | Frontend + Backend + Nginx 单容器（CI 构建） |
-| `image-process` | `agentos-image-process` | -- | （不对宿主暴露） | Agent 镜像构建；仅 `image-build` 内网 |
+| `image-process` | `agentos-image-process` | -- | （不对宿主暴露） | Agent 镜像构建；仅`image-build` 内网 |
 | `postgres` | `postgres:18.0` | `POSTGRES_PORT` | 5432 | AgentOS 与 LiteLLM 共享数据库 |
 | `litellm` | `ghcr.io/berriai/litellm-database:v1.91.1` | `LITELLM_PORT` | 8100 | 推理代理 |
 | `victoriametrics` | `victoriametrics/victoria-metrics:v1.135.0` | `VICTORIAMETRICS_PORT` | 8428 | 指标存储 |
 | `loki` | `grafana/loki:3.6.0` | -- | 8096 | 日志存储（master） |
 | `alloy` | `grafana/alloy:v1.18.1` | -- | 12345 | 日志采集（master 由 compose 管理；worker 独立安装，仅监听 127.0.0.1） |
-| `grafana` | `grafana/grafana:12.4.2` | `GRAFANA_PORT` | 8093 | 监控面板（控制台 iframe 走 `FRONTEND_PORT` 的 `/grafana/` 反代） |
+| `grafana` | `grafana/grafana:12.4.2` | `GRAFANA_PORT` | 8093 | 监控面板（控制台 iframe 走`FRONTEND_PORT` 的 `/grafana/` 反代） |
 
 **SkillHub 服务（仅 `--with-skillhub` 时部署）：**
 
 | 服务 | 镜像 | 环境变量 | 默认端口 | 说明 |
-|------|------|----------|----------|------|
-| `skillhub-frontend` | `skillhub-frontend:latest` | `SKILLHUB_FRONTEND_PORT` | 8098 | 浏览器访问 SkillHub 市场；nginx 反代 `/api/` → backend:8100 |
+| --- | --- | --- | --- | --- |
+| `skillhub-frontend` | `skillhub-frontend:latest` | `SKILLHUB_FRONTEND_PORT` | 8098 | 浏览器访问 SkillHub 市场；nginx 反代`/api/` → backend:8100 |
 | `skillhub-backend` | `skillhub-backend:latest` | -- | （不对宿主暴露） | SkillHub 后端；经 frontend nginx 反代访问 |
 | `skillhub-mysql` | `mysql:8.0` | -- | （不对宿主暴露） | SkillHub 数据库；仅 compose 内部网络可达 |
 | `skillhub-redis` | `redis:7-alpine` | -- | （不对宿主暴露） | SkillHub 缓存；仅 compose 内部网络可达 |
@@ -42,26 +42,27 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 **宿主机原生服务（非容器）：**
 
 | 服务 | 二进制安装路径 | 默认端口 | 说明 |
-|------|---------------|----------|------|
+| --- | --- | --- | --- |
 | `node_exporter` | `/usr/bin/node_exporter` | 8091 | 主机指标采集（systemd） |
 | `npu-exporter` | `/usr/local/bin/npu-exporter` | 8092 | NPU 指标采集（systemd timer） |
+| `agentos-node-service` | `/opt/agentos/agentos-node-service` | 8101 | 推理服务节点（每节点 systemd，`--with-node-service` 时部署） |
 
 ## 前置条件
 
 | 项 | 说明 |
-| ---- | ---- |
+| --- | --- |
 | Docker | 已安装 Docker Engine + Compose 插件 |
 | 端口 | `.env` 中宿主机端口已配置且未被占用 |
 | 环境变量 | `deploy.sh install` 自动从 `.env.example` 生成 `.env`，支持交互/非交互模式 |
-| 前端镜像 | CI 已构建并推送到仓库，或通过 `docker load` 导入本机 |
-| image-process 镜像 | `docker compose build image-process`（或预先 `docker build -t agentos-image-process ../image_process`） |
-| agent-base | 宿主机需已有 `agent-base:1.0`（制品需手动准备） |
+| 前端镜像 | CI 已构建并推送到仓库，或通过`docker load` 导入本机 |
+| image-process 镜像 | 预先构建：`docker build -t agentos-image-process:latest image_process`（在 control-panel 目录执行；compose 无 build 段，`docker compose build` 不可用） |
+| agent-base | 宿主机需已有`agent-base:1.0`（制品需手动准备） |
 | systemd | 宿主机使用 systemd init（Ubuntu / Debian / CentOS 等） |
 
 ### 所需版本清单
 
 | 类型 | 名称 | 版本 |
-|------|------|------|
+| --- | --- | --- |
 | 容器镜像 | `postgres` | `18.0` |
 | 容器镜像 | `ghcr.io/berriai/litellm-database` | `v1.91.1` |
 | 容器镜像 | `victoriametrics/victoria-metrics` | `v1.135.0` |
@@ -75,14 +76,14 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | 容器镜像（SkillHub） | `minio/minio` | `RELEASE.2025-09-07T16-13-09Z` |
 | 容器镜像（SkillHub） | `minio/mc` | `RELEASE.2025-08-13T08-35-41Z` |
 | 二进制文件 | `node_exporter` | `v1.12.1` |
-| 二进制文件 | `npu-exporter` | `>26.0.0` |
+| 二进制文件 | `npu-exporter` | `>=26.0.0`（推荐 v26.1.0） |
 
 ### 环境变量配置要求
 
 `deploy.sh install` 非交互模式下，以下环境变量可提前设置以覆盖默认值：
 
 | 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
+| --- | --- | --- |
 | `POSTGRES_USER` | `agentos` | PostgreSQL 用户名 |
 | `POSTGRES_PASSWORD` | `agentos123` | PostgreSQL 密码 |
 | `AGENTOS_ADMIN_USERNAME` | `admin` | 管理后台用户名 |
@@ -91,18 +92,19 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 | `LITELLM_HOST` | 自动检测本机 IP | LiteLLM 监听地址 |
 | `NODE_EXPORTER_HOST` | 自动检测本机 IP | node_exporter 监听地址 |
 | `NPU_EXPORTER_HOST` | 自动检测本机 IP | npu_exporter 监听地址 |
+| `NODE_SERVICE_HOST` | 与`LITELLM_HOST` 一致 | node-service 监听地址（`--with-node-service` 时使用） |
 | `MASTER_IP` | 空 | 仅 worker 节点；master 节点 IP（Alloy 日志上报用） |
-| `WORKER_NODES` | `[]` | 仅 master；worker IP 的 JSON 数组，如 `'["192.168.1.11"]'`（建议单引号包裹，仅支持 IPv4） |
+| `WORKER_NODES` | `[]` | 仅 master；worker IP 的 JSON 数组，如`'["192.168.1.11"]'`（建议单引号包裹，仅支持 IPv4） |
 | `AGENT_REGISTER_URL` | `http://<本机IP>:4003` | 注册中心地址（留空禁用"智能体监控"） |
-| `AGENT_REGISTER_URL` | `http://<本机IP>:4003` | 注册中心地址 |
-| `OAUTH2_CLIENT_ID` | 无 | OAuth2客户端ID |
-| `OAUTH2_CLIENT_SECRET` | 无 | OAuth2客户端密钥 |
-| `OAUTH2_REDIRECT_URI` | 无 | OAuth2客户端回调地址 |
+| `OAUTH2_CLIENT_ID` | `skillhub` | OAuth2客户端ID |
+| `OAUTH2_CLIENT_SECRET` | 无 | OAuth2客户端密钥（`openssl rand -hex 32` 生成） |
+| `OAUTH2_REDIRECT_URI` | 无 | OAuth2客户端回调地址（默认按`SKILLHUB_HOST`+`SKILLHUB_FRONTEND_PORT` 拼装；留空则 SkillHub 登录不可用） |
 | `OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES` | 1440 | OAuth2 access token有效时间 |
-| `OAUTH2_FRONTEND_ORIGIN` | 无 | AgentOS前端地址 |
-| `OAUTH2_CLIENT_NAME` | 无 | 透传给前端登录/同意页展示的客户端名称（启用 OAuth2 时必填，不能为空） |
+| `OAUTH2_FRONTEND_ORIGIN` | 无 | AgentOS前端地址（默认按`LITELLM_HOST`+`FRONTEND_PORT` 拼装；留空则 SkillHub 登录不可用） |
+| `OAUTH2_CLIENT_NAME` | `skillhub` | 透传给前端登录/同意页展示的客户端名称（启用 OAuth2 时必填，不能为空） |
 
 > 以下密钥由安装脚本自动生成，**无需手动设置**：
+>
 > - `AGENTOS_JWT_SECRET_KEY` — JWT 签名密钥
 > - `LITELLM_MASTER_KEY` — LiteLLM 管理密钥（sk- 前缀）
 > - `LITELLM_KEY_ENCRYPTION_KEY` — LiteLLM 密钥加密密钥
@@ -110,7 +112,7 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 **`up` 启动时还会自动生成/写入以下配置（一般无需手动设置）：**
 
 | 环境变量 | 说明 |
-|----------|------|
+| --- | --- |
 | `INITIAL_MODELS` | 模型列表 JSON，`deploy.sh up` 从推理服务 `GET /models` 嗅探后写入 |
 | `INITIAL_MODEL_API_BASE` | 手动模式（`up --models/--models-file`）写入的推理服务地址 |
 | `INITIAL_MODEL_API_KEY` | 手动模式写入的推理服务鉴权 Key |
@@ -120,19 +122,20 @@ Compose 管理八个容器：**agentos**（Frontend + Backend + Nginx 单容器�
 **端口（`.env` 可调）：**
 
 | 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
+| --- | --- | --- |
 | `FRONTEND_PORT` | 8090 | agentos 容器宿主端口 |
 | `POSTGRES_PORT` | 5432 | PostgreSQL（仅绑定 localhost） |
 | `VICTORIAMETRICS_PORT` | 8428 | VictoriaMetrics（仅绑定 localhost） |
-| `GRAFANA_PORT` | 8093 | Grafana 直出端口（仅调试用；控制台 iframe 走 `/grafana/` 反代） |
+| `GRAFANA_PORT` | 8093 | Grafana 直出端口（仅调试用；控制台 iframe 走`/grafana/` 反代） |
 | `LITELLM_PORT` | 8100 | LiteLLM 宿主端口 |
 | `NODE_EXPORTER_PORT` | 8091 | node_exporter 监听端口 |
 | `NPU_EXPORTER_PORT` | 8092 | npu-exporter 监听端口 |
+| `NODE_SERVICE_PORT` | 8101 | node-service 监听端口 |
 
 **SkillHub 端口（`skillhub/.env` 可调）：**
 
 | 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
+| --- | --- | --- |
 | `SKILLHUB_FRONTEND_PORT` | 8098 | SkillHub 前端宿主端口（`0.0.0.0` 绑定，浏览器可外部访问） |
 | `MINIO_API_PORT` | 8099 | MinIO S3 API 宿主端口（`0.0.0.0` 绑定，浏览器预签名 URL 需可达） |
 
@@ -229,9 +232,9 @@ Exporter 运行在宿主机（非容器），提供指标采集。`deploy.sh ins
 需要准备的 exporter 及指定版本：
 
 | Exporter | 版本 | 来源 |
-|----------|------|------|
+| --- | --- | --- |
 | `node_exporter` | v1.12.1 | [GitHub Releases](https://github.com/prometheus/node_exporter/releases/tag/v1.12.1) |
-| `npu-exporter` | >26.0.0 | [MindCluster Releases](https://gitcode.com/Ascend/mind-cluster/releases/v26.0.0) |
+| `npu-exporter` | \>=26.0.0（推荐 v26.1.0） | [MindCluster Releases v26.1.0](https://gitcode.com/Ascend/mind-cluster/releases/v26.1.0) |
 
 **node_exporter**
 
@@ -256,15 +259,15 @@ cp node_exporter-1.12.1.linux-arm64/node_exporter deploy/node-exporter/
 
 **npu-exporter**
 
-从 [MindCluster Releases](https://gitcode.com/Ascend/mind-cluster/releases/v26.1.0) 下载对应机器架构的压缩包，解压后将以下文件放入 `deploy/npu-exporter/` 目录：
+从 [MindCluster Releases v26.1.0](https://gitcode.com/Ascend/mind-cluster/releases/v26.1.0) 下载（要求 `>=26.0.0`，推荐 v26.1.0）对应机器架构的压缩包，解压后将以下文件放入 `deploy/npu-exporter/` 目录：
 
 | 文件 | 必需 | 说明 |
-|------|------|------|
+| --- | --- | --- |
 | `npu-exporter` | 是 | 二进制文件 |
 | `npu-exporter.service` | 是 | systemd service unit |
 | `npu-exporter.timer` | 是 | systemd timer unit |
-| `metricConfiguration.json` | 否 | 指标配置（安装时拷贝到 `/usr/local/`） |
-| `pluginConfiguration.json` | 否 | 插件配置（安装时拷贝到 `/usr/local/`） |
+| `metricConfiguration.json` | 否 | 指标配置（安装时拷贝到`/usr/local/`） |
+| `pluginConfiguration.json` | 否 | 插件配置（安装时拷贝到`/usr/local/`） |
 
 ```bash
 # 示例（根据实际包名调整）：
@@ -354,6 +357,26 @@ sudo bash deploy.sh status
 > - SkillHub 前端默认端口 `8098`（`SKILLHUB_FRONTEND_PORT` 可调）。
 > - 云服务器部署时需传入公网 IP：`sudo SKILLHUB_HOST=<公网IP> ... bash deploy.sh up --with-skillhub`。
 
+#### 含 node-service 部署（每节点推理服务代理）
+
+```bash
+# 1. 安装（注册 systemd 服务 agentos-node-service）：
+sudo bash deploy.sh install --with-node-service
+
+# 2. 进入安装目录：
+cd ~/.agentos/.agent-manager
+
+# 3. 启动服务（带 --with-node-service 才会拉起 node-service）：
+sudo bash deploy.sh up --with-node-service
+
+# 4. 查看状态（带 --with-node-service 才会显示 node-service 健康检查）：
+sudo bash deploy.sh status --with-node-service
+```
+
+> - `--with-node-service` 部署每节点 systemd 服务（master / worker 均可），默认不部署/不启动。
+> - 源码取自 `deploy/node-service/`，安装到 `/opt/agentos/agentos-node-service`，监听 `NODE_SERVICE_PORT`（默认 `8101`）；依赖 `python3.11`（Ascend 环境）或回退 `python3` 创建 venv。
+> - 注意：`install` 不带 `--with-node-service` 则不会注册该服务；`up` / `status` 不带则不会启动 / 显示它。
+
 #### 指定模型配置（up）
 
 ```bash
@@ -387,8 +410,8 @@ sudo bash deploy.sh up --models-file /path/to/models.json
 字段说明：
 
 | 字段 | 说明 |
-|------|------|
-| `api_base` | 必填，推理服务地址（含 `/v1` 或不含，取决于推理服务） |
+| --- | --- |
+| `api_base` | 必填，推理服务地址（含`/v1` 或不含，取决于推理服务） |
 | `api_key` | 可选，推理服务鉴权 Key |
 | `models` | 模型列表；为空 → 嗅探该推理服务所有模型；有内容 → 只校验 + 补全列出的模型 |
 | `models[].id` | 可选，模型标识名（填了校验该模型存在，不填无意义） |
@@ -400,36 +423,39 @@ sudo bash deploy.sh up --models-file /path/to/models.json
 ### 所有命令
 
 | 命令 | 说明 |
-|------|------|
-| `deploy.sh install` | 安装（默认非交互、单机 master）：初始化 `.env` → 安装 node_exporter → npu-exporter → Alloy → 拉取镜像 |
+| --- | --- |
+| `deploy.sh install` | 安装（默认非交互、单机 master）：初始化`.env` → 安装 node_exporter → npu-exporter → node-service → Alloy → 拉取镜像 → 安装 skillhub |
 | `deploy.sh install -i` | 交互式安装（可选 master/worker、多机监控） |
 | `deploy.sh install --role master\|worker` | 指定节点角色 |
 | `deploy.sh install --mode single\|multi --workers ip1,ip2` | master 多机安装 |
 | `deploy.sh install --role worker --master-ip <ip>` | worker 节点指定 master IP |
 | `deploy.sh uninstall` | 卸载：停止服务 + 注销 systemd（保留数据和 .env） |
 | `deploy.sh uninstall --clean` | 卸载：删除数据卷、.env 和安装目录 |
-| `deploy.sh up` | 启动：更新 exporter 配置 → 启动 node/npu_exporter → Alloy → 生成 hardware-metrics.json → 配置模型 → docker compose up |
+| `deploy.sh up` | 启动：更新 exporter 配置 → 启动 node/npu_exporter → node-service → Alloy → 生成 hardware-metrics.json → 配置模型 → docker compose up |
 | `deploy.sh up --models '<JSON>'` | 启动并手动指定模型配置（含 api_base，自包含） |
 | `deploy.sh up --models-file <path>` | 启动并从文件读取模型配置 JSON |
-| `deploy.sh down` | 停止：docker compose → node/npu_exporter（反序） |
+| `deploy.sh down` | 停止：docker compose → Alloy → node-service → node_exporter → npu_exporter（逆序） |
 | `deploy.sh restart` | 重启：down → up |
 | `deploy.sh status` | 查看服务状态（docker compose ps + 端口健康检查） |
 
 **注意：** `up` / `down` / `restart` / `status` / `uninstall` 需在安装目录 `~/.agentos/.agent-manager` 下执行（deploy.sh 会校验，否则提示先 `cd` 过去）。
 
+> **网络代理提示：** 执行 `up` / `status`/ `restart` 等操作时，末尾会执行状态检查，建议不要配置 `http_proxy` / `https_proxy` 网络代理，或确认 `no_proxy` 已覆盖本机及内网地址，避免健康探针经代理访问本机/内网服务导致误判。
+
 **选项：**
 
 | 选项 | 说明 |
-|------|------|
+| --- | --- |
 | `--interactive, -i` | 交互式安装（与下方拓扑参数互斥） |
 | `--clean` | `uninstall` 时删除数据卷、`.env` 和安装目录 |
-| `--role master\|worker` | 节点角色，默认 `master` |
-| `--mode single\|multi` | 仅 master；默认 `single`；仅传 `--workers` 时自动设为 `multi` |
+| `--role master\|worker` | 节点角色，默认`master` |
+| `--mode single\|multi` | 仅 master；默认`single`；仅传 `--workers` 时自动设为 `multi` |
 | `--workers ip1,ip2,...` | master 多机 worker IPv4 列表；可单独传参，`--mode multi` 时必填 |
-| `--master-ip <ip>` | 仅 `--role worker`；master 节点 IP（Alloy 日志上报） |
+| `--master-ip <ip>` | 仅`--role worker`；master 节点 IP（Alloy 日志上报） |
 | `--models '<JSON>'` | `up` 时手动指定模型配置 JSON |
 | `--models-file <path>` | `up` 时从文件读取模型配置 JSON |
 | `--with-skillhub` | 同时部署/启动 SkillHub（默认不启动；需预先准备 SkillHub 镜像） |
+| `--with-node-service` | 同时部署/启动 node-service（每节点 systemd，默认不部署/不启动） |
 
 ---
 
@@ -489,7 +515,7 @@ curl -s http://127.0.0.1:8091/metrics | head -5
 cd control-panel/deploy
 
 cp .env.example .env
-# 编辑 .env：POSTGRES_PASSWORD、LITELLM_MASTER_KEY（须以 sk- 开头）
+# 编辑 .env：POSTGRES_USER、POSTGRES_PASSWORD、AGENTOS_JWT_SECRET_KEY、AGENTOS_ADMIN_USERNAME、AGENTOS_ADMIN_PASSWORD、LITELLM_MASTER_KEY（须以 sk- 开头）
 
 docker compose pull
 docker compose up -d

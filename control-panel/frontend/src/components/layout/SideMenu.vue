@@ -74,6 +74,10 @@ function findItemByKey(key: string): SideMenuItem | undefined {
 
 function handleSelect(index: string) {
   const item = findItemByKey(index);
+  if (item?.externalUrl) {
+    window.open(item.externalUrl, '_blank');
+    return;
+  }
   if (item?.routeName) {
     router.push({ name: item.routeName });
     return;

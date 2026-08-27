@@ -138,9 +138,12 @@ async function handleOAuthDecision(action: 'allow' | 'deny') {
   }
 
   // Allow: store consent preference before proceeding
+  const consentKey = OAUTH_CONSENT_PREFIX + oauthParams.value.client_id;
   if (oauthRemember.value) {
-    const consentKey = OAUTH_CONSENT_PREFIX + oauthParams.value.client_id;
     localStorage.setItem(consentKey, loginForm.value.username);
+  } else {
+    // 用户取消勾选“记住授权”时，清除历史记录，避免下次仍被自动登录
+    localStorage.removeItem(consentKey);
   }
 
   loading.value = true;

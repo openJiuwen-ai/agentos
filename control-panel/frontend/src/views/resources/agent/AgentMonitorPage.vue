@@ -117,6 +117,25 @@ function formatUpdateTime() {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
+function resetTableState() {
+  instances.value = [];
+  total.value = 0;
+  totalPages.value = 1;
+}
+
+function resetOverview() {
+  overviewTotal.value = 0;
+  overviewRunning.value = 0;
+  overviewAbnormal.value = 0;
+  overviewStopped.value = 0;
+}
+
+const REGISTRY_ERROR_MSG: Record<number, string> = {
+  502: '注册中心后端不可达',
+  503: '注册中心服务未配置，智能体监控不可用',
+  504: '注册中心后端响应超时',
+};
+
 async function loadInstances(updateOverview: boolean, refresh = false, silent = false) {
   if (instancesAbort) {
     instancesAbort.abort();
@@ -128,6 +147,7 @@ async function loadInstances(updateOverview: boolean, refresh = false, silent = 
     listLoading.value = true;
   }
   unavailableMsg.value = '';
+
   try {
     const data = await fetchInstances(
       {
@@ -135,7 +155,6 @@ async function loadInstances(updateOverview: boolean, refresh = false, silent = 
         size: pageSize.value,
         sort: sortParam.value || undefined,
         keyword: keyword.value || undefined,
-        // 逗号分隔多选状态，后端 split(",") 逐个匹配，不选=不过滤
         status: filterStatus.value.length > 0 ? filterStatus.value.join(',') : undefined,
         framework: filterFramework.value || undefined,
         refresh: refresh ? true : undefined,
@@ -147,7 +166,6 @@ async function loadInstances(updateOverview: boolean, refresh = false, silent = 
     instances.value = data.items;
     total.value = data.total;
     totalPages.value = data.total_pages;
-
     if (updateOverview) {
       overviewTotal.value = data.overview_total;
       overviewRunning.value = data.overview_running;
@@ -157,31 +175,20 @@ async function loadInstances(updateOverview: boolean, refresh = false, silent = 
       lastUpdateTime.value = formatUpdateTime();
     }
   } catch (e) {
-    if (e instanceof Error && e.message === 'canceled') {
+    if (e instanceof Error && e.message === 'canceled') return;
+
+    if (e instanceof ApiError && e.status != null && e.status in REGISTRY_ERROR_MSG) {
+      // 注册中心不可达/未配置/格式异常/超时：直接显示后端返回的错误原因
+      console.error('[AgentMonitor] 注册中心异常(%d): %s', e.status, e.message);
+      unavailableMsg.value = e.message;
+      resetTableState();
+      if (updateOverview) resetOverview();
       return;
     }
-    if (e instanceof ApiError && e.status) {
-      switch (e.status) {
-        case 503:
-          unavailableMsg.value = '未接入注册中心';
-          break;
-        case 502:
-          unavailableMsg.value = e.message.includes('格式')
-            ? '返回数据格式异常'
-            : e.message.includes('返回错误')
-              ? '注册中心返回错误'
-              : '无法连接注册中心';
-          break;
-        case 504:
-          unavailableMsg.value = '无法连接注册中心';
-          break;
-        default:
-          if (!silent) ElMessage.error(e instanceof Error ? e.message : '加载失败');
-      }
-      if (e.status === 502 || e.status === 503 || e.status === 504) return;
-    } else {
-      if (!silent) ElMessage.error(e instanceof Error ? e.message : '加载失败');
-    }
+
+    console.error('[AgentMonitor] 加载实例失败:', e);
+    unavailableMsg.value = e instanceof Error ? e.message : '加载失败';
+    resetTableState();
   } finally {
     if (instancesAbort === controller) {
       listLoading.value = false;

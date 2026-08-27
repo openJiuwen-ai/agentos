@@ -477,6 +477,16 @@ async def test_jwswarm_config_copied_on_user_create(backend, test_data):
 
 
 @pytest.mark.asyncio
+async def test_workspace_dir_created_on_user_create(backend, test_data):
+    """创建用户 → 家目录下自动创建空的 workspace 文件夹（供其他组件使用）。"""
+    username = test_data["users"]["auto_password"][9]
+    await backend.create_user(username)
+    workspace_dir = os.path.join(settings.AGENTOS_HOME_BASE, username, "workspace")
+    assert os.path.isdir(workspace_dir)
+    assert os.listdir(workspace_dir) == []
+
+
+@pytest.mark.asyncio
 async def test_create_user_home_already_exists(backend, test_data, caplog):
     """家目录已存在（如删除用户时残留）→ 整目录删除后从模板全新重建，遗留文件被清掉并记 warning。"""
     username = test_data["users"]["auto_password"][7]

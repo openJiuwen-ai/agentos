@@ -1286,7 +1286,7 @@ class LitellmService:
         end_date: str = "",
         top: int = 10,
     ) -> dict:
-        """用户用量排行 — GROUP BY user + ORDER BY cost DESC LIMIT N。"""
+        """用户用量排行 — GROUP BY user + ORDER BY tokens DESC LIMIT N。"""
         params = {
             "start_date": self._to_date(start_date),
             "end_date": self._to_date(end_date),
@@ -1302,7 +1302,7 @@ class LitellmService:
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
             GROUP BY {self._USER_COL}
-            ORDER BY cost DESC
+            ORDER BY tokens DESC, cost DESC
             LIMIT :top
         """
 

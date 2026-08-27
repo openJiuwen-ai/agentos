@@ -28,7 +28,7 @@ DEFAULT_COMPONENTS: list[dict] = [
     {"id": "control_panel", "name": "管理面", "path": settings.LOG_DIR},
     {"id": "jiuwenswarm", "name": "jiuwenswarm", "path": "/home/agentos/users"},
     {"id": "agent-gateway", "name": "agent-gateway", "path": f"{_AGENT_LOG_DIR}/gateway.log"},
-    {"id": "agent-registry", "name": "agent-registry", "path": f"{_AGENT_LOG_DIR}/registry.log"},
+    {"id": "agent-registry", "name": "agent-registry", "path": f"{_AGENT_LOG_DIR}/a2x-registry.log"},
     {"id": "agent-runtime", "name": "agent-runtime", "path": f"{_AGENT_LOG_DIR}/yr_sessions/latest/logs",
      "merge_rules": [
          {"pattern": r"^runtime-[^/]*[.](err|out)$", "name": "runtime-merged.log"},

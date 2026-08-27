@@ -125,12 +125,14 @@ const overviewCards = computed(() => {
 });
 
 const userRankRows = computed(() =>
-  (userRankData.value?.items ?? []).map((user, index) => ({
-    ...user,
-    rank: index + 1,
-    tokensText: formatTokens(user.tokens),
-    requestsText: user.requests.toLocaleString(),
-  })),
+  [...(userRankData.value?.items ?? [])]
+    .sort((a, b) => b.tokens - a.tokens)
+    .map((user, index) => ({
+      ...user,
+      rank: index + 1,
+      tokensText: formatTokens(user.tokens),
+      requestsText: user.requests.toLocaleString(),
+    })),
 );
 const userDetailRows = computed(() =>
   (userDetailData.value?.daily_activity ?? []).map((day) => ({
@@ -612,7 +614,7 @@ onUnmounted(() => {
             <ElTableColumn prop="rank" label="排名" width="88" />
             <ElTableColumn label="用户">
               <template #default="{ row }">
-                {{ row.username || row.user_id }}
+                {{ row.username || '非AgentBox用户' }}
               </template>
             </ElTableColumn>
             <ElTableColumn prop="tokensText" label="Token数" />

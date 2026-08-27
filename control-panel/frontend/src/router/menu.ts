@@ -18,6 +18,8 @@ export interface AppRouteNode {
   name?: string;
   component?: RouteRecordRaw['component'];
   icon?: string;
+  /** 外链目标:设置后菜单点击直接跳转到该地址,而不是路由跳转 */
+  externalUrl?: string;
   defaultChildKey?: string;
   hideInMenu?: boolean;
   hideSideMenu?: boolean;
@@ -136,10 +138,9 @@ export const appRouteTree: AppRouteNode[] = [
         key: 'skill-store',
         label: '技能库',
         order: 4,
-        path: '/resources/skill-store',
-        name: 'skill-store',
         icon: skillStoreIcon,
-        component: () => import('@/views/resources/SkillStorePage.vue'),
+        // 技能市场:同域名/IP 下端口 8098,端口暂时硬编码
+        externalUrl: `${window.location.protocol}//${window.location.hostname}:8098`,
       },
       {
         key: 'alarm',
@@ -302,6 +303,7 @@ export interface SideMenuItem {
   label: string;
   icon?: string;
   routeName?: string;
+  externalUrl?: string;
   adminOnly?: boolean;
   children?: SideMenuItem[];
 }
@@ -325,6 +327,7 @@ function buildSideMenus(nodes: AppRouteNode[]): SideMenuItem[] {
         label: node.label,
         icon: node.icon,
         routeName: node.name,
+        externalUrl: node.externalUrl,
         adminOnly: node.adminOnly,
         children: menuChildren?.length ? buildSideMenus(menuChildren) : undefined,
       };

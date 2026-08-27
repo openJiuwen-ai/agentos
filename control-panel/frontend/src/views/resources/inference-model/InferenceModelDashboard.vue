@@ -160,12 +160,19 @@ async function loadOverviewData() {
   }
 }
 
-function mapModelStatus(rawStatus?: string): { status: 'success' | 'error' | 'warning'; statusText: string } {
-  const statusMap: Record<string, { status: 'success' | 'error' | 'warning'; statusText: string }> = {
-    healthy: { status: 'success', statusText: '健康' },
-    unhealthy: { status: 'error', statusText: '异常' },
+function mapModelStatus(rawStatus?: string): {
+  status: 'success' | 'error' | 'warning';
+  statusText: string;
+  statusKey: 'healthy' | 'unhealthy' | 'unknown';
+} {
+  const statusMap: Record<
+    string,
+    { status: 'success' | 'error' | 'warning'; statusText: string; statusKey: 'healthy' | 'unhealthy' | 'unknown' }
+  > = {
+    healthy: { status: 'success', statusText: '健康', statusKey: 'healthy' },
+    unhealthy: { status: 'error', statusText: '异常', statusKey: 'unhealthy' },
   };
-  return statusMap[rawStatus ?? ''] ?? { status: 'warning', statusText: '未知' };
+  return statusMap[rawStatus ?? ''] ?? { status: 'warning', statusText: '未知', statusKey: 'unknown' };
 }
 
 async function loadModels() {
@@ -176,23 +183,13 @@ async function loadModels() {
     // 将后端数据转换为ModelCard期望的格式
     models.value =
       data?.items?.map((item) => {
-        // mapModelStatus 返回 status 和 statusText，statusKey 需要根据 status 额外处理
-        const { status, statusText } = mapModelStatus(item.status);
-        let statusKey: ModelCardData['statusKey'];
-        if (item.status === 'healthy') {
-          statusKey = 'healthy';
-        } else if (item.status === 'unhealthy') {
-          statusKey = 'unhealthy';
-        } else {
-          statusKey = 'unknown';
-        }
-        const mapped = { status, statusText, statusKey };
+        const { status, statusText, statusKey } = mapModelStatus(item.status);
         return {
           id: item.id,
           name: item.model_name,
-          status: mapped.status,
-          statusText: mapped.statusText,
-          statusKey: mapped.statusKey,
+          status,
+          statusText,
+          statusKey,
           tags: [],
           e2eP95: '--',
           todayCalls: '--',
@@ -219,8 +216,8 @@ async function refreshModelsHealth() {
     models.value = models.value.map((m) => {
       const raw = healthMap[m.id];
       if (!raw) return m;
-      const { status, statusText } = mapModelStatus(raw);
-      return { ...m, status, statusText };
+      const { status, statusText, statusKey } = mapModelStatus(raw);
+      return { ...m, status, statusText, statusKey };
     });
   } catch (e) {
     console.error('刷新模型健康状态失败:', e);

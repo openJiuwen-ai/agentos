@@ -74,6 +74,16 @@ const createdPasswordVisible = ref(false);
 
 const USERNAME_RE = /^[a-z0-9_-]{3,32}$/;
 
+/** 后端 create_user 返回的错误码 → 前端友好提示；未识别的错误原样透传。 */
+const CREATE_ERROR_MAP: Record<string, string> = {
+  USERNAME_ALREADY_EXISTS: '用户名已被占用',
+};
+
+function friendlyCreateError(raw: string | null): string | null {
+  if (!raw) return raw;
+  return CREATE_ERROR_MAP[raw] ?? raw;
+}
+
 function openCreateModal() {
   createUsername.value = '';
   createError.value = '';
@@ -107,7 +117,7 @@ async function handleCreateUser() {
         new_password: ok.password ?? '',
       };
     } else {
-      createError.value = results[0]?.error ?? '创建失败';
+      createError.value = friendlyCreateError(results[0]?.error) ?? '创建失败';
     }
   } catch (e) {
     createError.value = e instanceof Error ? e.message : '创建失败';
@@ -314,7 +324,7 @@ function downloadCsv() {
       username: r.username,
       user_id: r.user_id,
       password: r.password,
-      error: r.error,
+      error: friendlyCreateError(r.error),
     })),
     `batch-create-results-${Date.now()}.csv`,
   );
@@ -609,7 +619,7 @@ function roleLabel(role: string) {
           </ElTableColumn>
           <ElTableColumn label="失败原因" min-width="120">
             <template #default="{ row }">
-              <span v-if="row.error" class="error-text">{{ row.error }}</span>
+              <span v-if="row.error" class="error-text">{{ friendlyCreateError(row.error) }}</span>
               <span v-else>—</span>
             </template>
           </ElTableColumn>

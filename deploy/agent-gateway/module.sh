@@ -31,7 +31,7 @@ A2X_REGISTRY_LOG_DIR="${A2X_REGISTRY_LOG_DIR:-/var/log/agentos}"
 A2X_REGISTRY_LOG_RETENTION_DAYS="${A2X_REGISTRY_LOG_RETENTION_DAYS:-7}"
 
 REGISTRY_PID_FILE="${A2X_REGISTRY_RUN_DIR}/agent-registry.pid"
-REGISTRY_LOG="${A2X_REGISTRY_LOG_DIR}/agent-registry.log"
+REGISTRY_LOG="${A2X_REGISTRY_LOG_DIR}/a2x-registry.log"
 
 # ===== 检测 systemd 是否可用 =====
 _agentgw_has_systemd() {

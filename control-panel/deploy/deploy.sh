@@ -22,7 +22,7 @@ fi
 #   sudo bash deploy.sh up --models '<JSON>' # 启动并手动指定模型配置（含 api_base，自包含）
 #   sudo bash deploy.sh up --models-file /path/to/models.json
 #   # models.json: {"api_base":"http://IP:8000/v1","api_key":"sk-xxx","models":[{"id":"qwen2.5-72b","max_model_len":32768}]}
-#   sudo bash deploy.sh down                 # 停止：docker compose → node/npu_exporter（反序）
+#   sudo bash deploy.sh down                 # 停止：docker compose → Alloy → node-service → node_exporter → npu_exporter（逆序）
 #   sudo bash deploy.sh restart              # 重启：down → up
 #   sudo bash deploy.sh status               # 查看服务状态
 # ============================================================================
@@ -51,6 +51,16 @@ ALLOY_CONFIG_HOST="/opt/agentos/config.alloy"
 
 log()  { echo "[agentos] $*" >&2; }
 fail() { echo "[agentos] ERROR: $*" >&2; exit 1; }
+
+# 端口健康检查输出（status 输出用；全局供 do_status / status_node_service 复用）
+_check() {
+    local name="$1" ok="$2"
+    if [ "$ok" = "1" ]; then
+        echo "  [OK]   ${name}"
+    else
+        echo "  [--]   ${name}"
+    fi
+}
 
 # 生成安全随机十六进制字符串
 rand_hex() {
@@ -421,6 +431,10 @@ _init_env_worker_interactive() {
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
     log "  NPU_EXPORTER_HOST = ${val}"
 
+    val=$(read_ip "NODE_SERVICE_HOST [${detected_ip}]: " "$detected_ip")
+    sed -i "s/^NODE_SERVICE_HOST=.*/NODE_SERVICE_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NODE_SERVICE_HOST = ${val}"
+
     echo ""
     val=$(read_ip "MASTER_IP (master 节点 IP，用于 Alloy 日志上报) []: " "")
     if [ -n "$val" ]; then
@@ -514,7 +528,9 @@ _init_env_noninteractive() {
     local pg_pass_encoded
     pg_pass_encoded=$(url_encode "$pg_pass")
     local admin_user="${AGENTOS_ADMIN_USERNAME:-admin}"
-    local admin_pass="${AGENTOS_ADMIN_PASSWORD:-admin123}"
+    # 非交互模式：管理员密码必须通过环境变量显式传入，不静默使用默认值
+    [ -n "$AGENTOS_ADMIN_PASSWORD" ] || fail "非交互模式必须设置环境变量 AGENTOS_ADMIN_PASSWORD"
+    local admin_pass="${AGENTOS_ADMIN_PASSWORD}"
 
     # 密钥：始终自动生成（不从外部传入）
     local jwt_key llm_key llm_enc
@@ -528,6 +544,8 @@ _init_env_noninteractive() {
     local llm_host="${LITELLM_HOST:-$detected_ip}"
     local ne_host="${NODE_EXPORTER_HOST:-$detected_ip}"
     local npu_host="${NPU_EXPORTER_HOST:-$detected_ip}"
+    local ns_host="${NODE_SERVICE_HOST:-$llm_host}"
+    local sh_host="${SKILLHUB_HOST:-$llm_host}"
     local register_url="${AGENT_REGISTER_URL:-http://${detected_ip}:4003}"
 
     sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "$pg_user")/" "$env_file"
@@ -540,6 +558,8 @@ _init_env_noninteractive() {
     sed -i "s/^LITELLM_HOST=.*/LITELLM_HOST=$(sed_escape "$llm_host")/" "$env_file"
     sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$ne_host")/" "$env_file"
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$npu_host")/" "$env_file"
+    sed -i "s/^NODE_SERVICE_HOST=.*/NODE_SERVICE_HOST=$(sed_escape "$ns_host")/" "$env_file"
+    sed -i "s/^SKILLHUB_HOST=.*/SKILLHUB_HOST=$(sed_escape "$sh_host")/" "$env_file"
 
     if [ -n "$register_url" ]; then
         sed -i "s|^AGENT_REGISTER_URL=.*|AGENT_REGISTER_URL=$(sed_escape "$register_url")|" "$env_file"
@@ -551,16 +571,16 @@ _init_env_noninteractive() {
     sys_gid="${AGENTOS_SYS_GID:-$(id -g agentos 2>/dev/null || echo 1000)}"
     sed -i "s/^AGENTOS_SYS_UID=.*/AGENTOS_SYS_UID=${sys_uid}/" "$env_file"
     sed -i "s/^AGENTOS_SYS_GID=.*/AGENTOS_SYS_GID=${sys_gid}/" "$env_file"
-    # OAuth2 (for SkillHub SSO) — 用 FRONTEND_PORT / SKILLHUB_FRONTEND_PORT 变量，不写死端口
+    # OAuth2 (for SkillHub SSO) — REDIRECT_URI 用 SKILLHUB_HOST、FRONTEND_ORIGIN 用 LITELLM_HOST；端口用 SKILLHUB_FRONTEND_PORT / FRONTEND_PORT 变量，不写死
     local cp_port sh_port
     cp_port=$(grep -E "^FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
     cp_port="${cp_port:-8090}"
     sh_port=$(grep -E "^SKILLHUB_FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
     sh_port="${sh_port:-8098}"
     sed -i "s/^OAUTH2_CLIENT_ID=.*/OAUTH2_CLIENT_ID=skillhub/" "$env_file"
-    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=agentos-secret/" "$env_file"
-    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${detected_ip}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
-    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${detected_ip}:${cp_port}|" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=$(rand_hex 32)/" "$env_file"
+    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${sh_host}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
+    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${llm_host}:${cp_port}|" "$env_file"
     sed -i "s/^OAUTH2_CLIENT_NAME=.*/OAUTH2_CLIENT_NAME=SkillHub/" "$env_file"
 
     local worker_json
@@ -577,6 +597,8 @@ _init_env_noninteractive() {
     log "  LITELLM_HOST       = ${llm_host}"
     log "  NODE_EXPORTER_HOST = ${ne_host}"
     log "  NPU_EXPORTER_HOST  = ${npu_host}"
+    log "  NODE_SERVICE_HOST  = ${ns_host}"
+    log "  SKILLHUB_HOST      = ${sh_host}"
     log "  AGENT_REGISTER_URL = ${register_url:-（已禁用）}"
     log "  WORKER_NODES       = ${worker_json}"
     log "  AGENTOS_SYS_UID    = ${sys_uid}"
@@ -585,7 +607,7 @@ _init_env_noninteractive() {
 
 # 交互式：逐项询问用户
 _init_env_interactive() {
-    local env_file="$1" val
+    local env_file="$1" val llm_host sh_host
 
     read -rp "POSTGRES_USER [agentos]: " val
     sed -i "s/^POSTGRES_USER=.*/POSTGRES_USER=$(sed_escape "${val:-agentos}")/" "$env_file"
@@ -617,7 +639,7 @@ _init_env_interactive() {
     llm_enc=$(rand_hex 32)
     sed -i "s/^LITELLM_KEY_ENCRYPTION_KEY=.*/LITELLM_KEY_ENCRYPTION_KEY=${llm_enc}/" "$env_file"
 
-    # ── LiteLLM / Exporter 主机 IP ──
+    # ── LiteLLM / Exporter / node-service / skillhub 主机 IP ──
     echo ""
     log "  以下 HOST 需要填入本机可访问的 IP 地址"
     log "  （后端通过此地址访问各服务，留空则自动检测本机 IP）"
@@ -629,6 +651,7 @@ _init_env_interactive() {
     val=$(read_ip "LITELLM_HOST [${detected_ip}]: " "$detected_ip")
     sed -i "s/^LITELLM_HOST=.*/LITELLM_HOST=$(sed_escape "$val")/" "$env_file"
     log "  LITELLM_HOST = ${val}"
+    llm_host="${val}"
 
     val=$(read_ip "NODE_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
     sed -i "s/^NODE_EXPORTER_HOST=.*/NODE_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
@@ -637,6 +660,15 @@ _init_env_interactive() {
     val=$(read_ip "NPU_EXPORTER_HOST [${detected_ip}]: " "$detected_ip")
     sed -i "s/^NPU_EXPORTER_HOST=.*/NPU_EXPORTER_HOST=$(sed_escape "$val")/" "$env_file"
     log "  NPU_EXPORTER_HOST = ${val}"
+
+    val=$(read_ip "SKILLHUB_HOST [${llm_host}]: " "$llm_host")
+    sed -i "s/^SKILLHUB_HOST=.*/SKILLHUB_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  SKILLHUB_HOST = ${val}"
+    sh_host="${val}"
+
+    val=$(read_ip "NODE_SERVICE_HOST [${llm_host}]: " "$llm_host")
+    sed -i "s/^NODE_SERVICE_HOST=.*/NODE_SERVICE_HOST=$(sed_escape "$val")/" "$env_file"
+    log "  NODE_SERVICE_HOST = ${val}"
 
     # ── 注册中心（选填）──
     echo ""
@@ -652,16 +684,16 @@ _init_env_interactive() {
         log "  AGENT_REGISTER_URL = (已禁用)"
     fi
 
-    # OAuth2 (for SkillHub SSO) — 用 FRONTEND_PORT / SKILLHUB_FRONTEND_PORT 变量，不写死端口
+    # OAuth2 (for SkillHub SSO) — REDIRECT_URI 用 SKILLHUB_HOST、FRONTEND_ORIGIN 用 LITELLM_HOST；端口用 SKILLHUB_FRONTEND_PORT / FRONTEND_PORT 变量，不写死
     local cp_port sh_port
     cp_port=$(grep -E "^FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
     cp_port="${cp_port:-8090}"
     sh_port=$(grep -E "^SKILLHUB_FRONTEND_PORT=" "$env_file" | head -1 | cut -d= -f2-)
     sh_port="${sh_port:-8098}"
     sed -i "s/^OAUTH2_CLIENT_ID=.*/OAUTH2_CLIENT_ID=skillhub/" "$env_file"
-    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=agentos-secret/" "$env_file"
-    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${detected_ip}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
-    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${detected_ip}:${cp_port}|" "$env_file"
+    sed -i "s/^OAUTH2_CLIENT_SECRET=.*/OAUTH2_CLIENT_SECRET=$(rand_hex 32)/" "$env_file"
+    sed -i "s|^OAUTH2_REDIRECT_URI=.*|OAUTH2_REDIRECT_URI=http://${sh_host}:${sh_port}/api/v1/auth/oauth/agentos/callback|" "$env_file"
+    sed -i "s|^OAUTH2_FRONTEND_ORIGIN=.*|OAUTH2_FRONTEND_ORIGIN=http://${llm_host}:${cp_port}|" "$env_file"
     sed -i "s/^OAUTH2_CLIENT_NAME=.*/OAUTH2_CLIENT_NAME=SkillHub/" "$env_file"
 
     echo ""
@@ -1076,34 +1108,17 @@ _configure_skillhub_preset_dir() {
     local env_file="${DEPLOY_DIR}/.env" preset_dir
     preset_dir="/home/agentos/agent_preset/skills"
     mkdir -p "$preset_dir"
-    if ! grep -q "^AGENTOS_PRESET_SKILLS_DIR=" "$env_file" 2>/dev/null; then
-        echo "AGENTOS_PRESET_SKILLS_DIR=${preset_dir}" >> "$env_file"
-    else
-        sed -i "s|^AGENTOS_PRESET_SKILLS_DIR=.*|AGENTOS_PRESET_SKILLS_DIR=${preset_dir}|" "$env_file"
-    fi
+    # AGENTOS_PRESET_SKILLS_DIR 已内置在 .env.example，.env 拷贝后必有该 key，直接替换即可
+    sed -i "s|^AGENTOS_PRESET_SKILLS_DIR=.*|AGENTOS_PRESET_SKILLS_DIR=${preset_dir}|" "$env_file"
     log "  AGENTOS_PRESET_SKILLS_DIR=${preset_dir}"
 }
 
-# 配置 SkillHub 访问地址（管理面 backend 下载 skill 用；与 skillhub.sh 的 host_ip 保持一致）
-_configure_skillhub_base_url() {
-    local env_file="${DEPLOY_DIR}/.env" detected_ip skillhub_frontend_port skillhub_url
-    detected_ip=$(detect_host_ip)
-    skillhub_frontend_port="${SKILLHUB_FRONTEND_PORT:-8098}"
-    skillhub_url="http://${SKILLHUB_HOST:-${detected_ip}}:${skillhub_frontend_port}"
-    if ! grep -q "^SKILLHUB_BASE_URL=" "$env_file" 2>/dev/null; then
-        echo "SKILLHUB_BASE_URL=${skillhub_url}" >> "$env_file"
-    else
-        sed -i "s|^SKILLHUB_BASE_URL=.*|SKILLHUB_BASE_URL=${skillhub_url}|" "$env_file"
-    fi
-    log "  SKILLHUB_BASE_URL=${skillhub_url}"
-}
-
 # 安装 skillhub，并回写管理面所需配置到 .env
+# SKILLHUB_BASE_URL 由 docker-compose 根据 SKILLHUB_HOST + SKILLHUB_FRONTEND_PORT 拼装，不在此写入
 install_skillhub() {
     _skillhub_enabled || { log "  跳过：非 master 或未指定 --with-skillhub"; return 0; }
     AGENTOS_PORT="$(env_default FRONTEND_PORT 8090)" bash "${DEPLOY_DIR}/skillhub/skillhub.sh" install
     _configure_skillhub_preset_dir
-    _configure_skillhub_base_url
 }
 
 # 卸载 skillhub（master 无论是否带 --with-skillhub 都尝试卸载；skillhub.sh 内部安全跳过）
@@ -1136,7 +1151,15 @@ status_skillhub() {
 
 # ── node-service 安装/卸载 ──────────────────────────────────────────────
 
+# 是否需要部署/操作 node-service：显式传 --with-node-service 才启用
+# 与 skillhub 不同：node-service 是每节点 systemd 服务，不要求 master
+_node_service_enabled() {
+    [ "$WITH_NODE_SERVICE" -eq 1 ]
+}
+
 install_node_service() {
+    _node_service_enabled || { log "  跳过：未指定 --with-node-service，如需部署请加 --with-node-service"; return 0; }
+
     local ns_port ns_host
     ns_port=$(env_default NODE_SERVICE_PORT 8101)
     ns_host=$(env_default NODE_SERVICE_HOST "")
@@ -1246,6 +1269,38 @@ uninstall_node_service() {
     fi
 
     systemctl daemon-reload 2>/dev/null || true
+}
+
+# 启动 node-service（systemd，参考 node_exporter 语义，但受 --with-node-service 门控）
+up_node_service() {
+    _node_service_enabled || { log "  跳过：未指定 --with-node-service，如需启动请加 --with-node-service"; return 0; }
+    if systemctl cat "$NS_SERVICE" &>/dev/null; then
+        systemctl start "$NS_SERVICE" 2>/dev/null || true
+        systemctl is-active "$NS_SERVICE" &>/dev/null \
+            && log "  node-service: running" \
+            || log "  WARNING: node-service 启动失败"
+    else
+        log "  WARNING: node-service 未安装，请先执行: sudo bash $0 install --with-node-service"
+    fi
+}
+
+# 停止 node-service（受 --with-node-service 门控，restart 不带 flag 时保持运行态）
+down_node_service() {
+    _node_service_enabled || { log "  跳过：未指定 --with-node-service"; return 0; }
+    systemctl stop "$NS_SERVICE" 2>/dev/null || true
+    log "  node-service: stopped"
+}
+
+# node-service 健康检查（受 --with-node-service 门控；同 status_skillhub 语义）
+status_node_service() {
+    [ "$WITH_NODE_SERVICE" -eq 1 ] || return 0
+    local ns_port
+    ns_port=$(env_default NODE_SERVICE_PORT 8101)
+    if curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${ns_port}/health" 2>/dev/null | grep -qi ok; then
+        _check "node-service     (127.0.0.1:${ns_port})" 1
+    else
+        _check "node-service     (127.0.0.1:${ns_port})" 0
+    fi
 }
 
 # ── install ─────────────────────────────────────────────────────────────────
@@ -1700,14 +1755,7 @@ do_up() {
     fi
 
     log "[4/8] 启动 node-service"
-    if systemctl cat "$NS_SERVICE" &>/dev/null; then
-        systemctl start "$NS_SERVICE" 2>/dev/null || true
-        systemctl is-active "$NS_SERVICE" &>/dev/null \
-            && log "  node-service: running" \
-            || log "  WARNING: node-service 启动失败"
-    else
-        log "  跳过：node-service 未安装"
-    fi
+    up_node_service
 
     log "[5/8] 启动 Alloy"
     if is_worker; then
@@ -1787,8 +1835,7 @@ do_down() {
     fi
 
     log "[3/5] 停止 node-service"
-    systemctl stop "$NS_SERVICE" 2>/dev/null || true
-    log "  node-service: stopped"
+    down_node_service
 
     log "[4/5] 停止 node_exporter"
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -1820,12 +1867,11 @@ do_restart() {
 do_status() {
     need_install_dir
     load_env
-    local ne_port ne_host npu_port npu_host ns_port frontend_port litellm_port litellm_host postgres_port victoriametrics_port grafana_port
+    local ne_port ne_host npu_port npu_host frontend_port litellm_port litellm_host postgres_port victoriametrics_port grafana_port
     ne_port=$(env_default NODE_EXPORTER_PORT 8091)
     ne_host=$(env_default NODE_EXPORTER_HOST 127.0.0.1)
     npu_port=$(env_default NPU_EXPORTER_PORT 8092)
     npu_host=$(env_default NPU_EXPORTER_HOST 127.0.0.1)
-    ns_port=$(env_default NODE_SERVICE_PORT 8101)
     frontend_port=$(env_default FRONTEND_PORT 8090)
     litellm_port=$(env_default LITELLM_PORT 8100)
     litellm_host=$(env_default LITELLM_HOST 127.0.0.1)
@@ -1845,15 +1891,6 @@ do_status() {
     echo ""
     log "--- 端口健康检查 ---"
 
-    _check() {
-        local name="$1" ok="$2"
-        if [ "$ok" = "1" ]; then
-            echo "  [OK]   ${name}"
-        else
-            echo "  [--]   ${name}"
-        fi
-    }
-
     curl --connect-timeout 3 --max-time 5 -sf "http://${ne_host}:${ne_port}/metrics" &>/dev/null \
         && _check "node_exporter    (${ne_host}:${ne_port})" 1 \
         || _check "node_exporter    (${ne_host}:${ne_port})" 0
@@ -1862,9 +1899,7 @@ do_status() {
         && _check "npu_exporter     (${npu_host}:${npu_port})" 1 \
         || _check "npu_exporter     (${npu_host}:${npu_port})" 0
 
-    curl --connect-timeout 3 --max-time 5 -sf "http://127.0.0.1:${ns_port}/health" 2>/dev/null | grep -qi ok \
-        && _check "node-service     (127.0.0.1:${ns_port})" 1 \
-        || _check "node-service     (127.0.0.1:${ns_port})" 0
+    status_node_service
 
     curl --connect-timeout 3 --max-time 5 -sfI "http://127.0.0.1:${frontend_port}/" &>/dev/null \
         && _check "frontend         (:${frontend_port})" 1 \
@@ -1899,7 +1934,6 @@ do_status() {
     # skillhub 健康检查
     status_skillhub
 
-    unset -f _check
     echo ""
 }
 
@@ -1968,6 +2002,7 @@ INSTALL_MASTER_IP=""
 UP_MODELS_JSON=""
 UP_MODELS_FILE=""
 WITH_SKILLHUB=0
+WITH_NODE_SERVICE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -2013,6 +2048,10 @@ while [ $# -gt 0 ]; do
             WITH_SKILLHUB=1
             shift
             ;;
+        --with-node-service)
+            WITH_NODE_SERVICE=1
+            shift
+            ;;
         *)
             fail "未知参数: $1"
             ;;
@@ -2052,7 +2091,7 @@ case "$ACTION" in
         echo "  install   安装（默认非交互、单机 master；自动检测 IP 生成 .env，并拷贝到 ~/.agentos/.agent-manager）"
         echo "  uninstall 卸载：停止服务 + 注销 systemd（默认保留数据和 .env）"
         echo "  up        启动：更新 exporter 配置 → 启动服务"
-        echo "  down      停止：docker compose → node/npu_exporter（反序）"
+        echo "  down      停止：docker compose → Alloy → node-service → node_exporter → npu_exporter（逆序）"
         echo "  restart   重启：down → up（自动带上正在运行的 skillhub，无需 --with-skillhub）"
         echo "  status    查看服务状态"
         echo ""
@@ -2062,6 +2101,7 @@ case "$ACTION" in
         echo "  --interactive, -i  交互式安装（可选 master/worker、多机监控；与下方拓扑参数互斥）"
         echo "  --clean            uninstall 时删除数据卷、.env 和安装目录"
         echo "  --with-skillhub    同时部署/启动 skillhub（默认不启动）"
+        echo "  --with-node-service    同时部署/启动 node-service（默认不部署/不启动）"
         echo ""
         echo "install 拓扑参数（非交互，与 -i 互斥）:"
         echo "  --role master|worker   节点角色，默认 master"

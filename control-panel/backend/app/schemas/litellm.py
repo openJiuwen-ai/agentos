@@ -31,6 +31,10 @@ class LitellmParams(BaseModel):
     )
     api_key: str | None = Field(None, description="API Key")
     api_base: str | None = Field(None, description="API Base URL")
+    allowed_openai_params: list[str] = Field(
+        default_factory=lambda: ["reasoning_effort", "tools", "thinking"],
+        description="允许透传给上游的 OpenAI 参数（如 reasoning_effort、tools、thinking），默认允许 reasoning_effort、tools、thinking",
+    )
 
     @field_validator("model")
     @classmethod

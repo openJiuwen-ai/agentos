@@ -7,6 +7,7 @@ import {
   ElTableColumn,
   ElInput,
   ElTag,
+  ElIcon,
   ElMessage,
   ElMessageBox,
   ElPagination,
@@ -35,9 +36,9 @@ defineOptions({
 });
 const tasks = ref<LogExportTask[]>([]);
 const loading = ref(false);
-const searchKeyword = ref("");
+const searchKeyword = ref('');
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null);
-const lastUpdateTime = ref("");
+const lastUpdateTime = ref('');
 
 const currentPage = ref(1);
 const pageSize = ref(10);
@@ -46,9 +47,7 @@ const filteredTasks = computed(() => {
   if (!searchKeyword.value.trim()) return tasks.value;
   const keyword = searchKeyword.value.toLowerCase();
   return tasks.value.filter(
-    (t) =>
-      t.task_id.toLowerCase().includes(keyword) ||
-      t.component_name.toLowerCase().includes(keyword),
+    (t) => t.task_id.toLowerCase().includes(keyword) || t.component_name.toLowerCase().includes(keyword),
   );
 });
 
@@ -59,9 +58,7 @@ const pagedTasks = computed(() => {
   return filteredTasks.value.slice(start, start + pageSize.value);
 });
 
-const hasPending = computed(() =>
-  tasks.value.some((t) => t.status === "pending" || t.status === "running"),
-);
+const hasPending = computed(() => tasks.value.some((t) => t.status === 'pending' || t.status === 'running'));
 
 async function fetchTasks() {
   loading.value = true;
@@ -102,13 +99,13 @@ function onPageChange() {
 
 async function handleDelete(taskId: string) {
   try {
-    await ElMessageBox.confirm("确定要删除此导出任务吗？", "确认删除", {
-      type: "warning",
-      confirmButtonText: "删除",
-      cancelButtonText: "取消",
+    await ElMessageBox.confirm('确定要删除此导出任务吗？', '确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
     });
     await deleteExport(taskId);
-    ElMessage.success("已删除");
+    ElMessage.success('已删除');
     await fetchTasks();
   } catch {
     // cancelled
@@ -118,65 +115,79 @@ async function handleDelete(taskId: string) {
 async function downloadExportFile(task: LogExportTask) {
   try {
     const response = await http.get(getExportDownloadUrl(task.task_id), {
-      responseType: "blob",
+      responseType: 'blob',
     });
     const url = URL.createObjectURL(response.data);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
     a.download = `logs-${task.task_type}-${task.task_id}.zip`;
     a.click();
     URL.revokeObjectURL(url);
   } catch {
-    ElMessage.error("下载失败");
+    ElMessage.error('下载失败');
   }
 }
 
 function getStatusTagType(status: string) {
   switch (status) {
-    case "pending":
-      return "info";
-    case "running":
-      return "warning";
-    case "completed":
-      return "success";
-    case "failed":
-      return "danger";
+    case 'pending':
+      return 'info';
+    case 'running':
+      return 'warning';
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'danger';
     default:
-      return "info";
+      return 'info';
   }
 }
 
 function getStatusText(status: string): string {
   switch (status) {
-    case "pending":
-      return "等待中";
-    case "running":
-      return "执行中";
-    case "completed":
-      return "成功";
-    case "failed":
-      return "失败";
+    case 'pending':
+      return '等待中';
+    case 'running':
+      return '执行中';
+    case 'completed':
+      return '成功';
+    case 'failed':
+      return '失败';
     default:
       return status;
   }
 }
 
+function handleStatusClick(task: LogExportTask) {
+  if (task.status === 'failed' && task.error_message) {
+    void showErrorDetail(task);
+  }
+}
+
+async function showErrorDetail(task: LogExportTask) {
+  try {
+    await ElMessageBox.alert(task.error_message ?? '无错误信息', '导出失败原因', {
+      confirmButtonText: '关闭',
+      type: 'error',
+      customStyle: { maxHeight: '70vh', overflowY: 'auto' },
+    });
+  } catch {
+    // 关闭弹窗，无需处理
+  }
+}
+
 function formatUpdateTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function formatDuration(task: LogExportTask): string {
-  if (!task.created_at) return "-";
-  const end = task.completed_at
-    ? new Date(task.completed_at)
-    : task.status === "running"
-      ? new Date()
-      : null;
-  if (!end) return "-";
+  if (!task.created_at) return '-';
+  const end = task.completed_at ? new Date(task.completed_at) : task.status === 'running' ? new Date() : null;
+  if (!end) return '-';
   const start = new Date(task.created_at);
   const diff = Math.floor((end.getTime() - start.getTime()) / 1000);
-  if (diff < 0) return "-";
+  if (diff < 0) return '-';
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}min${diff % 60}s`;
   return `${Math.floor(diff / 3600)}h${Math.floor((diff % 3600) / 60)}min`;
@@ -467,6 +478,15 @@ onUnmounted(() => stopPolling());
 
 .action-btn--danger:hover {
   color: var(--error);
+}
+
+.status-tag--clickable {
+  cursor: pointer;
+}
+
+.status-tag__icon {
+  margin-left: 2px;
+  vertical-align: -0.125em;
 }
 
 .pagination-row {

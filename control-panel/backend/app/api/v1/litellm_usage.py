@@ -138,7 +138,7 @@ async def usage_by_model(
     response_model=ApiResponse[UserUsageRankResponse],
     summary="用户用量排行",
     description=(
-        "用户用量排行 Top N。直连 PG 按 `user_id` GROUP BY，按 cost 降序取前 N 名。\n\n"
+        "用户用量排行 Top N。直连 PG 按 `user_id` GROUP BY，按 token 用量降序取前 N 名。\n\n"
         "**top 参数**: 默认 10，范围 1-100。"
     ),
 )

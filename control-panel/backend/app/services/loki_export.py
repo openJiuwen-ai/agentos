@@ -159,7 +159,7 @@ async def query_range_pages(
                     min_ts = ts
         if batch:
             yield batch
-        if total < limit or min_ts is None or min_ts <= start_ns:
+        if total < params.limit or min_ts is None or min_ts <= start_ns:
             return
         current_end = _EPOCH + timedelta(microseconds=min_ts // 1000)
 
