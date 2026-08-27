@@ -56,6 +56,7 @@ Commands:
   restart   先 down 再 up
   install   安装 jiuwenbox
   uninstall 卸载 jiuwenbox
+  status    查看 jiuwenbox 运行状态
 
 Options:
   --hosts HOSTS   逗号分隔 IP；不指定则本机 IP
@@ -154,8 +155,11 @@ is_running_pid() {
 }
 
 find_server_pids() {
-  command -v pgrep >/dev/null 2>&1 || return 0
-  pgrep -f "$PGREP_PATTERN" 2>/dev/null || true
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$PGREP_PATTERN" 2>/dev/null || true
+  else
+    ps -ef 2>/dev/null | grep "$PGREP_PATTERN" | grep -v grep | awk '{print $2}' || true
+  fi
 }
 
 find_server_pid() {
@@ -718,7 +722,7 @@ parse_args() {
 
   while [ $i -lt ${#args[@]} ]; do
     case "${args[$i]}" in
-      up|down|restart|install|uninstall)
+      up|down|restart|install|uninstall|status)
         CMD="${args[$i]}"
         i=$((i+1))
         ;;
@@ -787,6 +791,58 @@ deploy_jiuwenbox_uninstall() {
   done
 }
 
+# 只读探测本机 jiuwenbox 运行状态（不做多机 fanout）
+# 输出格式: jiuwenbox|<service>|<state>|<detail>
+deploy_jiuwenbox_status() {
+  local svc_name="${JIUWENBOX_SVC}"
+  local has_cli=0
+  command -v jiuwenbox >/dev/null 2>&1 && has_cli=1 || has_cli=0
+
+  # systemd 模式
+  if _jiuwenbox_has_systemd && [ -f "${JIUWENBOX_UNIT}" ]; then
+    # is-failed 优先：failed 状态下 is-active 也返回非 active，先判 failed 避免误判
+    if systemctl is-failed --quiet "${svc_name}" 2>/dev/null; then
+      echo "jiuwenbox|${svc_name}.service|failed|unit failed"
+      return 1
+    fi
+    if systemctl is-active --quiet "${svc_name}" 2>/dev/null; then
+      if [ "${has_cli}" -eq 1 ] && probe_server_api "${LISTEN_URI}"; then
+        echo "jiuwenbox|${svc_name}.service|running|${LISTEN_URI}"
+        return 0
+      elif [ "${has_cli}" -eq 1 ]; then
+        echo "jiuwenbox|${svc_name}.service|failed|unit active, API not ready"
+        return 1
+      else
+        echo "jiuwenbox|${svc_name}.service|running|process alive, API check skipped"
+        return 0
+      fi
+    else
+      echo "jiuwenbox|${svc_name}.service|stopped|unit inactive"
+      return 0
+    fi
+  fi
+
+  # 进程模式
+  local pids first_pid
+  pids="$(find_server_pids)"
+  if [ -n "${pids}" ]; then
+    first_pid="$(echo "${pids}" | head -n 1)"
+    if [ "${has_cli}" -eq 1 ] && probe_server_api "${LISTEN_URI}"; then
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|${LISTEN_URI}"
+      return 0
+    elif [ "${has_cli}" -eq 1 ]; then
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|failed|process alive, API not ready"
+      return 1
+    else
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|process alive, API check skipped"
+      return 0
+    fi
+  else
+    echo "jiuwenbox|-|stopped|no process"
+    return 0
+  fi
+}
+
 main() {
   parse_args "$@"
   case "${CMD}" in
@@ -795,6 +851,7 @@ main() {
     restart)   deploy_jiuwenbox_restart ;;
     install)   deploy_jiuwenbox_install ;;
     uninstall) deploy_jiuwenbox_uninstall ;;
+    status)    deploy_jiuwenbox_status ;;
     *)         error "Unknown command: ${CMD}" ;;
   esac
 }

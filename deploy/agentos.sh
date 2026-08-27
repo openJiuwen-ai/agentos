@@ -110,7 +110,7 @@ parse_args() {
 
     while [ $i -lt ${#args[@]} ]; do
         case "${args[$i]}" in
-            up|down|restart|install|uninstall|init|deinit)
+            up|down|restart|install|uninstall|init|deinit|status)
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
@@ -125,7 +125,7 @@ parse_args() {
     done
 
     if [ -z "${CMD}" ]; then
-        error "Command not specified! Use 'install', 'init', 'up', 'down', 'deinit', 'uninstall' or 'restart'"
+        error "Command not specified! Use 'install', 'init', 'up', 'down', 'status', 'deinit', 'uninstall' or 'restart'"
     fi
 }
 
@@ -230,6 +230,118 @@ deploy_uninstall() {
     _print_summary uninstall
 }
 
+# ===== status: 一键查询各组件状态（只读探测，不启停服务） =====
+# 输出格式：每个组件钩子输出若干行 `组件名|服务名|状态|详情`（机器可读），
+# 由 _print_status_table 收集后统一格式化为表格输出。
+# etcd 不在 MODULES 中，由 etcd.sh status 独立委托。
+deploy_status() {
+    echo ""
+    info "Querying component status"
+
+    local status_lines=()
+    local overall_rc=0
+
+    # 过滤辅助：只保留 `组件|服务|状态|详情` 格式的行，丢弃子脚本 info 日志
+    _filter_status_lines() {
+        while IFS= read -r line; do
+            [ -n "${line}" ] || continue
+            # 必须包含 3 个 | 分隔符（4 字段）
+            local pipes
+            pipes=$(echo "${line}" | tr -cd '|' | wc -c)
+            [ "${pipes}" -ge 3 ] && echo "${line}"
+        done
+    }
+
+    # 1. etcd（独立委托 etcd.sh status）
+    if [ -r "${ETCD_SH}" ]; then
+        local etcd_tmpfile
+        etcd_tmpfile=$(mktemp)
+        bash "${ETCD_SH}" status 2>/dev/null | _filter_status_lines > "${etcd_tmpfile}"
+        local etcd_rc=${PIPESTATUS[0]}
+        [ "${etcd_rc}" -ne 0 ] && overall_rc=1
+        if [ -s "${etcd_tmpfile}" ]; then
+            while IFS= read -r line; do
+                [ -n "${line}" ] && status_lines+=("${line}")
+            done < "${etcd_tmpfile}"
+        fi
+        rm -f "${etcd_tmpfile}"
+    else
+        status_lines+=("etcd|-|n/a|etcd.sh not found")
+    fi
+
+    # 2. 按 MODULES 正序遍历各模块 _status 钩子（独立遍历，不复用 run_hooks）
+    #    缺失钩子的组件占位一行 "not supported"，不跳过
+    local mod fn rc tmpfile
+    for mod in "${MODULES[@]}"; do
+        fn="${mod}_status"
+        if ! declare -f "${fn}" >/dev/null 2>&1; then
+            status_lines+=("${mod}|-|n/a|not supported")
+            continue
+        fi
+        # 用临时文件避免 $() 命令替换中 PIPESTATUS 丢失返回码
+        tmpfile=$(mktemp)
+        "${fn}" 2>/dev/null | _filter_status_lines > "${tmpfile}"
+        rc=${PIPESTATUS[0]}
+        [ "${rc}" -ne 0 ] && overall_rc=1
+        if [ -s "${tmpfile}" ]; then
+            while IFS= read -r line; do
+                [ -n "${line}" ] && status_lines+=("${line}")
+            done < "${tmpfile}"
+        fi
+        rm -f "${tmpfile}"
+    done
+
+    _print_status_table "${status_lines[@]}"
+    return ${overall_rc}
+}
+
+# ===== 状态表格化输出 + 汇总计数 =====
+_print_status_table() {
+    local -a lines=("$@")
+    local running=0 stopped=0 failed=0 na=0 total=0
+    local line comp svc state detail
+
+    echo ""
+    info "=== AgentOS Status ==="
+    echo ""
+    printf "%-16s %-42s %-10s %s\n" "Component" "Service" "State" "Detail"
+    printf "%-16s %-42s %-10s %s\n" "------------" "----------------------------------------" "--------" "------------------------------"
+
+    for line in "${lines[@]}"; do
+        # 解析 `组件|服务|状态|详情` 格式
+        IFS='|' read -r comp svc state detail <<< "${line}"
+        [ -z "${comp:-}" ] && comp="-"
+        [ -z "${svc:-}" ] && svc="-"
+        [ -z "${state:-}" ] && state="unknown"
+        [ -z "${detail:-}" ] && detail="-"
+
+        total=$((total+1))
+        case "${state}" in
+            running)  running=$((running+1))  ;;
+            stopped)  stopped=$((stopped+1))  ;;
+            failed)   failed=$((failed+1))   ;;
+            disabled) stopped=$((stopped+1)) ;;
+            n/a|na)   na=$((na+1))           ;;
+            *)        failed=$((failed+1))   ;;
+        esac
+
+        # 颜色编码：running 绿 / stopped 黄 / failed 红 / n/a 灰
+        local colored_state
+        case "${state}" in
+            running)  colored_state="\033[32m${state}\033[0m"  ;;
+            stopped|disabled) colored_state="\033[33m${state}\033[0m" ;;
+            failed)   colored_state="\033[31m${state}\033[0m"  ;;
+            n/a|na)   colored_state="\033[90m${state}\033[0m"   ;;
+            *)        colored_state="\033[31m${state}\033[0m"  ;;
+        esac
+
+        printf "%-16s %-42s %-10b %s\n" "${comp}" "${svc}" "${colored_state}" "${detail}"
+    done
+
+    echo ""
+    echo "=== Summary: ${running}/${total} running | ${stopped} stopped | ${failed} failed | ${na} N/A ==="
+}
+
 _print_summary() {
     local cmd="$1"
     echo ""
@@ -269,6 +381,7 @@ Commands (Required):
   down        逆序停止全部应用组件（不动 etcd）
   deinit      停 etcd + 删 unit（委托 etcd.sh down，保留数据）
   uninstall   在本机卸载全部组件的 whl 包
+  status      查询全部组件运行状态（只读探测，不启停服务；含 etcd + MODULES）
   restart     重启全部应用组件（先 down 再 up；不含 init/deinit）
 
 Options:
@@ -332,6 +445,9 @@ Examples:
   # 重启应用组件（不含 etcd）
   ./agentos.sh restart
 
+  # 查询全部组件状态（只读探测，不启停服务）
+  ./agentos.sh status
+
   # 指定其他 whl 目录安装 yuanrong
   YR_PKG_BASE=/data/yr_whls ./agentos.sh install
 
@@ -342,7 +458,7 @@ Examples:
 
 扩展模块:
   新增组件只需两步:
-  1. 在 deploy/ 下新建 <module>/ 目录，放入 module.sh（实现 <module>_up/down/install/uninstall 钩子）
+  1. 在 deploy/ 下新建 <module>/ 目录，放入 module.sh（实现 <module>_up/down/install/uninstall/status 钩子）
   2. 在本脚本顶部 MODULES 数组中添加模块名
 
 注意:
@@ -369,6 +485,7 @@ main() {
         down)      deploy_down ;;
         deinit)    deploy_deinit ;;
         uninstall) deploy_uninstall ;;
+        status)    deploy_status ;;
         restart)   deploy_restart ;;
         *)         error "Unknown command: ${CMD}" ;;
     esac

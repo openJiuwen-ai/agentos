@@ -29,3 +29,7 @@ moosefs_install() {
 moosefs_uninstall() {
     _moosefs_run uninstall "$@"
 }
+
+moosefs_status() {
+    _moosefs_run status "$@"
+}

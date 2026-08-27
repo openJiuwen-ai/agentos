@@ -827,13 +827,19 @@ deploy_mfs_down() {
             is_master=true
         fi
 
+        # 停止顺序：client → chunkserver → master
+        # 先停 client（FUSE 挂载），再停 chunkserver，最后停 master
+        # 避免 master 先停导致 client 无法正常 unount 而被 systemd 记为 failed
         if [ "${is_master}" = "true" ]; then
-            systemctl stop moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-chunkserver 2>/dev/null || true
+            systemctl stop moosefs-master 2>/dev/null || true
         else
-            systemctl stop moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-client 2>/dev/null || true
+            systemctl stop moosefs-chunkserver 2>/dev/null || true
         fi
 
-        # 清理残留 mfsmount 进程
+        # 清理残留 mfsmount 进程（在 reset-failed 之前，避免 kill 后 systemd 重新标记 failed）
         local mfs_mount_pid
         mfs_mount_pid=$(pgrep -f "mfsmount.*${MFS_MOUNT_POINT}" 2>/dev/null || true)
         if [ -n "${mfs_mount_pid}" ]; then
@@ -841,6 +847,13 @@ deploy_mfs_down() {
             kill ${mfs_mount_pid} 2>/dev/null || true
             sleep 1
             kill -9 ${mfs_mount_pid} 2>/dev/null || true
+        fi
+
+        # reset-failed 放在进程清理之后，确保 kill 不会导致 systemd 重新标记 failed
+        if [ "${is_master}" = "true" ]; then
+            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+        else
+            systemctl reset-failed moosefs-chunkserver moosefs-client 2>/dev/null || true
         fi
 
         success "MooseFS systemd down completed!"
@@ -894,11 +907,14 @@ deploy_mfs_uninstall() {
             rm -f /etc/systemd/system/moosefs-master.service
             rm -f /etc/systemd/system/moosefs-chunkserver.service
             rm -f /etc/systemd/system/moosefs-client.service
+            # reset-failed 清除 systemd 残留 failed 状态，避免 status 误报
+            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
         else
             # Agent：disable + 删除两个 unit
             systemctl disable --now moosefs-chunkserver moosefs-client 2>/dev/null || true
             rm -f /etc/systemd/system/moosefs-chunkserver.service
             rm -f /etc/systemd/system/moosefs-client.service
+            systemctl reset-failed moosefs-chunkserver moosefs-client 2>/dev/null || true
         fi
         systemctl daemon-reload
         success "systemd services stopped and unit files removed"
@@ -948,13 +964,121 @@ deploy_mfs_uninstall() {
     success "MooseFS uninstall completed!"
 }
 
+# ===== status 逻辑 =====
+# 仅只读探测服务状态，不启停服务
+# 输出格式：每行 moosefs|<service>|<state>|<detail>
+# state: running / stopped / failed / disabled
+deploy_mfs_status() {
+    _mfs_load_config
+
+    # 全局禁用：输出 disabled，return 0
+    if _mfs_should_skip; then
+        echo "moosefs|-|disabled|MOOSEFS_ENABLED=no"
+        return 0
+    fi
+
+    # 角色判定（复用 _mfs_is_master）
+    local is_master=false
+    if _mfs_is_master; then
+        is_master=true
+    fi
+    local role="agent"
+    [ "${is_master}" = "true" ] && role="master"
+
+    # 通用：检测挂载点是否已挂载
+    # mountpoint 不可用时回退读 /proc/mounts
+    local mount_detail=""
+    if command -v mountpoint >/dev/null 2>&1; then
+        if mountpoint -q "${MFS_MOUNT_POINT}" 2>/dev/null; then
+            mount_detail=";mounted:${MFS_MOUNT_POINT}"
+        fi
+    else
+        if grep -q "[[:space:]]${MFS_MOUNT_POINT}[[:space:]]" /proc/mounts 2>/dev/null; then
+            mount_detail=";mounted:${MFS_MOUNT_POINT}"
+        fi
+    fi
+
+    # 进程模式（非 systemd）的 pgrep 检测助手
+    # 返回：0 运行中，1 未运行
+    _mfs_status_pgrep_running() {
+        local bin_name="$1"
+        if command -v pgrep >/dev/null 2>&1; then
+            pgrep -x "${bin_name}" >/dev/null 2>&1
+        else
+            # 回退：ps -ef | grep <bin_name> | grep -v grep
+            # 用 [b]in_name 模式避免匹配 grep 自身，不加 $ 锚定（进程名后通常带参数）
+            ps -ef 2>/dev/null | grep -v grep | grep -q "[${bin_name:0:1}]${bin_name:1}"
+        fi
+    }
+
+    local rc=0   # 整体返回码：全 running→0，有 failed→1，全 stopped→0
+
+    if _mfs_should_use_systemd; then
+        # ----- systemd 模式 -----
+        local units=()
+        if [ "${is_master}" = "true" ]; then
+            units=(moosefs-master moosefs-chunkserver moosefs-client)
+        else
+            units=(moosefs-chunkserver moosefs-client)
+        fi
+
+        for unit in "${units[@]}"; do
+            local state="stopped"
+            local detail="inactive"
+            # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
+            # 此时应判为 stopped（服务确实未运行），而非 failed
+            if [ ! -f "/etc/systemd/system/${unit}.service" ]; then
+                state="stopped"
+                detail="unit not found"
+            elif systemctl is-failed "${unit}" >/dev/null 2>&1; then
+                state="failed"
+                detail="failed"
+                rc=1
+            elif systemctl is-active "${unit}" >/dev/null 2>&1; then
+                state="running"
+                detail="active"
+            else
+                state="stopped"
+                detail="inactive"
+            fi
+            echo "moosefs|${unit}|${state}|${detail}${mount_detail}"
+        done
+
+        return ${rc}
+    fi
+
+    # ----- 进程模式（非 systemd）-----
+    # 用 _mfs_bin 取二进制名，pgrep 按进程名匹配
+    local procs=()
+    if [ "${is_master}" = "true" ]; then
+        procs=("mfsmaster" "mfschunkserver" "mfsmount")
+    else
+        procs=("mfschunkserver" "mfsmount")
+    fi
+
+    for bin in "${procs[@]}"; do
+        local state="stopped"
+        local detail="inactive"
+        if _mfs_status_pgrep_running "${bin}"; then
+            state="running"
+            detail="active"
+        else
+            state="stopped"
+            detail="inactive"
+        fi
+        echo "moosefs|${bin}|${state}|${detail}${mount_detail}"
+    done
+
+    return ${rc}
+}
+
 # ===== 参数解析 =====
 parse_args() {
     local i=0
     local args=("$@")
     while [ $i -lt ${#args[@]} ]; do
         case "${args[$i]}" in
-            up|down|restart|install|uninstall)
+            up|down|restart|install|uninstall|status)
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
@@ -976,10 +1100,10 @@ parse_args() {
         exit 1
     fi
 
-    # install/uninstall 仅在本机执行，不需要 CLUSTER_HOSTS
+    # install/uninstall/status 仅在本机执行，不需要 CLUSTER_HOSTS
     # up/down 在 systemd 模式下也不需要 CLUSTER_HOSTS（从 config.yaml 获取 master IP）
     # 仅在非 systemd 的 up/down 时需要 CLUSTER_HOSTS
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
         if [ -z "${CLUSTER_HOSTS:-}" ]; then
             CLUSTER_HOSTS=$(get_local_ip)
             info "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
@@ -988,7 +1112,7 @@ parse_args() {
 
     info "Executing command: $*"
     info "CMD=${CMD}"
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
         info "CLUSTER_HOSTS=${CLUSTER_HOSTS}"
     fi
 }

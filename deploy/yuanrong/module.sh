@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # 模块: yuanrong (openyuanrong 集群)
-# 钩子函数: yuanrong_up / yuanrong_down / yuanrong_install / yuanrong_uninstall
+# 钩子函数: yuanrong_up / yuanrong_down / yuanrong_status / yuanrong_install / yuanrong_uninstall
 # ============================================================
 
 YUANRONG_DEPLOY_DIR="${SCRIPT_DIR}/yuanrong"
@@ -21,6 +21,10 @@ yuanrong_up() {
 
 yuanrong_down() {
     _yuanrong_run down "$@"
+}
+
+yuanrong_status() {
+    _yuanrong_run status "$@"
 }
 
 yuanrong_install() {

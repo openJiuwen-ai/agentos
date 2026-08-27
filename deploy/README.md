@@ -39,11 +39,7 @@ deploy/
 │   └── module.sh             # agent-gateway 钩子（A2X 注册中心，systemd/nohup 双模式）
 ├── jiuwenswarm/
 │   ├── module.sh             # jiuwenswarm 钩子函数
-│   ├── .env.custom           # jiuwenswarm 配置文件
-│   ├── conf/
-│   │   ├── claw_meta_process.template.json
-│   │   └── gateway-config-yuanrong.template.yaml
-│   └── deploy.sh             # jiuwenswarm submodule 部署脚本
+│   └── .env.custom           # jiuwenswarm 配置文件
 └── scripts/
     └── config.py             # 集群配置解析与角色推导工具
 ```
@@ -54,11 +50,12 @@ deploy/
 
 1. **模块注册**：`agentos.sh` 顶部的 `MODULES` 数组声明所有模块及其部署顺序：
    `MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")`
-2. **钩子约定**：每个模块在 `deploy/<module>/module.sh` 中实现 4 个钩子函数：
+2. **钩子约定**：每个模块在 `deploy/<module>/module.sh` 中实现 5 个钩子函数：
    - `<module>_up` — 启动/部署
    - `<module>_down` — 停止/卸载
    - `<module>_install` — 安装 whl 包（本机）
    - `<module>_uninstall` — 卸载 whl 包（本机）
+   - `<module>_status` — 只读状态探测（可选，未实现时占位 "not supported"）
 3. **调度引擎**：`run_hooks` 函数遍历模块调用对应钩子。
    - `up` / `install`：按 `MODULES` 声明顺序
    - `down` / `uninstall`：自动逆序
@@ -157,10 +154,13 @@ bash agentos.sh restart
 # 5. 停止全部应用组件（etcd 保持运行）
 bash agentos.sh down
 
-# 6. 拆除 etcd（停服务 + 删 unit，保留数据）
+# 6. 一键查询各组件运行状态（只读，不修改系统状态）
+bash agentos.sh status
+
+# 7. 拆除 etcd（停服务 + 删 unit，保留数据）
 bash agentos.sh deinit
 
-# 7. 卸载本机全部 whl 包
+# 8. 卸载本机全部 whl 包
 bash agentos.sh uninstall
 ```
 
@@ -185,10 +185,13 @@ bash agentos.sh up
 # 4. 停止全部应用组件（etcd 保持运行；先 agent 节点 down，再 master 节点 down）
 bash agentos.sh down
 
-# 5. 各 etcd 节点拆除 etcd（保留数据）
+# 5. 一键查询各组件运行状态（只读，不修改系统状态）
+bash agentos.sh status
+
+# 6. 各 etcd 节点拆除 etcd（保留数据）
 bash agentos.sh deinit
 
-# 6. 各节点卸载全部 whl 包
+# 7. 各节点卸载全部 whl 包
 bash agentos.sh uninstall
 ```
 
@@ -207,6 +210,7 @@ bash etcd.sh clean
 | `init` | bootstrap etcd（委托 `etcd.sh clean + up`，非 etcd 节点自动跳过；自动清理历史 etcd 数据） |
 | `up` | 按声明顺序部署全部应用组件（前置检查 etcd 可达，不可达则提示先 `init`） |
 | `down` | 逆序停止全部应用组件（不动 etcd） |
+| `status` | 一键查询各组件运行状态（只读探测，输出状态表 + 汇总计数；退出码：0=全 running/stopped，1=有 failed） |
 | `deinit` | 停 etcd + 删 unit（委托 `etcd.sh down`，保留数据） |
 | `uninstall` | 在本机卸载全部组件的 whl 包 |
 | `restart` | 重启全部应用组件（先 down 再 up；不含 init/deinit） |
@@ -295,6 +299,7 @@ chmod 755 /root/.ssh/agent_pub
 | --- | --- |
 | `up` | 生成并启动 `agentos-etcd.service`（非 etcd 节点跳过） |
 | `down` | 停止并删除 unit（保留 `/var/lib/agentos/etcd` 数据） |
+| `status` | 报告 `agentos-etcd.service` 的 systemd 状态 + client 端口连通性（非 etcd 节点显示 N/A） |
 | `check` | 探测 etcd 集群是否可达（TCP 连通任一 etcd_node 的 client port 即通过） |
 | `clean` | 清理 etcd 数据目录（默认直接清理，无交互确认；对齐 yr start 语义） |
 
@@ -421,6 +426,12 @@ mymodule_uninstall() {
         && success "mymodule uninstalled" \
         || warning "mymodule not installed or failed to uninstall"
 }
+
+# 只读状态探测（可选；输出格式: mymodule|<service>|<state>|<detail>）
+mymodule_status() {
+    # state ∈ running / stopped / failed / disabled / N/A
+    echo "mymodule|mymodule.service|running|active"
+}
 ```
 
 ### 第 2 步：注册到 `MODULES` 数组
@@ -443,6 +454,7 @@ MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodul
 | `<module>_down` | `down` / `restart` 时，逆序调用 | 透传额外参数 | 调用模块部署脚本停止服务 |
 | `<module>_install` | `install` 时，按声明顺序调用 | 透传额外参数（通常 install 不需要） | 本机 pip 安装 whl 包 |
 | `<module>_uninstall` | `uninstall` 时，逆序调用 | 透传额外参数（通常 uninstall 不需要） | 本机 pip 卸载 whl 包 |
+| `<module>_status` | `status` 时，按声明顺序调用 | 无 | 只读探测本组件运行状态，输出 `Component\|Service\|State\|Detail` 行 |
 
 ### 可用的全局变量
 
@@ -463,8 +475,10 @@ MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodul
 
 钩子函数是可选的。若某模块未实现某个钩子（如纯部署型模块不需要 `install`），调度引擎会打印 warning 并跳过，不会报错中断。
 
+> **`status` 钩子例外**：`status` 命令不复用 `run_hooks`（需占位而非跳过）。若模块未实现 `_status` 钩子，状态表会为该组件占位一行显示 "not supported"，继续探测其余组件。
+
 ### 命名规范
 
 - 模块名使用小写字母 + 数字 + 连字符（如 `mymodule`、`agent-gateway`、`skill-store`）
-- 钩子函数名必须为 `<module名>_<hook>`，其中 `<hook>` 为 `up` / `down` / `install` / `uninstall`
+- 钩子函数名必须为 `<module名>_<hook>`，其中 `<hook>` 为 `up` / `down` / `install` / `uninstall` / `status`
 - `module.sh` 中定义的内部函数建议加 `_` 前缀（如 `_mymodule_helper`）避免命名冲突

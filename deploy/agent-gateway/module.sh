@@ -2,7 +2,7 @@
 # ============================================================
 # 模块: agent-gateway (A2X 注册中心 + sqlite 存储)
 # 优先使用 systemd 托管；无 systemd 时回退到 nohup 后台进程。
-# 钩子函数: agent-gateway_up / agent-gateway_down / agent-gateway_install / agent-gateway_uninstall
+# 钩子函数: agent-gateway_up / agent-gateway_down / agent-gateway_install / agent-gateway_uninstall / agent-gateway_status
 # ============================================================
 
 # ===== 端口号 =====
@@ -307,6 +307,7 @@ agent-gateway_uninstall() {
         systemctl disable --now "${AGENTREGISTRY_SVC}" 2>/dev/null || true
         rm -rf "${AGENTREGISTRY_UNIT}" "${AGENTREGISTRY_DROPIN_DIR}"
         rm -f /usr/local/bin/agentos-check-ingress-master
+        systemctl reset-failed "${AGENTREGISTRY_SVC}" 2>/dev/null || true
         systemctl daemon-reload
     else
         _stop_bg agent-registry "${REGISTRY_PID_FILE}" "python${YR_PYTHON_VERSION}" -m a2x_registry.backend || true
@@ -314,4 +315,84 @@ agent-gateway_uninstall() {
     fi
     "python${YR_PYTHON_VERSION}" -m pip uninstall -y a2x-registry || true
     success "agent-registry uninstalled"
+}
+
+# ===== status: 只读探测 agent-registry 进程态 + HTTP 健康检查 =====
+# 输出格式: 组件名|服务名|状态|详情 (小写状态, 无颜色码)
+# 非 ingress master: n/a (预期不启动), return 0
+# 进程运行 + HTTP 健康: running, return 0
+# 进程运行 + HTTP 不健康/未检查: failed, return 1
+# 进程停止: stopped, return 0
+agent-gateway_status() {
+    local svc="${AGENTREGISTRY_SVC}.service"
+
+    # 角色判定: 复用 ingress master 检查脚本; 不存在则视为非 master
+    if ! command -v /usr/local/bin/agentos-check-ingress-master >/dev/null 2>&1 \
+        || ! /usr/local/bin/agentos-check-ingress-master >/dev/null 2>&1; then
+        echo "agent-gateway|${svc}|n/a|not ingress master"
+        return 0
+    fi
+
+    # mTLS 感知: 复用 _agentregistry_tls_enabled 构造 scheme 与 curl_tls 数组
+    local scheme curl_tls
+    scheme="http"; curl_tls=()
+    if _agentregistry_tls_enabled; then
+        scheme="https"
+        curl_tls=(--cacert "${A2X_REGISTRY_TLS_CA_CERTS}" --cert "${A2X_REGISTRY_TLS_CERTFILE}" --key "${A2X_REGISTRY_TLS_KEYFILE}")
+    fi
+
+    # 探测进程态 + HTTP 健康检查
+    local bind port proc_alive unit_state pid
+    bind=$(_agentregistry_bind)
+    port="${A2X_REGISTRY_PORT}"
+    proc_alive=false
+
+    if _agentgw_has_systemd; then
+        # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
+        if [ ! -f "${AGENTREGISTRY_UNIT}" ]; then
+            echo "agent-gateway|${svc}|stopped|unit not found"
+            return 0
+        fi
+        # is-failed 优先：failed 状态下 is-active 也返回非 active，先判 failed 避免误判
+        if systemctl is-failed --quiet "${AGENTREGISTRY_SVC}" 2>/dev/null; then
+            echo "agent-gateway|${svc}|failed|unit failed"
+            return 1
+        fi
+        unit_state=$(systemctl is-active "${AGENTREGISTRY_SVC}" 2>/dev/null || true)
+        [ "${unit_state}" = "active" ] && proc_alive=true
+    else
+        if [ -f "${REGISTRY_PID_FILE}" ]; then
+            pid=$(cat "${REGISTRY_PID_FILE}" 2>/dev/null)
+            if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+                proc_alive=true
+            fi
+        fi
+    fi
+
+    if $proc_alive; then
+        # HTTP 健康检查: curl 不可用时仅报告进程态 (skipped)
+        if command -v curl >/dev/null 2>&1; then
+            if curl -sf --noproxy '*' --connect-timeout 2 --max-time 3 ${curl_tls[@]+"${curl_tls[@]}"} \
+                -o /dev/null "${scheme}://${bind}:${port}/api/images" 2>/dev/null; then
+                echo "agent-gateway|${svc}|running|${scheme}://${bind}:${port}"
+                return 0
+            else
+                echo "agent-gateway|${svc}|failed|process alive, health check failed"
+                return 1
+            fi
+        else
+            echo "agent-gateway|${svc}|running|process alive, health check skipped"
+            return 0
+        fi
+    else
+        # 进程停止: 区分 systemd / nohup 模式
+        if _agentgw_has_systemd; then
+            echo "agent-gateway|${svc}|stopped|unit inactive"
+        elif [ -f "${REGISTRY_PID_FILE}" ]; then
+            echo "agent-gateway|${svc}|stopped|stale pidfile"
+        else
+            echo "agent-gateway|${svc}|stopped|no pidfile"
+        fi
+        return 0
+    fi
 }

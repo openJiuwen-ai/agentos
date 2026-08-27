@@ -914,6 +914,92 @@ deploy_yr_down() {
     yr_stop_all
 }
 
+# ===== 状态探测：只读检测，不启停服务 =====
+# 输出格式：yuanrong|<service>|<state>|<detail>（state 小写）
+deploy_yr_status() {
+    # 模式判定：NO_SYSTEMD=1 直接走进程模式
+    # 否则需确认 systemd 可用且 unit 文件存在——用户可能以 --no-systemd 部署但 status 未传该参数，
+    # 此时 NO_SYSTEMD=0 但实际无 unit，应回退进程检测避免误报 stopped
+    if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd && [ -f "${YR_EXECUTOR_UNIT}" ]; then
+        _deploy_yr_status_systemd
+        return $?
+    fi
+    _deploy_yr_status_process
+    return $?
+}
+
+# ----- systemd 模式：检测 agentos-executor.service -----
+_deploy_yr_status_systemd() {
+    local svc="${YR_EXECUTOR_SVC}"
+    local is_active is_failed role
+
+    # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
+    # 此时应判为 stopped（服务确实未运行），而非 failed
+    if [ ! -f "${YR_EXECUTOR_UNIT}" ]; then
+        echo "yuanrong|${svc}.service|stopped|unit not found"
+        return 0
+    fi
+
+    # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
+    is_failed=$(systemctl is-failed "${svc}" 2>/dev/null | tr -d '\r' || true)
+    if [ "${is_failed}" = "failed" ]; then
+        echo "yuanrong|${svc}.service|failed|unit failed"
+        return 1
+    fi
+
+    is_active=$(systemctl is-active "${svc}" 2>/dev/null | tr -d '\r' || true)
+    if [ "${is_active}" = "active" ]; then
+        # 角色判定：复用 _yr_cfg is-master-node
+        if _yr_cfg is-master-node >/dev/null 2>&1; then
+            role="master"
+        else
+            role="agent"
+        fi
+        echo "yuanrong|${svc}.service|running|${role} variant"
+        return 0
+    fi
+
+    # 既非 active 也非 failed：视为 stopped
+    echo "yuanrong|${svc}.service|stopped|unit inactive"
+    return 0
+}
+
+# ----- 进程模式：检测 yr start 阻塞进程 + /yr/ 运行时进程 -----
+_deploy_yr_status_process() {
+    local start_pids yr_pids role
+
+    # 检测 "yr start" 阻塞进程：优先 pgrep，回退 ps -ef | grep
+    start_pids=$(pgrep -f 'yr star[t]' 2>/dev/null || true)
+    if [ -z "${start_pids}" ]; then
+        start_pids=$(ps -ef | grep 'yr star[t]' | grep -v grep | awk '{print $2}' 2>/dev/null | tr -d '\r' || true)
+    fi
+
+    # 检测 /yr/ 运行时进程：优先 pgrep，回退 ps -ef | grep
+    yr_pids=$(pgrep -f '/yr[/]' 2>/dev/null || true)
+    if [ -z "${yr_pids}" ]; then
+        yr_pids=$(ps -ef | grep '/yr[/]' | grep -v grep | awk '{print $2}' 2>/dev/null | tr -d '\r' || true)
+    fi
+
+    if [ -n "${start_pids}" ] && [ -n "${yr_pids}" ]; then
+        # 两者都有：running，角色判定复用 _yr_cfg is-master-node
+        if _yr_cfg is-master-node >/dev/null 2>&1; then
+            role="master"
+        else
+            role="agent"
+        fi
+        echo "yuanrong|yr-start|running|${role}"
+        return 0
+    elif [ -n "${start_pids}" ] && [ -z "${yr_pids}" ]; then
+        # 只有 yr start 没有 /yr/：failed
+        echo "yuanrong|yr-start|failed|yr start alive, runtime not found"
+        return 1
+    else
+        # 都没有：stopped
+        echo "yuanrong|yr-start|stopped|no process"
+        return 0
+    fi
+}
+
 deploy_yr_restart() {
     deploy_yr_down
     deploy_yr_up
@@ -956,6 +1042,8 @@ deploy_yr_uninstall() {
         # down 只 stop，unit 文件的 disable + 删除留给 uninstall
         systemctl disable "${YR_EXECUTOR_SVC}" 2>/dev/null || true
         rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
+        # reset-failed 清除 systemd 残留 failed 状态，避免 status 误报
+        systemctl reset-failed "${YR_EXECUTOR_SVC}" 2>/dev/null || true
         systemctl daemon-reload 2>/dev/null || true
     fi
 
@@ -974,7 +1062,7 @@ parse_args() {
 
     while [ $i -lt ${#args[@]} ]; do
         case "${args[$i]}" in
-            up|down|restart|install|uninstall)
+            up|down|restart|status|install|uninstall)
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
@@ -996,12 +1084,13 @@ parse_args() {
     done
 
     if [ -z "${CMD:-}" ]; then
-        error "Command not specified! Use 'up', 'down', 'install' or 'uninstall'"
+        error "Command not specified! Use 'up', 'down', 'restart', 'status', 'install' or 'uninstall'"
         exit 1
     fi
 
     # 进程模式(up/down/restart)需要 CLUSTER_HOSTS；systemd 模式角色推导交给 config.py，无需 --hosts
-    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    # status 为只读本机探测，无需 CLUSTER_HOSTS
+    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
         if [ -z "${CLUSTER_HOSTS:-}" ]; then
             CLUSTER_HOSTS=$(get_local_ip)
             warning "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
@@ -1010,7 +1099,7 @@ parse_args() {
 
     info "Executing command: $*"
     info "CMD=${CMD}"
-    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" ]]; then
+    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
         info "CLUSTER_HOSTS=${CLUSTER_HOSTS}"
     fi
 }
@@ -1026,6 +1115,8 @@ Commands (Required):
   up        启动 openyuanrong 集群（不安装whl包，需先在各主机执行 install）
   down      停止 openyuanrong 集群
   restart   重启 openyuanrong 集群（不安装whl包）
+  status    只读探测集群状态（systemd: agentos-executor.service；进程模式: yr start 进程）
+            输出格式：yuanrong|<service>|<state>|<detail>，state 小写
   install   仅在本机安装 openyuanrong whl 包（不启动服务，不需要 --hosts）
   uninstall 仅在本机卸载 openyuanrong whl 包（不需要 --hosts）
 

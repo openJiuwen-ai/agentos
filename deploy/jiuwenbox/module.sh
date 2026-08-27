@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # 模块: jiuwenbox (沙箱服务，随 jiuwenswarm whl 包安装)
-# 钩子函数: jiuwenbox_up / jiuwenbox_down / jiuwenbox_install / jiuwenbox_uninstall
+# 钩子函数: jiuwenbox_up / jiuwenbox_down / jiuwenbox_install / jiuwenbox_uninstall / jiuwenbox_status
 #
 # 说明:
 #   薄封装，对齐 yuanrong/module.sh：up/down 逻辑在 jiuwenbox_deploy.sh。
@@ -32,4 +32,8 @@ jiuwenbox_install() {
 
 jiuwenbox_uninstall() {
     _jiuwenbox_run --python "python${YR_PYTHON_VERSION}" uninstall "$@"
+}
+
+jiuwenbox_status() {
+    _jiuwenbox_run --python "python${YR_PYTHON_VERSION}" status "$@"
 }

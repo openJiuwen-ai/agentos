@@ -166,6 +166,7 @@ etcd_down() {
 
     systemctl disable --now "${YR_ETCD_SVC}" 2>/dev/null || true
     rm -f "${YR_ETCD_UNIT}"
+    systemctl reset-failed "${YR_ETCD_SVC}" 2>/dev/null || true
     systemctl daemon-reload
     success "${YR_ETCD_SVC} down (data preserved at ${YR_ETCD_DATA_DIR})"
 }
@@ -225,6 +226,66 @@ etcd_check() {
     return 1
 }
 
+# ===== status: 查询本机 etcd 服务状态（供 agentos.sh status 委托调用） =====
+# 输出机器可读单行：组件名|服务名|状态|详情
+#   状态取值：running / stopped / failed / n/a
+#   - 非 etcd 节点：n/a
+#   - etcd 节点但无 systemd：stopped
+#   - unit active 且端口可达：running
+#   - unit active 但端口不可达：failed
+#   - unit 非 active：stopped
+etcd_status() {
+    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
+
+    if ! _yr_cfg is-etcd-node 2>/dev/null; then
+        echo "etcd|${YR_ETCD_SVC}.service|n/a|not etcd node"
+        return 0
+    fi
+
+    if ! _yr_has_systemd; then
+        echo "etcd|${YR_ETCD_SVC}.service|stopped|systemd required"
+        return 0
+    fi
+
+    # unit 文件已被 down/uninstall 删除时，systemd 可能仍记忆 failed 状态
+    # 此时应判为 stopped（服务确实未运行），而非 failed
+    if [ ! -f "${YR_ETCD_UNIT}" ]; then
+        echo "etcd|${YR_ETCD_SVC}.service|stopped|unit not found"
+        return 0
+    fi
+
+    local unit_state nodes node reachable
+
+    # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
+    if systemctl is-failed --quiet "${YR_ETCD_SVC}" 2>/dev/null; then
+        echo "etcd|${YR_ETCD_SVC}.service|failed|unit failed"
+        return 1
+    fi
+
+    unit_state=$(systemctl is-active "${YR_ETCD_SVC}" 2>/dev/null || true)
+
+    if [ "${unit_state}" = "active" ]; then
+        # 端口探测：复用 etcd_check 的 TCP 逻辑，对 config 中 etcd_nodes 的 client port
+        nodes=$(_yr_cfg etcd-nodes 2>/dev/null || true)
+        reachable=""
+        for node in ${nodes}; do
+            if timeout 3 bash -c "exec 3<>/dev/tcp/${node}/${YR_ETCD_CLIENT_PORT}" 2>/dev/null; then
+                reachable="${node}"
+                break
+            fi
+        done
+        if [ -n "${reachable}" ]; then
+            echo "etcd|${YR_ETCD_SVC}.service|running|${reachable}:${YR_ETCD_CLIENT_PORT}"
+            return 0
+        fi
+        echo "etcd|${YR_ETCD_SVC}.service|failed|unit active, port unreachable"
+        return 1
+    fi
+
+    echo "etcd|${YR_ETCD_SVC}.service|stopped|unit inactive"
+    return 0
+}
+
 print_help() {
     cat << EOF
 Usage: ./$(basename "$0") <COMMAND>
@@ -242,6 +303,7 @@ Commands:
           便于 restart 反复使用；清数据走 init 或 clean
   check   探测 etcd 集群是否可达（TCP 连通任一 etcd_node 的 client port 即通过）
           供 agentos.sh up 前置检查调用；可达返回 0，全部不可达返回 1
+  status  查询本机 etcd 服务状态（供 agentos.sh status 委托调用）
   clean   清理 etcd 数据目录（默认直接清理，无交互确认）
           对齐 yr start 语义：每次 bootstrap 视为干净启动
           适用场景：不执行 down 就地重新 bootstrap；agentos.sh init 自动调用
@@ -270,9 +332,10 @@ main() {
         up)        etcd_up "$@" ;;
         down)      etcd_down "$@" ;;
         check)     etcd_check "$@" ;;
+        status)    etcd_status "$@" ;;
         clean)     etcd_clean "$@" ;;
         -h|--help) print_help ;;
-        *)         error "Unknown command: ${cmd} (use 'up', 'down', 'check', or 'clean')" ;;
+        *)         error "Unknown command: ${cmd} (use 'up', 'down', 'check', 'status', or 'clean')" ;;
     esac
 }
 
