@@ -849,6 +849,11 @@ deploy_mfs_down() {
             kill -9 ${mfs_mount_pid} 2>/dev/null || true
         fi
 
+        # 清理可能残留的锁文件（stop 异常/SIGKILL 时进程来不及清理）
+        # 仅清锁文件，保留 chunkserverid.mfs / .metaid / .chunkdb 等身份和索引文件
+        find "${MFS_CHUNK_DIR}" -name '.lock' -delete 2>/dev/null || true
+        find /var/lib/mfs \( -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
+
         # reset-failed 放在进程清理之后，确保 kill 不会导致 systemd 重新标记 failed
         if [ "${is_master}" = "true" ]; then
             systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
@@ -876,6 +881,11 @@ deploy_mfs_down() {
         sleep 1
         kill -9 ${mfs_mount_pid} 2>/dev/null || true
     fi
+
+    # 清理可能残留的锁文件（stop 异常/SIGKILL 时进程来不及清理）
+    # 仅清锁文件，保留 chunkserverid.mfs / .metaid / .chunkdb 等身份和索引文件
+    find "${MFS_CHUNK_DIR}" -name '.lock' -delete 2>/dev/null || true
+    find /var/lib/mfs \( -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
 
     success "MooseFS single-node stopped"
 }
