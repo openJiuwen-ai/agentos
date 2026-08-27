@@ -666,14 +666,36 @@ _yr_cfg() {
     "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
 }
 
+# ===== 定位 yr 入口脚本绝对路径 =====
+# systemd 默认 PATH 仅 /usr/bin:/usr/sbin；pip 装的 yr 入口点可能落在
+# /usr/bin（系统 Python）、/usr/local/bin（源码 Python）或 ~/.local/bin
+# （pip --user）。ExecStart 用裸 "yr" 在后两种情况会 203/EXEC。
+# 用 command -v 先查 PATH；失败时回退到 sysconfig scripts 目录
+# （pip 装 entry-point 的官方位置，覆盖 PATH 不含 yr 目录的情况）。
+# ExecStart 用解析出的绝对路径，systemd 不再依赖 PATH 查找。
+_yr_resolve_yr_path() {
+    local yr_path
+    yr_path=$(command -v yr 2>/dev/null)
+    if [ -z "${yr_path}" ]; then
+        local scripts_dir
+        scripts_dir=$("$(_yr_python)" -c 'import sysconfig;print(sysconfig.get_path("scripts") or "")' 2>/dev/null | tr -d '\r')
+        [ -n "${scripts_dir}" ] && [ -x "${scripts_dir}/yr" ] && yr_path="${scripts_dir}/yr"
+    fi
+    if [ -z "${yr_path}" ]; then
+        error "Cannot resolve 'yr' command path. Is openyuanrong_sdk installed?"
+    fi
+    echo "${yr_path}"
+}
+
 # ===== 生成 executor unit（所有节点调用；master/agent 变体） =====
 # etcd unit 由 deploy/etcd.sh 独立管理，此处只生成 executor unit；
 # executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 YR_ETCD_SVC）。
 _yr_generate_executor_unit() {
-    local host_ip etcd_addr_list py_bindir
+    local host_ip etcd_addr_list yr_bin py_bindir
     host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
     etcd_addr_list=$(_yr_cfg etcd-address-list) || error "Failed to build etcd address list"
-    py_bindir=$(dirname "$(_yr_python)")
+    yr_bin=$(_yr_resolve_yr_path)
+    py_bindir=$(dirname "${yr_bin}")
 
     if _yr_cfg is-master-node; then
         info "executor unit: master variant (host_ip=${host_ip})"
@@ -688,7 +710,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
+ExecStart=${yr_bin} start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'mode.master.etcd=false' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
@@ -702,7 +724,7 @@ ExecStart=yr start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
+ExecStop=${yr_bin} stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
@@ -727,7 +749,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 Environment=TORCH_DEVICE_BACKEND_AUTOLOAD=0
-ExecStart=yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
+ExecStart=${yr_bin} start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.host_ip="${host_ip}"' \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
@@ -740,7 +762,7 @@ ExecStart=yr start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.frontend.ssh_authorized_keys="${AGENTOS_SSH_KEY}.pub"' \\
     -s 'values.frontend.ssh_backend_public_key_dir="${AGENTOS_SSH_BACKEND_PUBLIC_DIR}"' \\
     --block=true
-ExecStop=yr stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
+ExecStop=${yr_bin} stop --force --log-dir-prefix=${YR_LOG_DIR_PREFIX}
 Restart=on-failure
 RestartSec=5s
 KillMode=mixed
