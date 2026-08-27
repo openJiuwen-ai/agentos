@@ -177,6 +177,7 @@ export interface UsageOverviewResponse {
     cost: number;
     active_users: number;
   }>;
+  success_rate?: number;
 }
 
 /** 获取使用统计概览 */
@@ -198,11 +199,11 @@ export interface UserUsageDetailResponse {
     requests: number;
     cost: number;
   }>;
+  success_rate?: number;
 }
 
-/** 获取指定用户每日活动（普通用户只能看自己） */
+/** 获取当前用户每日活动 */
 export async function fetchUserUsage(params: {
-  user_id: string;
   start_date: string;
   end_date: string;
 }): Promise<UserUsageDetailResponse> {
@@ -226,6 +227,38 @@ export async function fetchUsageByModel(params: {
   end_date: string;
 }): Promise<ModelUsageResponse> {
   return get<ModelUsageResponse>('/api/v1/litellm/usage/by-model', params);
+}
+
+/** 模型趋势项（按天+模型） */
+export interface ModelTrendItem {
+  date: string;
+  model: string;
+  tokens: number;
+  requests: number;
+  cost: number;
+}
+
+/** 模型用量趋势响应 */
+export interface ModelTrendResponse {
+  start_date: string;
+  end_date: string;
+  items: ModelTrendItem[];
+}
+
+/** 获取模型用量趋势（管理员，按天+模型分组） */
+export async function fetchModelTrend(params: {
+  start_date: string;
+  end_date: string;
+}): Promise<ModelTrendResponse> {
+  return get<ModelTrendResponse>('/api/v1/litellm/usage/model-trend', params);
+}
+
+/** 获取当前用户模型调用趋势 */
+export async function fetchUserModelTrend(params: {
+  start_date: string;
+  end_date: string;
+}): Promise<ModelTrendResponse> {
+  return get<ModelTrendResponse>('/api/v1/litellm/usage/user-model-trend', params);
 }
 
 /** 用户用量排行响应 */
@@ -266,7 +299,7 @@ export async function fetchUsageTrend(params: {
   start_date: string;
   end_date: string;
   granularity?: string;
-  user_id?: string;
 }): Promise<TrendResponse> {
   return get<TrendResponse>('/api/v1/litellm/usage/trend', { ...params, granularity: params.granularity || 'day' });
 }
+

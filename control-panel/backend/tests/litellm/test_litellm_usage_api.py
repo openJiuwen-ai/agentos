@@ -37,9 +37,9 @@ class TestUsageTrendAPI:
             assert len(data["data"]["items"]) == 1
 
     # [场景] 按用户 alice 过滤趋势，验证 user_id 参数透传到服务层
-    # [预期] HTTP 200，mock 方法收到 user_id="alice"（需 admin 角色才能透传）
+    # [预期] HTTP 200，mock 方法收到 user_id=None（管理员不传 user_id 查全局）
     async def test_trend_with_user_filter(self, client):
-        """admin 角色下 user_id 参数透传到 service 层"""
+        """admin 角色下 user_id=None（不按用户过滤，查全局）"""
         from app.main import app as _app
         from app.iam.deps import get_current_user
         from app.iam.tokens import TokenData
@@ -62,10 +62,10 @@ class TestUsageTrendAPI:
                 new=AsyncMock(return_value=mock_data),
             ) as mock_method:
                 await client.get(
-                    "/api/v1/litellm/usage/trend?start_date=2026-07-01&end_date=2026-07-02&user_id=alice"
+                    "/api/v1/litellm/usage/trend?start_date=2026-07-01&end_date=2026-07-02"
                 )
                 call_kwargs = mock_method.call_args.kwargs
-                assert call_kwargs["user_id"] == "alice"
+                assert call_kwargs["user_id"] is None
         finally:
             if old_user:
                 _app.dependency_overrides[get_current_user] = old_user
@@ -291,10 +291,10 @@ class TestUsageDataIsolation:
             ) as mock_method:
                 resp = await client.get(
                     "/api/v1/litellm/usage/trend"
-                    "?start_date=2026-07-01&end_date=2026-07-02&user_id=other_user"
+                    "?start_date=2026-07-01&end_date=2026-07-02"
                 )
                 assert resp.status_code == 200
-                assert mock_method.call_args.kwargs["user_id"] == "other_user"
+                assert mock_method.call_args.kwargs["user_id"] is None
         finally:
             if old_user:
                 _app.dependency_overrides[get_current_user] = old_user

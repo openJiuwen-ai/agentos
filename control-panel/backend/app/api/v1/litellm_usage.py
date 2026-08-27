@@ -3,12 +3,12 @@
 直连 PG 查询 LiteLLM 原生 spend 表做聚合，不经过 LiteLLM HTTP API。
 
 权限模型：
-- /trend, /user → require_permission(INFERENCE_USAGE, READ)
-  非 admin 强制看自己的数据
-- /by-model, /by-user, /overview → require_admin（全局汇总数据）
+- /trend, /user, /user-model-trend → require_permission(INFERENCE_USAGE, READ)
+  普通用户只能查自己的数据（user_id 从 JWT 取，不接受前端传入）
+- /by-model, /by-user, /overview, /model-trend → require_admin（全局汇总数据）
 """
 
-from dataclasses import dataclass
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -22,6 +22,7 @@ from app.schemas.litellm import (
     ModelUsageResponse,
     UserUsageRankResponse,
     UserUsageDetailResponse,
+    ModelTrendResponse,
     OverviewResponse,
 )
 
@@ -31,15 +32,8 @@ router = APIRouter(prefix="/api/v1/litellm/usage", tags=["使用统计"])
 _require_usage_read = require_permission(Resource.INFERENCE_USAGE, Action.READ)
 
 
-def _resolve_user_id(current_user: TokenData, requested: str | None) -> str | None:
-    """非 admin 只能看自己：忽略传入的 user_id，强制替换为当前用户 ID。"""
-    if current_user.role == "admin":
-        return requested
-    return current_user.user_id
-
-
-def _validate_dates(start_date: str, end_date: str):
-    """校验日期范围"""
+def _validate_dates(start_date: date, end_date: date):
+    """校验日期范围（格式由 FastAPI date 类型自动校验）。"""
     if start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be <= end_date")
 
@@ -50,60 +44,36 @@ def _validate_granularity(granularity: str):
         raise HTTPException(status_code=422, detail="granularity must be 'day'")
 
 
-@dataclass
-class TrendQueryParams:
-    """usage_trend 查询参数封装（满足参数个数限制）。"""
-
-    start_date: str
-    end_date: str
-    granularity: str = "day"
-    user_id: str | None = None
-
-
-def _trend_query(
-    start_date: str = Query(
-        ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
-    ),
-    end_date: str = Query(
-        ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
-    ),
-    granularity: str = Query("day", description="粒度（仅支持 day）", examples=["day"]),
-    user_id: str | None = Query(
-        None, description="可选，按用户过滤", examples=["alice"]
-    ),
-) -> TrendQueryParams:
-    return TrendQueryParams(
-        start_date=start_date,
-        end_date=end_date,
-        granularity=granularity,
-        user_id=user_id,
-    )
-
-
 @router.get(
     "/trend",
     response_model=ApiResponse[TrendResponse],
     summary="趋势图",
     description=(
-        "Token/请求数/成本的每日趋势。直连 PG 查询 `LiteLLM_DailyUserSpend` 表，按日期 GROUP BY 聚合。\n\n"
+        "Token/请求数/成本的每日趋势。直连 PG 查询 `LiteLLM_SpendLogs` 表，按日期 GROUP BY 聚合。\n\n"
         "**参数说明**:\n"
-        "- `granularity`: 粒度（目前仅支持 `day`，因为 spend 表按天聚合）\n"
-        "- `user_id`: 可选，按用户过滤\n\n"
-        "**规范**: 需配置 PostgreSQL DATABASE_URL；SQLite 下返回空数据不报错。"
+        "- `granularity`: 粒度（目前仅支持 `day`，因为 spend 表按天聚合）\n\n"
+        "**权限**: 普通用户只能查自己的数据。\n"
+        "**规范**: 需配置 LITELLM_DATABASE_URL；LiteLLM 未初始化时返回空数据不报错。"
     ),
 )
 async def usage_trend(
-    q: TrendQueryParams = Depends(_trend_query),
+    start_date: date = Query(
+        ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
+    ),
+    end_date: date = Query(
+        ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
+    ),
+    granularity: str = Query("day", description="粒度（仅支持 day）", examples=["day"]),
     svc: LitellmService = Depends(get_litellm_svc),
     _user: TokenData = Depends(_require_usage_read),
 ):
-    _validate_dates(q.start_date, q.end_date)
-    _validate_granularity(q.granularity)
-    user_id = _resolve_user_id(_user, q.user_id)
+    _validate_dates(start_date, end_date)
+    _validate_granularity(granularity)
+    user_id = _user.user_id if _user.role != "admin" else None
     data = await svc.get_usage_trend(
-        start_date=q.start_date,
-        end_date=q.end_date,
-        granularity=q.granularity,
+        start_date=start_date,
+        end_date=end_date,
+        granularity=granularity,
         user_id=user_id,
     )
     return ApiResponse(data=data)
@@ -114,22 +84,53 @@ async def usage_trend(
     response_model=ApiResponse[ModelUsageResponse],
     summary="模型用量分布",
     description=(
-        "各模型的用量分布及成本占比。直连 PG 按 `model` 列 GROUP BY。\n\n"
-        "**返回**: 每模型 tokens、requests、cost、pct（占比百分比）。按 cost 降序。"
+        "各模型的用量分布及成本占比。直连 PG 按 `model_id + model_group` 聚合，"
+        "模型名通过 `LiteLLM_ProxyModelTable` 映射，已删除模型归类为『已删除模型』。\n\n"
+        "**返回**: 每模型 tokens、requests、cost、pct（占比百分比）。按请求数降序。\n\n"
+        "**权限**: 仅管理员。"
     ),
 )
 async def usage_by_model(
-    start_date: str = Query(
+    start_date: date = Query(
         ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
     ),
-    end_date: str = Query(
+    end_date: date = Query(
         ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
     ),
     svc: LitellmService = Depends(get_litellm_svc),
     _admin: TokenData = Depends(require_admin),
 ):
     _validate_dates(start_date, end_date)
-    data = await svc.get_usage_by_model(start_date=start_date, end_date=end_date)
+    data = await svc.get_usage_by_model(
+        start_date=start_date, end_date=end_date
+    )
+    return ApiResponse(data=data)
+
+
+@router.get(
+    "/model-trend",
+    response_model=ApiResponse[ModelTrendResponse],
+    summary="模型用量趋势",
+    description=(
+        "按天+模型分组的调用趋势，供堆叠柱状图使用。"
+        "直连 PG 按 `date + model_group` GROUP BY，模型名通过 `LiteLLM_ProxyModelTable` 映射，已删除模型归类为『已删除模型』。\n\n"
+        "**权限**: 仅管理员。"
+    ),
+)
+async def usage_model_trend(
+    start_date: date = Query(
+        ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
+    ),
+    end_date: date = Query(
+        ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
+    ),
+    svc: LitellmService = Depends(get_litellm_svc),
+    _admin: TokenData = Depends(require_admin),
+):
+    _validate_dates(start_date, end_date)
+    data = await svc.get_model_trend(
+        start_date=start_date, end_date=end_date
+    )
     return ApiResponse(data=data)
 
 
@@ -139,17 +140,18 @@ async def usage_by_model(
     summary="用户用量排行",
     description=(
         "用户用量排行 Top N。直连 PG 按 `user_id` GROUP BY，按 token 用量降序取前 N 名。\n\n"
-        "**top 参数**: 默认 10，范围 1-100。"
+        "**top 参数**: 默认 10，范围 1-100。\n\n"
+        "**权限**: 仅管理员。"
     ),
 )
 async def usage_by_user(
-    start_date: str = Query(
+    start_date: date = Query(
         ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
     ),
-    end_date: str = Query(
+    end_date: date = Query(
         ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
     ),
-    top: int = Query(10, ge=1, le=100, description="返回 Top N 名"),
+    top: int = Query(10, ge=-1, description="返回 Top N 名（-1=全量，0=空，超过实际用户数自动回退到最大值）"),
     svc: LitellmService = Depends(get_litellm_svc),
     _admin: TokenData = Depends(require_admin),
 ):
@@ -165,25 +167,24 @@ async def usage_by_user(
     response_model=ApiResponse[UserUsageDetailResponse],
     summary="指定用户每日活动",
     description=(
-        "查询指定用户每日的 Token/请求数/成本明细。直连 PG 按 `user_id` 过滤 + `date` GROUP BY。\n\n"
-        "**user_id**: 必填，LiteLLM 用户 ID。"
+        "查询当前用户每日的 Token/请求数/成本明细及请求成功率。"
+        "直连 PG 按 `user_id` 过滤 + `date` GROUP BY。\n\n"
+        "**权限**: 普通用户只能查自己的数据。"
     ),
 )
 async def usage_user(
-    user_id: str = Query(..., description="用户 ID", examples=["alice"]),
-    start_date: str = Query(
+    start_date: date = Query(
         ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
     ),
-    end_date: str = Query(
+    end_date: date = Query(
         ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
     ),
     svc: LitellmService = Depends(get_litellm_svc),
     _user: TokenData = Depends(_require_usage_read),
 ):
     _validate_dates(start_date, end_date)
-    user_id = _resolve_user_id(_user, user_id)
     data = await svc.get_user_usage(
-        user_id=user_id,
+        user_id=_user.user_id,
         start_date=start_date,
         end_date=end_date,
     )
@@ -195,17 +196,19 @@ async def usage_user(
     response_model=ApiResponse[OverviewResponse],
     summary="全部用户总览",
     description=(
-        "全部用户用量总览 + 每日趋势。直连 PG 执行两次查询：\n\n"
+        "全部用户用量总览 + 每日趋势 + 请求成功率。直连 PG 执行三次查询：\n\n"
         "1. 按 `user_id` GROUP BY → 用户汇总（total_tokens / total_requests / total_cost）\n"
-        "2. 按 `date` GROUP BY → 每日趋势\n\n"
+        "2. 按 `date` GROUP BY → 每日趋势（含活跃用户数）\n"
+        "3. 按 `status` 统计 → 请求成功率\n\n"
+        "**权限**: 仅管理员。\n"
         "**适用场景**: 管理员 Dashboard 首页。"
     ),
 )
 async def usage_overview(
-    start_date: str = Query(
+    start_date: date = Query(
         ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
     ),
-    end_date: str = Query(
+    end_date: date = Query(
         ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
     ),
     svc: LitellmService = Depends(get_litellm_svc),
@@ -213,4 +216,32 @@ async def usage_overview(
 ):
     _validate_dates(start_date, end_date)
     data = await svc.get_usage_overview(start_date=start_date, end_date=end_date)
+    return ApiResponse(data=data)
+
+
+@router.get(
+    "/user-model-trend",
+    response_model=ApiResponse[ModelTrendResponse],
+    summary="用户模型调用趋势",
+    description=(
+        "查询当前用户按天+模型分组的调用趋势，供个人视图堆叠柱状图使用。\n\n"
+        "**权限**: 普通用户只能查自己的数据。"
+    ),
+)
+async def usage_user_model_trend(
+    start_date: date = Query(
+        ..., description="开始日期 YYYY-MM-DD", examples=["2026-07-01"]
+    ),
+    end_date: date = Query(
+        ..., description="结束日期 YYYY-MM-DD", examples=["2026-07-09"]
+    ),
+    svc: LitellmService = Depends(get_litellm_svc),
+    _user: TokenData = Depends(_require_usage_read),
+):
+    _validate_dates(start_date, end_date)
+    data = await svc.get_user_model_trend(
+        user_id=_user.user_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return ApiResponse(data=data)

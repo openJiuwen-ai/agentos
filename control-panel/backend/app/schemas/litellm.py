@@ -1,6 +1,6 @@
 """Pydantic 请求/响应模型 — LitellmService（模型管理）"""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
@@ -221,8 +221,8 @@ class TrendItem(BaseModel):
 class TrendResponse(BaseModel):
     """趋势响应"""
 
-    start_date: str
-    end_date: str
+    start_date: date
+    end_date: date
     granularity: str
     items: list[TrendItem]
 
@@ -272,9 +272,10 @@ class UserUsageDetailResponse(BaseModel):
     """指定用户用量详情"""
 
     user_id: str
-    start_date: str
-    end_date: str
+    start_date: date
+    end_date: date
     daily_activity: list[DailyActivity]
+    success_rate: float = 0.0
 
 
 class OverviewUserItem(BaseModel):
@@ -296,10 +297,29 @@ class OverviewDailyItem(BaseModel):
     active_users: int = 0
 
 
+class ModelTrendItem(BaseModel):
+    """模型趋势项（按天+模型）"""
+
+    date: str
+    model: str
+    tokens: int = 0
+    requests: int = 0
+    cost: float = 0.0
+
+
+class ModelTrendResponse(BaseModel):
+    """模型趋势响应"""
+
+    start_date: date
+    end_date: date
+    items: list[ModelTrendItem]
+
+
 class OverviewResponse(BaseModel):
     """全部用户总览"""
 
-    start_date: str
-    end_date: str
+    start_date: date
+    end_date: date
     users: list[OverviewUserItem]
     daily: list[OverviewDailyItem]
+    success_rate: float = 0.0

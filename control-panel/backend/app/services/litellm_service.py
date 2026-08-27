@@ -11,7 +11,7 @@ import base64
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -32,6 +32,15 @@ from app.models.litellm_user_key import LitellmUserKey, CreateKeyExtras
 logger = logging.getLogger(__name__)
 
 METRICS_JOB_KEY = "grafana_job_name"
+
+# ── LiteLLM 系统内部 key 名（写死在 LiteLLM 源码中，用于从统计中过滤系统流量）──
+# 这些 key 不是真实用户生成的，LiteLLM 用它们发起内部请求，若混入用量统计会虚增数据：
+# - _SYSTEM_API_KEY_HEALTH_CHECK: LiteLLM 对模型发心跳探活请求时使用的 key
+# - _SYSTEM_API_KEY_MASTER:      管理员 master key 发起的请求（如管理面初始化时的探测）
+# - _SYSTEM_API_KEY_NONE:        某些异常/无 key 的请求，LiteLLM 会记成字符串 "None"
+_SYSTEM_API_KEY_HEALTH_CHECK = "litellm-internal-health-check"
+_SYSTEM_API_KEY_MASTER = "litellm_proxy_master_key"
+_SYSTEM_API_KEY_NONE = "None"
 
 
 # ─── 辅助 dataclass ──────────────────────────────────────────────────────────────
@@ -1121,7 +1130,18 @@ class LitellmService:
     # 使用统计（直连 LiteLLM PG 的 LiteLLM_SpendLogs 表，不经过 HTTP API）
     # ═══════════════════════════════════════════════════════════════════════════
 
-    _SPEND_TABLE = '"LiteLLM_SpendLogs"'
+    # LiteLLM PG 表名（与 spend 日志同库，通过 LITELLM_DATABASE_URL 连接）
+    _SPEND_TABLE = '"LiteLLM_SpendLogs"'                 # 调用日志：每次请求的 token/花费/状态等
+    _TOKEN_TABLE = '"LiteLLM_VerificationToken"'        # 活跃 API Key：用户当前持有的 key
+    _DELETED_TOKEN_TABLE = '"LiteLLM_DeletedVerificationToken"'  # 已删除 API Key：用户删过的 key（历史数据仍需统计）
+    _PROXY_MODEL_TABLE = '"LiteLLM_ProxyModelTable"'    # 模型注册表：model_id → model_name 映射，用于解析日志中的模型名
+    # 过滤系统内部流量：key 黑名单 + user 非空 + model_id 非空（确保只统计真实模型调用）
+    _USER_TRAFFIC_FILTER = (
+        f"AND api_key IS NOT NULL "
+        f"AND api_key NOT IN ('{_SYSTEM_API_KEY_HEALTH_CHECK}', '{_SYSTEM_API_KEY_MASTER}', '{_SYSTEM_API_KEY_NONE}') "
+        f'AND "user" IS NOT NULL AND "user" != \'\' '
+        f'AND model_id IS NOT NULL AND model_id != \'\''
+    )
 
     def _get_spend_session(self) -> AsyncSession:
         """获取 LiteLLM 数据库会话（懒初始化引擎）。
@@ -1148,20 +1168,15 @@ class LitellmService:
 
     async def _query_spend(
         self,
-        db: AsyncSession | None,
         sql: str,
         params: dict,
     ) -> list[Any]:
-        """执行 spend 查询。
-
-        - ``db`` 非 None 时使用传入的会话（测试/兼容），调用方负责关闭。
-        - ``db`` 为 None 时自动从 LiteLLM 数据库获取会话，方法内关闭。
+        """执行 spend 查询 — 自动从 LiteLLM 数据库获取会话，方法内关闭。
 
         表/列不存在（如 LiteLLM 未初始化）→ 返回空列表，不影响 Dashboard 展示。
         连接断开、权限不足等真实故障 → 异常向上传播，触发 500 告警。
         """
-        session = db or self._get_spend_session()
-        owns = db is None
+        session = self._get_spend_session()
         try:
             result = await session.execute(text(sql), params)
             return list(result.fetchall())
@@ -1172,8 +1187,7 @@ class LitellmService:
             )
             return []
         finally:
-            if owns:
-                await session.close()
+            await session.close()
 
     # ── SQL 片段：date_column / user_column ──────────────────────────────────
     # LiteLLM_SpendLogs 用 "startTime" 存时间戳、user 存用户 ID
@@ -1181,26 +1195,18 @@ class LitellmService:
     _DATE_COL = 'date("startTime")'
     _USER_COL = '"user"'
 
-    @staticmethod
-    def _to_date(s: str):
-        """字符串 → date 对象（asyncpg 不接受字符串与 PG date 列比较）。"""
-        from datetime import date
-
-        return date.fromisoformat(s)
-
     async def get_usage_trend(
         self,
-        db: AsyncSession | None = None,
-        start_date: str = "",
-        end_date: str = "",
+        start_date: date,
+        end_date: date,
         granularity: str = "day",
         user_id: str | None = None,
     ) -> dict:
         """趋势图 — 按天聚合请求级 spend 数据。"""
         user_filter = ""
         params: dict[str, Any] = {
-            "start_date": self._to_date(start_date),
-            "end_date": self._to_date(end_date),
+            "start_date": start_date,
+            "end_date": end_date,
         }
         if user_id:
             user_filter = f"AND {self._USER_COL} = :user_id"
@@ -1215,11 +1221,12 @@ class LitellmService:
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
             {user_filter}
+            {self._USER_TRAFFIC_FILTER}
             GROUP BY {self._DATE_COL}
             ORDER BY {self._DATE_COL}
         """
 
-        rows = await self._query_spend(db, sql, params)
+        rows = await self._query_spend(sql, params)
 
         items = [
             {
@@ -1238,60 +1245,185 @@ class LitellmService:
             "items": items,
         }
 
+    async def _get_proxy_model_name_map(self) -> dict[str, str]:
+        """查询 LiteLLM_ProxyModelTable，返回 model_id -> model_name 映射。
+
+        ProxyModelTable 与 spend 表同库（LiteLLM PG），作为模型名权威来源：
+        存在则用其 model_name 展示；查询失败（表未初始化等）返回空 dict，
+        调用方会把带 model_id 的记录归为『已删除模型』。
+        """
+        sql = f'SELECT model_id, model_name FROM {self._PROXY_MODEL_TABLE}'
+        rows = await self._query_spend(sql, {})
+        return {row[0]: row[1] for row in rows if row[0]}
+
     async def get_usage_by_model(
         self,
-        db: AsyncSession | None = None,
-        start_date: str = "",
-        end_date: str = "",
+        start_date: date,
+        end_date: date,
     ) -> dict:
-        """模型用量分布 — GROUP BY model + 占比计算。"""
+        """模型用量分布 — GROUP BY model_id + 映射 ProxyModelTable 展示名。"""
         params = {
-            "start_date": self._to_date(start_date),
-            "end_date": self._to_date(end_date),
+            "start_date": start_date,
+            "end_date": end_date,
         }
 
         sql = f"""
             SELECT
-                model,
+                COALESCE(NULLIF(model_id, ''), model) AS key_col,
+                COALESCE(NULLIF(model_group, ''), model) AS display_model,
+                model_id,
                 COALESCE(SUM("total_tokens"), 0) AS tokens,
                 COALESCE(COUNT(*), 0) AS requests,
                 COALESCE(SUM(spend), 0) AS cost
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
-            GROUP BY model
-            ORDER BY cost DESC
+              {self._USER_TRAFFIC_FILTER}
+            GROUP BY key_col, display_model, model_id
+            ORDER BY requests DESC
         """
 
-        rows = await self._query_spend(db, sql, params)
+        rows = await self._query_spend(sql, params)
 
-        total_cost = sum(float(row[3]) for row in rows) or 1.0
+        # 模型名权威来源：LiteLLM_ProxyModelTable（同 spend 库）
+        # 有 model_id 的记录（含已删除模型）一律用它映射；查不到 → 已删除模型
+        name_map = await self._get_proxy_model_name_map()
 
-        items = [
-            {
-                "model": row[0],
-                "tokens": row[1],
-                "requests": row[2],
-                "cost": float(row[3]),
-                "pct": round(float(row[3]) / total_cost * 100, 1),
-            }
-            for row in rows
-        ]
+        total_cost = sum(float(row[5]) for row in rows) or 1.0
+
+        # 按展示名聚合（有 model_id 用注册名，查不到归为已删除）
+        agg: dict[str, dict[str, int | float]] = {}
+        for row in rows:
+            mid = row[2] or ""
+            display = row[1]
+            if mid:
+                display = name_map.get(mid, "已删除模型")
+            if display not in agg:
+                agg[display] = {"tokens": 0, "requests": 0, "cost": 0.0}
+            agg[display]["tokens"] += row[3]
+            agg[display]["requests"] += row[4]
+            agg[display]["cost"] += float(row[5])
+
+        items = []
+        for display, vals in agg.items():
+            items.append({
+                "model": display,
+                "tokens": vals["tokens"],
+                "requests": vals["requests"],
+                "cost": vals["cost"],
+                "pct": round(vals["cost"] / total_cost * 100, 1),
+            })
+        items.sort(key=lambda x: x["requests"], reverse=True)
 
         return {"items": items}
 
+    async def _query_model_trend(
+        self,
+        start_date: date,
+        end_date: date,
+        user_id: str | None = None,
+    ) -> dict:
+        """按天+模型分组查询调用趋势，支持可选用户过滤。"""
+        params: dict[str, Any] = {
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        user_filter = ""
+        if user_id:
+            user_filter = f"AND {self._USER_COL} = :user_id"
+            params["user_id"] = user_id
+
+        # 排除系统内部流量（含无 model_id 的非模型调用）
+        traffic_filter = self._USER_TRAFFIC_FILTER
+
+        sql = f"""
+            SELECT
+                {self._DATE_COL} AS time_bucket,
+                COALESCE(NULLIF(model_group, ''), model) AS display_model,
+                model_id,
+                COALESCE(SUM("total_tokens"), 0) AS tokens,
+                COALESCE(COUNT(*), 0) AS requests,
+                COALESCE(SUM(spend), 0) AS cost
+            FROM {self._SPEND_TABLE}
+            WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+            {user_filter}
+            {traffic_filter}
+            GROUP BY time_bucket, display_model, model_id
+            ORDER BY time_bucket, display_model
+        """
+
+        rows = await self._query_spend(sql, params)
+
+        # 模型名权威来源：LiteLLM_ProxyModelTable（同 spend 库）
+        # 有 model_id 的记录（含已删除模型）一律用它映射；查不到 → 已删除模型
+        name_map = await self._get_proxy_model_name_map()
+
+        # 按 (date, display_model) 聚合：
+        # 有 model_id 用 ProxyModelTable 的注册名（已删除的归为"已删除模型"）
+        agg: dict[tuple[str, str], dict[str, float | int]] = {}
+        for row in rows:
+            date_val = row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0])
+            date_key = date_val[:10]
+            mid = row[2] or ""
+            display = row[1]
+            if mid:
+                display = name_map.get(mid, "已删除模型")
+            key = (date_key, display)
+            if key not in agg:
+                agg[key] = {"tokens": 0, "requests": 0, "cost": 0.0}
+            agg[key]["tokens"] += row[3]
+            agg[key]["requests"] += row[4]
+            agg[key]["cost"] += float(row[5])
+
+        items = [
+            {"date": k[0], "model": k[1], "tokens": v["tokens"], "requests": v["requests"], "cost": v["cost"]}
+            for k, v in agg.items()
+        ]
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "items": items,
+        }
+
+    async def get_model_trend(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict:
+        """模型趋势 — 按天+模型分组，用于堆叠柱状图。"""
+        return await self._query_model_trend(start_date=start_date, end_date=end_date)
+
+
     async def get_usage_by_user(
         self,
-        db: AsyncSession | None = None,
-        start_date: str = "",
-        end_date: str = "",
+        start_date: date,
+        end_date: date,
         top: int = 10,
     ) -> dict:
-        """用户用量排行 — GROUP BY user + ORDER BY tokens DESC LIMIT N。"""
+        """用户用量排行 — GROUP BY user + ORDER BY tokens DESC。top=-1 表示全量，top=0 返回空。"""
         params = {
-            "start_date": self._to_date(start_date),
-            "end_date": self._to_date(end_date),
-            "top": top,
+            "start_date": start_date,
+            "end_date": end_date,
         }
+
+        # 查询实际用户总数，若 top 超过总数则自动回退到总数（避免 LIMIT 超范围）
+        count_sql = f"""
+            SELECT COUNT(DISTINCT {self._USER_COL})
+            FROM {self._SPEND_TABLE}
+            WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
+        """
+        count_rows = await self._query_spend(count_sql, params)
+        total_users = count_rows[0][0] if count_rows else 0
+
+        limit_clause = ""
+        if top == -1:
+            pass  # 全量：不加 LIMIT
+        elif top == 0:
+            limit_clause = "LIMIT 0"
+        else:
+            limit_clause = "LIMIT :top"
+            params["top"] = min(top, total_users) if total_users > 0 else top
 
         sql = f"""
             SELECT
@@ -1301,12 +1433,13 @@ class LitellmService:
                 COALESCE(SUM(spend), 0) AS cost
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
             GROUP BY {self._USER_COL}
             ORDER BY tokens DESC, cost DESC
-            LIMIT :top
+            {limit_clause}
         """
 
-        rows = await self._query_spend(db, sql, params)
+        rows = await self._query_spend(sql, params)
 
         items = [
             {
@@ -1334,16 +1467,15 @@ class LitellmService:
 
     async def get_user_usage(
         self,
-        db: AsyncSession | None = None,
-        user_id: str = "",
-        start_date: str = "",
-        end_date: str = "",
+        user_id: str,
+        start_date: date,
+        end_date: date,
     ) -> dict:
         """指定用户每日用量明细 — WHERE user + GROUP BY date。"""
         params = {
             "user_id": user_id,
-            "start_date": self._to_date(start_date),
-            "end_date": self._to_date(end_date),
+            "start_date": start_date,
+            "end_date": end_date,
         }
 
         sql = f"""
@@ -1355,11 +1487,12 @@ class LitellmService:
             FROM {self._SPEND_TABLE}
             WHERE {self._USER_COL} = :user_id
               AND {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
             GROUP BY {self._DATE_COL}
             ORDER BY {self._DATE_COL}
         """
 
-        rows = await self._query_spend(db, sql, params)
+        rows = await self._query_spend(sql, params)
 
         daily_activity = [
             {
@@ -1371,23 +1504,48 @@ class LitellmService:
             for row in rows
         ]
 
+        # 该用户的成功率
+        sql_success = f"""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success
+            FROM {self._SPEND_TABLE}
+            WHERE {self._USER_COL} = :user_id
+              AND {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
+        """
+        rows3 = await self._query_spend(sql_success, params)
+        total = rows3[0][0] if rows3 else 0
+        success = rows3[0][1] if rows3 else 0
+        success_rate = round(success / total * 100, 1) if total > 0 else 0.0
+
         return {
             "user_id": user_id,
             "start_date": start_date,
             "end_date": end_date,
             "daily_activity": daily_activity,
+            "success_rate": success_rate,
         }
+
+    async def get_user_model_trend(
+        self,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict:
+        """指定用户按天+模型分组 — 用于个人视图堆叠柱状图。"""
+        return await self._query_model_trend(user_id=user_id, start_date=start_date, end_date=end_date)
+
 
     async def get_usage_overview(
         self,
-        db: AsyncSession | None = None,
-        start_date: str = "",
-        end_date: str = "",
+        start_date: date,
+        end_date: date,
     ) -> dict:
         """全部用户总览 — 按 user 聚合总量 + 按 date 聚合每日趋势。"""
         params = {
-            "start_date": self._to_date(start_date),
-            "end_date": self._to_date(end_date),
+            "start_date": start_date,
+            "end_date": end_date,
         }
 
         sql_users = f"""
@@ -1398,10 +1556,11 @@ class LitellmService:
                 COALESCE(SUM(spend), 0) AS total_cost
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
             GROUP BY {self._USER_COL}
             ORDER BY total_cost DESC
         """
-        rows1 = await self._query_spend(db, sql_users, params)
+        rows1 = await self._query_spend(sql_users, params)
         users = [
             {
                 "user_id": row[0],
@@ -1421,10 +1580,11 @@ class LitellmService:
                 COALESCE(COUNT(DISTINCT {self._USER_COL}), 0) AS active_users
             FROM {self._SPEND_TABLE}
             WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
             GROUP BY {self._DATE_COL}
             ORDER BY {self._DATE_COL}
         """
-        rows2 = await self._query_spend(db, sql_daily, params)
+        rows2 = await self._query_spend(sql_daily, params)
         daily = [
             {
                 "date": row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0]),
@@ -1436,9 +1596,24 @@ class LitellmService:
             for row in rows2
         ]
 
+        # 成功率
+        sql_success = f"""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success
+            FROM {self._SPEND_TABLE}
+            WHERE {self._DATE_COL} BETWEEN :start_date AND :end_date
+              {self._USER_TRAFFIC_FILTER}
+        """
+        rows3 = await self._query_spend(sql_success, params)
+        total = rows3[0][0] if rows3 else 0
+        success = rows3[0][1] if rows3 else 0
+        success_rate = round(success / total * 100, 1) if total > 0 else 0.0
+
         return {
             "start_date": start_date,
             "end_date": end_date,
             "users": users,
             "daily": daily,
+            "success_rate": success_rate,
         }

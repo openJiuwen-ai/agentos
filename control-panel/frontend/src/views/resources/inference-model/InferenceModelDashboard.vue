@@ -34,7 +34,7 @@ import personIcon from '@/assets/images/person.svg';
 import dataStatisticsIcon from '@/assets/images/data_statistics.svg';
 
 const router = useRouter();
-const { effectiveIsAdmin: isAdmin, userId } = useAuth();
+const { effectiveIsAdmin: isAdmin } = useAuth();
 const loading = ref(false);
 const listError = ref('');
 
@@ -68,7 +68,6 @@ const filters = [
   { key: 'all', label: '全部状态' },
   { key: 'healthy', label: '健康' },
   { key: 'unhealthy', label: '异常' },
-  { key: 'unknown', label: '未知' },
 ];
 
 const filteredModels = computed(() => {
@@ -84,37 +83,46 @@ const overviewData = ref({
 });
 const overviewError = ref('');
 const activeUsersCount = ref(0);
+const successRate = ref(0);
 
-const overviewCards = computed(() => [
-  {
-    key: 'requests',
-    title: '调用次数',
-    value: overviewData.value.today.requests.toLocaleString(),
-    desc: '今日调用次数',
-    icon: apiCallIcon,
-  },
-  {
-    key: 'tokens',
-    title: 'Token数',
-    value: formatTokens(overviewData.value.today.tokens),
-    desc: '今日Token使用量',
-    icon: tokenIcon,
-  },
-  {
-    key: 'users',
-    title: '用户',
-    value: isAdmin.value ? String(activeUsersCount.value) : '--',
-    desc: '近一周活跃用户数',
-    icon: personIcon,
-  },
-  {
+const overviewCards = computed(() => {
+  const cards = [
+    {
+      key: 'requests',
+      title: '调用次数',
+      value: overviewData.value.today.requests.toLocaleString(),
+      desc: '今日调用次数',
+      icon: apiCallIcon,
+    },
+    {
+      key: 'tokens',
+      title: 'Token数',
+      value: formatTokens(overviewData.value.today.tokens),
+      desc: '今日Token使用量',
+      icon: tokenIcon,
+    },
+  ];
+
+  if (isAdmin.value) {
+    cards.push({
+      key: 'users',
+      title: '用户',
+      value: String(activeUsersCount.value),
+      desc: '近一周活跃用户数',
+      icon: personIcon,
+    });
+  }
+
+  cards.push({
     key: 'status',
     title: '调用状况',
-    value: '--',
-    desc: '实时并发数 QPS',
+    value: successRate.value >= 0 ? successRate.value + '%' : '--',
+    desc: '近一周请求成功率',
     icon: dataStatisticsIcon,
-  },
-]);
+  });
+
+  return cards;
+});
 
 async function loadOverviewData() {
   overviewError.value = '';
@@ -133,18 +141,13 @@ async function loadOverviewData() {
         total: calculateOverviewTotals(totalRes),
       };
       activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
+      successRate.value = weekRes.success_rate ?? 0;
     } else {
       // 普通用户：使用 /user 接口获取自己的数据
-      const uid = userId.value;
-      if (!uid) {
-        overviewError.value = '无法获取用户信息';
-        return;
-      }
-
       const [todayRes, weekRes, totalRes] = await Promise.all([
-        fetchUserUsage({ user_id: uid, ...getDateRange(0) }),
-        fetchUserUsage({ user_id: uid, ...getDateRange(7) }),
-        fetchUserUsage({ user_id: uid, ...getDateRange(USAGE_ALL_TIME_START) }),
+        fetchUserUsage(getDateRange(0)),
+        fetchUserUsage(getDateRange(7)),
+        fetchUserUsage({ start_date: USAGE_ALL_TIME_START, end_date: getDateRange(0).end_date }),
       ]);
 
       overviewData.value = {
@@ -153,6 +156,7 @@ async function loadOverviewData() {
         total: calculateUserTotals(totalRes),
       };
       activeUsersCount.value = 0;
+      successRate.value = weekRes.success_rate ?? 0;
     }
   } catch (e) {
     console.error('加载调用概览数据失败:', e);
@@ -362,7 +366,7 @@ onMounted(() => {
         </ElButton>
       </div>
       <ElAlert v-if="overviewError" :title="`加载失败: ${overviewError}`" type="error" show-icon :closable="false" />
-      <div v-else class="analysis-grid">
+      <div v-else class="analysis-grid" :class="{ 'analysis-grid--three': !isAdmin }">
         <OverviewStatCard
           v-for="card in overviewCards"
           :key="card.key"
@@ -478,6 +482,10 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px;
+}
+
+.analysis-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .model-section__actions {

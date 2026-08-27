@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElTag, ElSkeleton, ElResult, ElButton, ElIcon } from 'element-plus';
 import { ArrowLeft, Monitor } from '@element-plus/icons-vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
-import { fetchModelDetail, updateModel } from '@/api/inference';
+import { fetchModelDetail, updateModel, fetchGatewayConfig } from '@/api/inference';
 import type { ModelDetail } from '@/api/inference';
 import PerformanceMonitor from './PerformanceMonitor.vue';
 import { useAuth } from '@/composables/useAuth';
@@ -19,14 +19,18 @@ const error = ref<string | null>(null);
 const modelData = ref<ModelDetail | null>(null);
 const drawerVisible = ref(false);
 const drawerMode = ref<'view' | 'edit'>('view');
+const gatewayUrl = ref('');
 
 const metadata = computed(() => {
   if (!modelData.value) return [];
   const d = modelData.value;
+  const apiBase = !isAdmin.value && gatewayUrl.value
+    ? gatewayUrl.value
+    : d.litellm_params?.api_base || '--';
   const items = [
     { label: '模型名称', value: d.model_name || '--', isTag: false },
     { label: '模型类型', value: d.litellm_params?.model || '--', isTag: false },
-    { label: 'API Base', value: d.litellm_params?.api_base || '--', isTag: false },
+    { label: 'API Base', value: apiBase, isTag: false },
     { label: '创建时间', value: formatDateTime(d.created_at), isTag: false },
     { label: '更新时间', value: formatDateTime(d.updated_at), isTag: false },
   ];
@@ -92,6 +96,9 @@ watch(
 );
 onMounted(() => {
   loadModelDetail();
+  fetchGatewayConfig().then((cfg) => {
+    if (cfg?.gateway_url) gatewayUrl.value = cfg.gateway_url;
+  }).catch(() => {});
 });
 </script>
 
@@ -136,16 +143,16 @@ onMounted(() => {
         :inference-engine="modelData.inference_engine"
         :grafana-job-name="modelData.grafana_job_name"
       />
-    </template>
 
-    <ModelInfoDrawer
-      :visible="drawerVisible"
-      :mode="drawerMode"
-      :model="modelData"
-      @close="drawerVisible = false"
-      @edit="drawerMode = 'edit'"
-      @save="handleSave"
-    />
+      <ModelInfoDrawer
+        :visible="drawerVisible"
+        :mode="drawerMode"
+        :model="modelData"
+        @close="drawerVisible = false"
+        @edit="drawerMode = 'edit'"
+        @save="handleSave"
+      />
+    </template>
   </section>
 </template>
 
@@ -197,28 +204,6 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-.status-badge__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-secondary);
-}
-.status-badge--success .status-badge__dot {
-  background: var(--success);
-}
-.status-badge--error .status-badge__dot {
-  background: var(--error);
-}
-.status-badge--warning .status-badge__dot {
-  background: var(--alert);
 }
 .metadata-bar {
   display: flex;
