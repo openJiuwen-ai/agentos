@@ -29,16 +29,21 @@ export interface LiteLLMParams {
   [key: string]: unknown;
 }
 
+/** 模型监控抓取点 */
+export interface MetricsEndpoint {
+  inference_engine: string;
+  instance_url: string;
+  grafana_job_name?: string;
+}
+
 /** 模型列表项（后端返回格式） */
 export interface InferenceModelItem {
   id: string;
   model_name: string;
   litellm_params: LiteLLMParams;
   model_info: LiteLLMModelInfo;
-  instance_url?: string;
+  metrics_endpoints?: MetricsEndpoint[];
   max_concurrent?: number;
-  inference_engine?: string;
-  grafana_job_name?: string;
   status?: string;
   created_at?: string;
   updated_at?: string;
@@ -50,10 +55,8 @@ export interface ModelDetail {
   model_name: string;
   litellm_params: LiteLLMParams;
   model_info: LiteLLMModelInfo;
-  instance_url?: string;
+  metrics_endpoints?: MetricsEndpoint[];
   max_concurrent?: number;
-  inference_engine?: string;
-  grafana_job_name?: string;
   status?: string;
   created_at?: string;
   updated_at?: string;
@@ -133,9 +136,8 @@ export async function restartModel(model_id: string) {
 export async function createModel(data: {
   model_name: string;
   litellm_params: LiteLLMParams;
-  instance_url?: string;
+  metrics_endpoints?: MetricsEndpoint[];
   max_concurrent?: number;
-  inference_engine?: string;
   model_info?: LiteLLMModelInfo;
 }) {
   return post<InferenceModelItem>('/api/v1/litellm/model', data);

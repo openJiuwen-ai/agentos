@@ -19,32 +19,47 @@ class TestLitellmModelParams:
         row = await LitellmModelParams.upsert(
             db_session, "uuid-123", "deepseek-chat",
             LocalModelExtension(
-                instance_url="https://example.com:8000/v1",
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com:8000/v1",
+                }],
                 extra_params={"region": "cn-east"},
             ),
         )
         assert row.id == "uuid-123"
         assert row.model_name == "deepseek-chat"
-        assert row.instance_url == "https://example.com:8000/v1"
+        assert row.metrics_endpoints == [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://example.com:8000/v1",
+        }]
         assert row.extra_params == {"region": "cn-east"}
 
     async def test_upsert_update(self, db_session):
         """
-        场景: 重复 upsert 同一 model_id, 只改 instance_url.
+        场景: 重复 upsert 同一 model_id, 只改 metrics_endpoints.
 
-        预期: instance_url 更新为新值
+        预期: metrics_endpoints 更新为新值
         """
         await LitellmModelParams.upsert(
             db_session, "uuid-123", "deepseek-chat",
             LocalModelExtension(
-                instance_url="https://old-url.example.com/v1",
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://old-url.example.com/v1",
+                }],
             ),
         )
         row = await LitellmModelParams.upsert(
             db_session, "uuid-123", "deepseek-chat",
-            LocalModelExtension(instance_url="https://new-url.example.com/v1"),
+            LocalModelExtension(metrics_endpoints=[{
+                "inference_engine": "SGLang",
+                "instance_url": "https://new-url.example.com/v1",
+            }]),
         )
-        assert row.instance_url == "https://new-url.example.com/v1"
+        assert row.metrics_endpoints == [{
+            "inference_engine": "SGLang",
+            "instance_url": "https://new-url.example.com/v1",
+        }]
 
     async def test_get_by_names(self, db_session):
         """
@@ -228,7 +243,10 @@ class TestLitellmModelParams:
 
         row1 = await LitellmModelParams.upsert(
             db_session, "uuid-upd", "upd-model",
-            LocalModelExtension(instance_url="http://old"),
+            LocalModelExtension(metrics_endpoints=[{
+                "inference_engine": "vLLM",
+                "instance_url": "http://old",
+            }]),
         )
         ts1 = row1.updated_at
         assert isinstance(ts1, datetime)
@@ -237,7 +255,10 @@ class TestLitellmModelParams:
 
         await LitellmModelParams.upsert(
             db_session, "uuid-upd", "upd-model",
-            LocalModelExtension(instance_url="http://new"),
+            LocalModelExtension(metrics_endpoints=[{
+                "inference_engine": "vLLM",
+                "instance_url": "http://new",
+            }]),
         )
 
         row2 = await LitellmModelParams.get_by_id(db_session, "uuid-upd")

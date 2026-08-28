@@ -27,7 +27,12 @@ class TestListModelsAPI:
                 "id": "uuid-123", "model_name": "deepseek-chat",
                 "litellm_params": {"model": "deepseek/deepseek-chat"},
                 "model_info": None,
-                "instance_url": "https://example.com:8000/v1", "created_at": None,
+                "metrics_endpoints": [{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com:8000/v1",
+                    "grafana_job_name": "vllm-example.com:8000",
+                }],
+                "created_at": None,
             }],
         }
         with patch(
@@ -77,7 +82,11 @@ class TestGetModelAPI:
             "id": "uuid-123", "model_name": "deepseek-chat",
             "litellm_params": {"model": "deepseek-chat"},
             "model_info": {"description": "DeepSeek"},
-            "instance_url": "https://example.com:8000/v1",
+            "metrics_endpoints": [{
+                "inference_engine": "vLLM",
+                "instance_url": "https://example.com:8000/v1",
+                "grafana_job_name": "vllm-example.com:8000",
+            }],
             "max_concurrent": None, "created_at": None, "updated_at": None,
         }
         with patch(
@@ -111,7 +120,12 @@ class TestCreateModelAPI:
     async def test_success(self, client):
         mock = {
             "id": "uuid-new", "model_name": "deepseek-chat",
-            "instance_url": "https://example.com:8000/v1", "created_at": None,
+            "metrics_endpoints": [{
+                "inference_engine": "vLLM",
+                "instance_url": "https://example.com:8000/v1",
+                "grafana_job_name": "vllm-example.com:8000",
+            }],
+            "created_at": None,
         }
         with patch(
             "app.api.v1.litellm_model.LitellmService.create_model",
@@ -124,7 +138,10 @@ class TestCreateModelAPI:
                     "api_base": "https://api.deepseek.com/v1",
                 },
                 "model_info": {"description": "DeepSeek"},
-                "instance_url": "https://example.com:8000/v1",
+                "metrics_endpoints": [{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com:8000/v1",
+                }],
             })
             assert resp.status_code == 201
             assert resp.json()["data"]["model_name"] == "deepseek-chat"
@@ -146,7 +163,11 @@ class TestUpdateModelAPI:
     async def test_success(self, client):
         mock = {
             "id": "uuid-123", "model_name": "deepseek-chat",
-            "instance_url": "https://new.example.com/v1",
+            "metrics_endpoints": [{
+                "inference_engine": "SGLang",
+                "instance_url": "https://new.example.com/v1",
+                "grafana_job_name": "sglang-new.example.com:443",
+            }],
             "max_concurrent": None, "updated_at": None,
         }
         with patch(
@@ -155,7 +176,10 @@ class TestUpdateModelAPI:
         ):
             resp = await client.put("/api/v1/litellm/model/uuid-123", json={
                 "litellm_params": {"model": "deepseek/deepseek-chat", "api_key": "sk"},
-                "instance_url": "https://new.example.com/v1",
+                "metrics_endpoints": [{
+                    "inference_engine": "SGLang",
+                    "instance_url": "https://new.example.com/v1",
+                }],
             })
             assert resp.status_code == 200
 

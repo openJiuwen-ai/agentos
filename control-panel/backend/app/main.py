@@ -136,6 +136,25 @@ async def _create_log_tables(engine):
         await conn.execute(
             text("ALTER TABLE log_export_task ADD COLUMN IF NOT EXISTS query_spec TEXT")
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE litellm_model_params "
+                "ADD COLUMN IF NOT EXISTS metrics_endpoints JSON"
+            )
+        )
+        # 不再兼容旧字段：若存在则删除
+        await conn.execute(
+            text(
+                "ALTER TABLE litellm_model_params "
+                "DROP COLUMN IF EXISTS instance_url"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE litellm_model_params "
+                "DROP COLUMN IF EXISTS inference_engine"
+            )
+        )
 
 
 async def _seed_initial_model(litellm_svc: LitellmService) -> None:

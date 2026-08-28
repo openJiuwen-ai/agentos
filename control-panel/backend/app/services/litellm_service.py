@@ -51,9 +51,8 @@ class CreateModelExtras:
     """收敛 create_model 的可选参数（满足参数个数限制）。"""
 
     model_info: dict | None = None
-    instance_url: str | None = None
+    metrics_endpoints: list[dict] | None = None
     max_concurrent: int | None = None
-    inference_engine: str | None = None
 
 
 @dataclass
@@ -61,9 +60,8 @@ class UpdateModelExtras:
     """收敛 update_model 的可选参数（满足参数个数限制）。"""
 
     model_info: dict | None = None
-    instance_url: str | None = None
+    metrics_endpoints: list[dict] | None = None
     max_concurrent: int | None = None
-    inference_engine: str | None = None
 
 
 @dataclass
@@ -225,136 +223,163 @@ def _fetch_model_detail(
         "model_name": local.model_name if local else model_id,
         "litellm_params": m.get("litellm_params"),
         "model_info": m.get("model_info"),
-        "instance_url": local.instance_url if local else None,
+        "metrics_endpoints": _endpoints_from_local(local),
         "max_concurrent": local.max_concurrent if local else None,
-        "inference_engine": local.inference_engine if local else None,
-        "grafana_job_name": _grafana_job_from_local(local),
         "status": status,
         "created_at": local.created_at if local else None,
         "updated_at": local.updated_at if local else None,
     }
 
 
-def _grafana_job_from_local(local: LitellmModelParams | None) -> str | None:
-    """从本地 extra_params.grafana_job_name 取出 job 名。"""
-    if not local or not local.extra_params:
-        return None
-    value = local.extra_params.get(METRICS_JOB_KEY)
-    if value is not None and str(value).strip():
-        return str(value).strip()
-    return None
+def _endpoints_from_local(local: LitellmModelParams | None) -> list[dict]:
+    if not local or not local.metrics_endpoints:
+        return []
+    if not isinstance(local.metrics_endpoints, list):
+        return []
+    return [ep for ep in local.metrics_endpoints if isinstance(ep, dict)]
 
 
-def _require_inference_engine(
-    inference_engine: str | None = None,
-    local: LitellmModelParams | None = None,
-) -> str:
-    """取得用于拼 job 的推理引擎名
+def _normalize_endpoint_input(raw: list[dict] | None) -> list[dict]:
+    """校验并规范化前端传入的 endpoints（不含 grafana_job_name）。"""
+    if not raw:
+        return []
+    cleaned: list[dict] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise LitellmServiceError("metrics_endpoints 元素必须是对象")
+        engine = str(item.get("inference_engine") or "").strip()
+        url = str(item.get("instance_url") or "").strip()
+        if not engine:
+            raise LitellmServiceError("metrics_endpoints 缺少 inference_engine（部署框架）")
+        if not url:
+            raise LitellmServiceError("metrics_endpoints 缺少 instance_url（模型监控 URL）")
+        try:
+            target = agent_metrics_config.normalize_target(url)
+            job = agent_metrics_config.build_job(engine, target)
+        except agent_metrics_config.AgentMetricsConfigError as e:
+            raise LitellmServiceError(str(e)) from e
+        if job in seen:
+            continue
+        seen.add(job)
+        cleaned.append({
+            "inference_engine": engine,
+            "instance_url": url,
+        })
+    return cleaned
 
-    job 格式固定为 ``{inference_engine}-{target}``，由 agent_metrics_config.build_job 生成。
-    """
-    for value in (inference_engine, local.inference_engine if local else None):
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    raise LitellmServiceError(
-        "缺少 inference_engine（部署框架），无法维护 agent-metrics.json "
-        "（job 必须为 inference_engine-target）"
+
+def _jobs_from_endpoints(endpoints: list[dict] | None) -> set[str]:
+    jobs: set[str] = set()
+    for ep in endpoints or []:
+        job = ep.get("grafana_job_name")
+        if job is not None and str(job).strip():
+            jobs.add(str(job).strip())
+    return jobs
+
+
+@dataclass(frozen=True)
+class _MetricsJobCleanup:
+    """收敛 scrape job 清理参数（满足 G.FNM.03 参数个数限制）。"""
+
+    model_name: str
+    job: str
+    instance_url: str | None = None
+    inference_engine: str | None = None
+    exclude_id: str | None = None
+
+
+async def _remove_job_if_unreferenced(
+    db: AsyncSession,
+    cleanup: _MetricsJobCleanup,
+) -> bool:
+    """若 job 无其他模型引用则删除 scrape 条目。返回是否清理失败。"""
+    count = await LitellmModelParams.count_by_grafana_job(
+        db, cleanup.job, exclude_id=cleanup.exclude_id,
     )
-
-
-def _metrics_extra_from_local(local: LitellmModelParams | None) -> dict[str, str]:
-    job = _grafana_job_from_local(local)
-    if not job:
-        return {}
-    return {METRICS_JOB_KEY: job}
-
-
-async def _sync_metrics_on_create(
-    model_name: str,
-    instance_url: str | None,
-    inference_engine: str | None = None,
-) -> dict[str, str] | None:
-    if not instance_url:
-        return None
-    engine = _require_inference_engine(inference_engine)
+    if count > 0:
+        logger.info(
+            "job '%s' 仍被其他模型引用，跳过 agent-metrics 清理 (model='%s')",
+            cleanup.job, cleanup.model_name,
+        )
+        return False
     try:
-        # job = f"{inference_engine}-{target}"（引擎名小写）
-        job = await asyncio.to_thread(
-            agent_metrics_config.add_entry, engine, instance_url,
+        await asyncio.to_thread(
+            agent_metrics_config.remove_entry,
+            cleanup.job,
+            cleanup.instance_url,
+            cleanup.inference_engine,
         )
-    except agent_metrics_config.AgentMetricsConfigError as e:
-        logger.exception(
-            "Failed to update agent-metrics.json on create for model '%s'",
-            model_name,
+    except (agent_metrics_config.AgentMetricsConfigError, OSError) as e:
+        logger.warning(
+            "Failed to clean agent-metrics.json for model '%s' job '%s': %s. "
+            "Manual cleanup may be required.",
+            cleanup.model_name, cleanup.job, e,
         )
-        raise LitellmServiceError(str(e)) from e
-    return {METRICS_JOB_KEY: job}
+        return True
+    return False
 
 
-async def _sync_metrics_on_update(
+async def _sync_metrics_endpoints(
     db: AsyncSession,
     model_name: str,
     local: LitellmModelParams | None,
-    instance_url: str | None,
-    inference_engine: str | None = None,
-) -> dict[str, str] | None:
-    # None = 未修改该字段，沿用旧值；空串 = 用户清空了监控URL
-    effective_url = instance_url
-    if effective_url is None and local:
-        effective_url = local.instance_url
+    desired_raw: list[dict] | None,
+    *,
+    replace: bool,
+) -> list[dict] | None:
+    """同步 metrics_endpoints 到 agent-metrics.json，返回带 grafana_job_name 的列表。
 
-    # 用户清空了监控URL → 删除旧 job（此模型不再需要监控）
-    if effective_url is not None and not effective_url.strip():
-        old_extra = _metrics_extra_from_local(local)
-        old_job = old_extra.get(METRICS_JOB_KEY)
-        if old_job and local:
-            # 检查 job 是否被其他模型引用，被引用则跳过删除
-            count = await LitellmModelParams.count_by_grafana_job(
-                db, old_job, exclude_id=local.id,
-            )
-            if count > 0:
-                logger.info(
-                    "job '%s' 仍被其他模型引用，跳过 agent-metrics 清理 (model='%s')",
-                    old_job, model_name,
-                )
-            else:
-                try:
-                    await asyncio.to_thread(
-                        agent_metrics_config.remove_entry,
-                        old_job,
-                        local.instance_url,
-                        local.inference_engine,
-                    )
-                except (agent_metrics_config.AgentMetricsConfigError, OSError) as e:
-                    logger.warning(
-                        "Failed to clean agent-metrics.json for model '%s' "
-                        "after URL cleared: %s. Manual cleanup may be required.",
-                        model_name, e,
-                    )
-        # 返回空值清除本地 extra_params 里的 grafana_job_name
-        return {METRICS_JOB_KEY: ""}
-
-    if not effective_url:
+    replace=False 且 desired_raw is None：不改动（返回 None）。
+    replace=True：按 desired 全量替换（含空列表）。
+    """
+    if not replace:
         return None
 
-    old_extra = _metrics_extra_from_local(local)
-    old_job = old_extra.get(METRICS_JOB_KEY)
-    engine = _require_inference_engine(inference_engine, local)
+    desired = _normalize_endpoint_input(desired_raw)
+    old_endpoints = _endpoints_from_local(local)
+    old_jobs = _jobs_from_endpoints(old_endpoints)
+
+    synced: list[dict] = []
+    new_jobs: set[str] = set()
     try:
-        # job = f"{inference_engine}-{target}"（引擎名小写）
-        job = await asyncio.to_thread(
-            agent_metrics_config.update_entry,
-            old_job,
-            engine,
-            effective_url,
-        )
+        for ep in desired:
+            job = await asyncio.to_thread(
+                agent_metrics_config.add_entry,
+                ep["inference_engine"],
+                ep["instance_url"],
+            )
+            new_jobs.add(job)
+            synced.append({
+                "inference_engine": ep["inference_engine"],
+                "instance_url": ep["instance_url"],
+                "grafana_job_name": job,
+            })
     except agent_metrics_config.AgentMetricsConfigError as e:
         logger.exception(
-            "Failed to update agent-metrics.json on update for model '%s'",
+            "Failed to update agent-metrics.json for model '%s'",
             model_name,
         )
         raise LitellmServiceError(str(e)) from e
-    return {METRICS_JOB_KEY: job}
+
+    obsolete = old_jobs - new_jobs
+    for job in obsolete:
+        old_ep = next(
+            (e for e in old_endpoints if e.get("grafana_job_name") == job),
+            {},
+        )
+        await _remove_job_if_unreferenced(
+            db,
+            _MetricsJobCleanup(
+                model_name=model_name,
+                job=job,
+                instance_url=old_ep.get("instance_url"),
+                inference_engine=old_ep.get("inference_engine"),
+                exclude_id=local.id if local else None,
+            ),
+        )
+
+    return synced
 
 
 async def _sync_metrics_on_delete(
@@ -363,54 +388,44 @@ async def _sync_metrics_on_delete(
     local: LitellmModelParams | None,
     model_id: str,
 ) -> bool:
-    """删除模型时清理 agent-metrics 抓取条目。
+    """删除模型时清理所有 agent-metrics 抓取条目。
 
     - job 被其他模型共用时跳过清理，避免误删
     - 清理失败降级为 warning，不阻断删除
-    返回 True 表示清理失败（需人工介入）。
+    返回 True 表示有清理失败（需人工介入）。
     """
     if not local:
         return False
-    old_job = _grafana_job_from_local(local)
-    if not old_job and not local.instance_url:
+    endpoints = _endpoints_from_local(local)
+    if not endpoints:
         return False
-    if old_job:
-        count = await LitellmModelParams.count_by_grafana_job(
-            db, old_job, exclude_id=model_id,
-        )
-        if count > 0:
-            logger.info(
-                "job '%s' 仍被其他模型引用，跳过 agent-metrics 清理 (model='%s')",
-                old_job, model_name,
-            )
-            return False
-    engine = local.inference_engine
-    try:
-        await asyncio.to_thread(
-            agent_metrics_config.remove_entry,
-            old_job,
-            local.instance_url,
-            engine,
-        )
-    except (agent_metrics_config.AgentMetricsConfigError, OSError) as e:
-        logger.warning(
-            "Failed to clean agent-metrics.json for model '%s': %s. "
-            "Manual cleanup may be required.",
-            model_name, e,
-        )
-        return True
-    return False
+    failed = False
+    for ep in endpoints:
+        job = ep.get("grafana_job_name")
+        if not job:
+            continue
+        if await _remove_job_if_unreferenced(
+            db,
+            _MetricsJobCleanup(
+                model_name=model_name,
+                job=str(job),
+                instance_url=ep.get("instance_url"),
+                inference_engine=ep.get("inference_engine"),
+                exclude_id=model_id,
+            ),
+        ):
+            failed = True
+    return failed
 
 
 def _merge_extra_params(
     local: LitellmModelParams | None,
-    metrics_extra: dict[str, str] | None,
+    model_info: dict | None,
 ) -> dict | None:
-    if metrics_extra is None:
-        return local.extra_params if local and local.extra_params else None
     merged = dict(local.extra_params) if local and local.extra_params else {}
-    merged.update(metrics_extra)
-    return merged
+    if model_info is not None:
+        merged["model_info"] = model_info
+    return merged or None
 
 
 # ─── LitellmService ────────────────────────────────────────────────────────────
@@ -692,31 +707,32 @@ class LitellmService:
                 f"'{model_name}'. The model has been rolled back."
             )
 
-        metrics_extra = None
+        metrics_endpoints: list[dict] | None = None
         try:
-            metrics_extra = await _sync_metrics_on_create(
+            metrics_endpoints = await _sync_metrics_endpoints(
+                db,
                 model_name,
-                extras.instance_url,
-                extras.inference_engine,
+                None,
+                extras.metrics_endpoints or [],
+                replace=True,
             )
-            extra_params = dict(metrics_extra) if metrics_extra else {}
-            if extras.model_info:
-                extra_params["model_info"] = extras.model_info
+            extra_params = _merge_extra_params(None, extras.model_info)
             row = await LitellmModelParams.upsert(
                 db,
                 model_id,
                 model_name,
                 LocalModelExtension(
-                    instance_url=extras.instance_url,
+                    metrics_endpoints=metrics_endpoints if metrics_endpoints is not None else [],
                     max_concurrent=extras.max_concurrent,
-                    inference_engine=extras.inference_engine,
-                    extra_params=extra_params if extra_params else None,
+                    extra_params=extra_params,
                 ),
             )
         except Exception:
-            if metrics_extra:
-                job = metrics_extra.get(METRICS_JOB_KEY)
-                if job:
+            if metrics_endpoints:
+                for ep in metrics_endpoints:
+                    job = ep.get("grafana_job_name")
+                    if not job:
+                        continue
                     try:
                         count = await LitellmModelParams.count_by_grafana_job(db, job)
                     except Exception:
@@ -726,8 +742,8 @@ class LitellmService:
                             await asyncio.to_thread(
                                 agent_metrics_config.remove_entry,
                                 job,
-                                extras.instance_url,
-                                extras.inference_engine,
+                                ep.get("instance_url"),
+                                ep.get("inference_engine"),
                             )
                         except Exception:
                             logger.error(
@@ -752,10 +768,8 @@ class LitellmService:
         return {
             "id": model_id,
             "model_name": model_name,
-            "instance_url": extras.instance_url,
+            "metrics_endpoints": metrics_endpoints or [],
             "max_concurrent": extras.max_concurrent,
-            "inference_engine": extras.inference_engine,
-            "grafana_job_name": (metrics_extra or {}).get(METRICS_JOB_KEY),
             "created_at": row.created_at,
         }
 
@@ -797,32 +811,32 @@ class LitellmService:
         await self.request("PATCH", f"/model/{model_id}/update", json_data=body)
 
         try:
-            metrics_extra = await _sync_metrics_on_update(
+            replace_endpoints = extras.metrics_endpoints is not None
+            synced = await _sync_metrics_endpoints(
                 db,
                 new_model_name,
                 local,
-                extras.instance_url,
-                extras.inference_engine,
+                extras.metrics_endpoints,
+                replace=replace_endpoints,
             )
-            merged = _merge_extra_params(local, metrics_extra)
-            if extras.model_info:
-                merged = dict(merged) if merged else {}
-                merged["model_info"] = extras.model_info
+            effective_endpoints = (
+                synced if replace_endpoints else _endpoints_from_local(local)
+            )
+            merged = _merge_extra_params(local, extras.model_info)
             row = await LitellmModelParams.upsert(
                 db,
                 model_id,
                 new_model_name,
                 LocalModelExtension(
-                    instance_url=extras.instance_url,
+                    metrics_endpoints=synced if replace_endpoints else None,
                     max_concurrent=extras.max_concurrent,
-                    inference_engine=extras.inference_engine,
                     extra_params=merged,
                 ),
             )
         except Exception:
             logger.warning(
                 "LiteLLM model '%s' updated successfully but local DB "
-                "write failed — instance_url may be stale. "
+                "write failed — metrics_endpoints may be stale. "
                 "Manual fix required.",
                 model_id,
             )
@@ -831,13 +845,8 @@ class LitellmService:
         return {
             "id": model_id,
             "model_name": new_model_name,
-            "instance_url": extras.instance_url,
+            "metrics_endpoints": effective_endpoints or [],
             "max_concurrent": extras.max_concurrent,
-            "inference_engine": extras.inference_engine,
-            "grafana_job_name": (
-                (metrics_extra or {}).get(METRICS_JOB_KEY)
-                or _grafana_job_from_local(row)
-            ),
             "updated_at": row.updated_at,
         }
 

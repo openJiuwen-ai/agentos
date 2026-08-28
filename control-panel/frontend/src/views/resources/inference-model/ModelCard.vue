@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElTag, ElDropdown, ElDropdownMenu, ElDropdownItem, ElIcon, ElButton } from 'element-plus';
-import { Edit, Refresh, Delete, MoreFilled, Monitor } from '@element-plus/icons-vue';
+import { Edit, Delete, MoreFilled, Monitor } from '@element-plus/icons-vue';
 
 defineProps<{
   name: string;
@@ -21,12 +21,10 @@ const emit = defineEmits<{
   click: [];
   delete: [];
   edit: [];
-  restart: [];
 }>();
 
 function handleAction(action: string) {
   if (action === 'edit') emit('edit');
-  else if (action === 'restart') emit('restart');
   else if (action === 'delete') emit('delete');
 }
 </script>
@@ -73,10 +71,6 @@ function handleAction(action: string) {
             <ElDropdownItem command="edit">
               <ElIcon><Edit /></ElIcon>
               编辑信息
-            </ElDropdownItem>
-            <ElDropdownItem command="restart">
-              <ElIcon><Refresh /></ElIcon>
-              重启服务
             </ElDropdownItem>
             <ElDropdownItem divided command="delete">
               <span class="model-card__delete">

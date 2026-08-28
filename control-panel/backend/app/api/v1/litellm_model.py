@@ -95,7 +95,7 @@ class ListModelsQuery:
     response_model=ApiResponse[PaginatedModels],
     summary="获取模型列表",
     description=(
-        "合并 LiteLLM 的模型数据与面板本地扩展字段（`instance_url` 等），"
+        "合并 LiteLLM 的模型数据与面板本地扩展字段（`metrics_endpoints` 等），"
         "支持内存分页。可通过 model_name 过滤，同名返回多条。"
     ),
 )
@@ -186,9 +186,10 @@ async def create_model(
             litellm_params=body.litellm_params.model_dump(),
             extras=CreateModelExtras(
                 model_info=body.model_info.model_dump() if body.model_info else None,
-                instance_url=body.instance_url,
+                metrics_endpoints=[
+                    ep.model_dump() for ep in body.metrics_endpoints
+                ],
                 max_concurrent=body.max_concurrent,
-                inference_engine=body.inference_engine,
             ),
         )
         _fire_agentos_sync()
@@ -217,9 +218,8 @@ async def update_model(
     logger.info("Updating model: %s", model_id)
     logger.info("Request body litellm_params: %s", body.litellm_params.model_dump())
     logger.info("Request body model_info: %s", body.model_info.model_dump() if body.model_info else None)
-    logger.info("Request body instance_url: %s", body.instance_url)
+    logger.info("Request body metrics_endpoints: %s", body.metrics_endpoints)
     logger.info("Request body max_concurrent: %s", body.max_concurrent)
-    logger.info("Request body inference_engine: %s", body.inference_engine)
     try:
         data = await svc.update_model(
             db,
@@ -228,9 +228,12 @@ async def update_model(
             litellm_params=body.litellm_params.model_dump(),
             extras=UpdateModelExtras(
                 model_info=body.model_info.model_dump() if body.model_info else None,
-                instance_url=body.instance_url,
+                metrics_endpoints=(
+                    [ep.model_dump() for ep in body.metrics_endpoints]
+                    if body.metrics_endpoints is not None
+                    else None
+                ),
                 max_concurrent=body.max_concurrent,
-                inference_engine=body.inference_engine,
             ),
         )
         _fire_agentos_sync()

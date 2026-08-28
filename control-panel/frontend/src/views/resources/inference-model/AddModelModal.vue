@@ -10,18 +10,24 @@ import {
   ElInputNumber,
   ElOption,
   ElSelect,
+  ElMessage,
 } from 'element-plus';
-import { ArrowDown } from '@element-plus/icons-vue';
+import { ArrowDown, Plus, Delete } from '@element-plus/icons-vue';
+import type { MetricsEndpoint } from '@/api/inference';
+
+interface EndpointFormItem {
+  inference_engine: string;
+  instance_url: string;
+}
 
 interface ModelFormData {
   name: string;
   contextLength: number | null;
   description: string;
   deployName: string;
-  deployFramework: string;
   apiKey: string | undefined;
   serviceUrl: string;
-  metricsUrl: string;
+  metrics_endpoints: EndpointFormItem[];
 }
 
 const props = defineProps<{
@@ -33,25 +39,22 @@ const emit = defineEmits<{
   save: [data: ModelFormData];
 }>();
 
-const defaultFormData: ModelFormData = {
+const defaultFormData = (): ModelFormData => ({
   name: '',
   contextLength: null,
   description: '',
   deployName: '',
-  deployFramework: 'vLLM',
   apiKey: undefined,
   serviceUrl: '',
-  metricsUrl: '',
-};
+  metrics_endpoints: [],
+});
 
-const formData = ref<ModelFormData>({ ...defaultFormData });
+const formData = ref<ModelFormData>(defaultFormData());
 
 watch(
   () => props.visible,
   (val) => {
-    if (val) {
-      formData.value = { ...defaultFormData };
-    }
+    if (val) formData.value = defaultFormData();
   },
 );
 
@@ -65,7 +68,30 @@ function toggleSection(key: keyof typeof sections.value) {
   sections.value[key] = !sections.value[key];
 }
 
+function addEndpoint() {
+  formData.value.metrics_endpoints.push({
+    inference_engine: 'vLLM',
+    instance_url: '',
+  });
+}
+
+function removeEndpoint(index: number) {
+  formData.value.metrics_endpoints.splice(index, 1);
+}
+
 function handleSave() {
+  const endpoints: MetricsEndpoint[] = [];
+  for (const ep of formData.value.metrics_endpoints) {
+    const engine = ep.inference_engine?.trim();
+    const url = ep.instance_url?.trim();
+    if (!engine && !url) continue;
+    if (!engine || !url) {
+      ElMessage.warning('监控节点需同时填写部署框架和模型监控 URL，或删除该行');
+      return;
+    }
+    endpoints.push({ inference_engine: engine, instance_url: url });
+  }
+
   emit('save', {
     ...formData.value,
     name: formData.value.name.trim(),
@@ -73,7 +99,7 @@ function handleSave() {
     deployName: formData.value.deployName.trim(),
     apiKey: formData.value.apiKey?.trim(),
     serviceUrl: formData.value.serviceUrl.trim(),
-    metricsUrl: formData.value.metricsUrl.trim(),
+    metrics_endpoints: endpoints,
   });
   emit('close');
 }
@@ -81,10 +107,11 @@ function handleSave() {
 
 <template>
   <ElDrawer :model-value="visible" title="添加模型" size="480px" @close="emit('close')">
-    <!-- 基础信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
-        <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
+        <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }">
+          <ArrowDown />
+        </ElIcon>
         基础信息
       </h3>
       <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
@@ -117,34 +144,30 @@ function handleSave() {
       </ElForm>
     </div>
 
-    <!-- 部署信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
-        <ElIcon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
+        <ElIcon :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }">
+          <ArrowDown />
+        </ElIcon>
         部署信息
       </h3>
       <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
-        <ElFormItem label="部署模型名称" required class="form-grid__item">
+        <ElFormItem label="部署模型名称" required class="form-grid__item form-grid__item--full">
           <ElInput v-model="formData.deployName" placeholder="例如: gpt-4" />
           <span class="form-hint">仅支持 OpenAI API 格式，模型名将自动添加前缀: openai/</span>
         </ElFormItem>
-        <ElFormItem label="部署框架" required class="form-grid__item">
-          <ElSelect v-model="formData.deployFramework" placeholder="请选择部署框架">
-            <ElOption label="vLLM" value="vLLM" />
-            <ElOption label="SGLang" value="SGLang" />
-          </ElSelect>
-        </ElFormItem>
         <ElFormItem label="API Key" class="form-grid__item form-grid__item--full">
-          <ElInput v-model="formData.apiKey" type="password" placeholder="调用模型所需的API Key（可选）" />
+          <ElInput v-model="formData.apiKey" type="password" placeholder="调用模型所需的 API Key（可选）" />
           <span class="form-hint">用于调用第三方模型服务的认证密钥</span>
         </ElFormItem>
       </ElForm>
     </div>
 
-    <!-- 服务访问信息 -->
     <div class="info-section">
       <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('service')">
-        <ElIcon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"><ArrowDown /></ElIcon>
+        <ElIcon :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }">
+          <ArrowDown />
+        </ElIcon>
         服务访问信息
       </h3>
       <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
@@ -152,11 +175,32 @@ function handleSave() {
           <ElInput v-model="formData.serviceUrl" placeholder="例如: http://192.168.1.10:8000/v1" />
           <span class="form-hint">OpenAI 兼容推理引擎通常为 http://IP:端口/v1</span>
         </ElFormItem>
-        <ElFormItem label="模型监控 URL" class="form-grid__item form-grid__item--full">
-          <ElInput v-model="formData.metricsUrl" placeholder="例如: http://192.168.1.10:8000" />
-          <span class="form-hint">推理引擎的访问地址（含端口），用于 VictoriaMetrics 抓取监控指标</span>
-        </ElFormItem>
       </ElForm>
+      <div v-show="sections.service" class="metrics-block">
+        <p class="form-hint endpoint-hint">监控节点可空；双机部署可添加多条（部署框架 + 监控 URL）。</p>
+        <div v-for="(ep, index) in formData.metrics_endpoints" :key="index" class="endpoint-row">
+          <ElForm :model="ep" label-position="top" class="form-grid">
+            <ElFormItem label="部署框架" required class="form-grid__item">
+              <ElSelect v-model="ep.inference_engine" placeholder="请选择部署框架">
+                <ElOption label="vLLM" value="vLLM" />
+                <ElOption label="SGLang" value="SGLang" />
+              </ElSelect>
+            </ElFormItem>
+            <ElFormItem label="模型监控 URL" required class="form-grid__item">
+              <ElInput v-model="ep.instance_url" placeholder="例如: http://192.168.1.10:8000" />
+            </ElFormItem>
+          </ElForm>
+          <ElButton
+            class="endpoint-row__remove"
+            text
+            type="danger"
+            :icon="Delete"
+            title="删除该监控节点"
+            @click="removeEndpoint(index)"
+          />
+        </div>
+        <ElButton class="endpoint-add" :icon="Plus" @click="addEndpoint">添加监控节点</ElButton>
+      </div>
     </div>
 
     <template #footer>
@@ -171,6 +215,8 @@ function handleSave() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
 .form-grid__item {
@@ -209,7 +255,34 @@ function handleSave() {
   color: var(--text-placeholder);
 }
 
+.endpoint-hint {
+  margin: 12px 0;
+}
+
 .form-field {
+  width: 100%;
+}
+
+.metrics-block {
+  margin-top: 4px;
+}
+
+.endpoint-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-separator, #e5e7eb);
+  border-radius: 8px;
+}
+
+.endpoint-row__remove {
+  margin-top: 28px;
+  flex-shrink: 0;
+}
+
+.endpoint-add {
   width: 100%;
 }
 

@@ -14,7 +14,6 @@ import {
   createModel,
   updateModel,
   deleteModel,
-  restartModel,
   fetchUsageOverview,
   fetchUserUsage,
   fetchGatewayConfig,
@@ -269,22 +268,12 @@ async function handleSaveModel(data: Partial<ModelDetail>) {
   }
 }
 
-async function handleRestartModel(id: string) {
-  try {
-    await restartModel(id);
-    await loadModels();
-  } catch (e) {
-    console.error(e);
-  }
-}
-
 async function handleAddModel(formData: {
   name: string;
   contextLength: number | null;
   deployName: string;
-  deployFramework: string;
   serviceUrl: string;
-  metricsUrl: string;
+  metrics_endpoints: Array<{ inference_engine: string; instance_url: string }>;
   apiKey?: string;
   description?: string;
 }) {
@@ -299,10 +288,6 @@ async function handleAddModel(formData: {
   }
   if (!formData.serviceUrl?.trim()) {
     ElMessage.warning('请输入服务访问地址');
-    return;
-  }
-  if (!formData.deployFramework) {
-    ElMessage.warning('请选择部署框架');
     return;
   }
 
@@ -321,8 +306,7 @@ async function handleAddModel(formData: {
         ...(formData.description ? { description: formData.description } : {}),
         ...(formData.contextLength ? { context_window: formData.contextLength } : {}),
       },
-      instance_url: formData.metricsUrl || undefined,
-      inference_engine: formData.deployFramework || undefined,
+      metrics_endpoints: formData.metrics_endpoints ?? [],
     });
     ElMessage.success('模型创建成功');
     showAddModal.value = false;
@@ -407,7 +391,6 @@ onMounted(() => {
           @click="goToModel(model.id)"
           @delete="handleDeleteModel(model.id)"
           @edit="handleEditModel(model.id)"
-          @restart="handleRestartModel(model.id)"
         />
       </div>
     </section>

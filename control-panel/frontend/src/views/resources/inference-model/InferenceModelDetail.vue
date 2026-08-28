@@ -35,10 +35,20 @@ const metadata = computed(() => {
     { label: '更新时间', value: formatDateTime(d.updated_at), isTag: false },
   ];
   if (isAdmin.value) {
-    items.splice(3, 0,
-      { label: '部署框架', value: d.inference_engine || '--', isTag: false },
-      { label: '模型监控URL', value: d.instance_url || '--', isTag: false },
-    );
+    const endpoints = d.metrics_endpoints ?? [];
+    if (endpoints.length === 0) {
+      items.splice(3, 0,
+        { label: '监控节点', value: '未配置', isTag: false },
+      );
+    } else {
+      items.splice(3, 0,
+        {
+          label: '监控节点',
+          value: endpoints.map((ep) => `${ep.inference_engine} · ${ep.instance_url}`).join('；'),
+          isTag: false,
+        },
+      );
+    }
   }
   return items;
 });
@@ -140,8 +150,8 @@ onMounted(() => {
 
       <PerformanceMonitor
         v-if="isAdmin"
-        :inference-engine="modelData.inference_engine"
-        :grafana-job-name="modelData.grafana_job_name"
+        :inference-engine="modelData.metrics_endpoints?.[0]?.inference_engine"
+        :grafana-job-name="modelData.metrics_endpoints?.[0]?.grafana_job_name"
       />
 
       <ModelInfoDrawer

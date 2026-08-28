@@ -19,37 +19,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 def _mock_agent_metrics_sync(monkeypatch: pytest.MonkeyPatch):
     """避免 CRUD 测试写入真实 agent-metrics.json。"""
 
-    async def fake_create(model_name, instance_url, inference_engine=None):
-        if not instance_url:
+    async def fake_sync(db, model_name, local, desired_raw, *, replace):
+        if desired_raw is None:
             return None
-        desc = (inference_engine or model_name).lower()
-        return {
-            "grafana_job_name": f"{desc}-metrics-target",
-        }
-
-    async def fake_update(
-        db, model_name, local, instance_url, inference_engine=None,
-    ):
-        effective_url = instance_url or (local.instance_url if local else None)
-        if not effective_url:
-            return None
-        desc = (
-            inference_engine
-            or (local.inference_engine if local else None)
-            or model_name
-        ).lower()
-        return {
-            "grafana_job_name": f"{desc}-metrics-target",
-        }
+        return [
+            {
+                **endpoint,
+                "grafana_job_name": (
+                    f"{endpoint['inference_engine'].lower()}-metrics-target"
+                ),
+            }
+            for endpoint in desired_raw
+        ]
 
     async def fake_delete(db, model_name, local, model_id):
         return False
 
     monkeypatch.setattr(
-        "app.services.litellm_service._sync_metrics_on_create", fake_create,
-    )
-    monkeypatch.setattr(
-        "app.services.litellm_service._sync_metrics_on_update", fake_update,
+        "app.services.litellm_service._sync_metrics_endpoints", fake_sync,
     )
     monkeypatch.setattr(
         "app.services.litellm_service._sync_metrics_on_delete", fake_delete,
@@ -66,7 +53,7 @@ class TestModelUpdateSchema:
 
     def test_minimal_valid(self):
         """场景: 仅传必填字段 litellm_params.
-        预期: model_info / instance_url / max_concurrent 均为 None, 验证通过;
+        预期: model_info / metrics_endpoints / max_concurrent 均为 None, 验证通过;
               allowed_openai_params 默认带上 reasoning_effort / tools / thinking 并出现在 model_dump 中."""
         from app.schemas.litellm import ModelUpdate
         body = ModelUpdate(
@@ -74,7 +61,7 @@ class TestModelUpdateSchema:
         )
         assert body.litellm_params.model == "openai/gpt-4o"
         assert body.model_info is None
-        assert body.instance_url is None
+        assert body.metrics_endpoints is None
         assert body.max_concurrent is None
         assert body.litellm_params.allowed_openai_params == [
             "reasoning_effort",
@@ -94,12 +81,16 @@ class TestModelUpdateSchema:
         body = ModelUpdate(
             litellm_params={"model": "openai/gpt-4o", "api_key": "sk-xxx"},
             model_info={"description": "test", "context_window": 8192},
-            instance_url="https://example.com/v1",
+            metrics_endpoints=[{
+                "inference_engine": "vLLM",
+                "instance_url": "https://example.com/v1",
+            }],
             max_concurrent=5,
         )
         assert body.model_info.description == "test"
         assert body.model_info.context_window == 8192
-        assert body.instance_url == "https://example.com/v1"
+        assert body.metrics_endpoints[0].instance_url == "https://example.com/v1"
+        assert body.metrics_endpoints[0].inference_engine == "vLLM"
         assert body.max_concurrent == 5
 
     def test_model_info_has_no_id_field(self):
@@ -190,13 +181,16 @@ class TestModelCreateSchema:
 
     def test_valid_create(self):
         """场景: 传入完整的创建参数.
-        预期: 所有字段正确解析, 包括 instance_url 和 max_concurrent."""
+        预期: 所有字段正确解析, 包括 metrics_endpoints 和 max_concurrent."""
         from app.schemas.litellm import ModelCreate
         body = ModelCreate(
             model_name="deepseek-chat",
             litellm_params={"model": "deepseek/deepseek-chat", "api_key": "sk-ds"},
             model_info={"description": "DeepSeek"},
-            instance_url="https://api.deepseek.com/v1",
+            metrics_endpoints=[{
+                "inference_engine": "vLLM",
+                "instance_url": "https://api.deepseek.com/v1",
+            }],
             max_concurrent=10,
         )
         assert body.model_name == "deepseek-chat"
@@ -329,7 +323,7 @@ class TestServiceCreateModel:
     @pytest.mark.asyncio
     async def test_create_success(self, svc, mock_db):
         """场景: LiteLLM 返回 model_id, 本地 DB upsert 成功.
-        预期: 返回 id, model_name, instance_url, max_concurrent, created_at."""
+        预期: 返回 id, model_name, metrics_endpoints, max_concurrent, created_at."""
         from datetime import datetime, timezone
         from app.services.litellm_service import CreateModelExtras
 
@@ -351,22 +345,28 @@ class TestServiceCreateModel:
                     litellm_params={"model": "openai/test", "api_key": "sk-x"},
                     extras=CreateModelExtras(
                         model_info={"description": "desc"},
-                        instance_url="https://example.com/v1",
+                        metrics_endpoints=[{
+                            "inference_engine": "vLLM",
+                            "instance_url": "https://example.com/v1",
+                        }],
                         max_concurrent=5,
-                        inference_engine="vLLM",
                     ),
                 )
 
                 assert result["model_name"] == "test-model"
                 assert result["id"] == "uuid-123"
-                assert result["instance_url"] == "https://example.com/v1"
+                assert result["metrics_endpoints"] == [{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com/v1",
+                    "grafana_job_name": "vllm-metrics-target",
+                }]
                 assert result["max_concurrent"] == 5
                 # DB upsert 收到正确的 model_id / model_name 与 agent-metrics 元数据
                 assert mock_upsert.call_args[0][1] == "uuid-123"
                 assert mock_upsert.call_args[0][2] == "test-model"
                 ext = mock_upsert.call_args[0][3]
-                assert ext.extra_params["grafana_job_name"] == "vllm-metrics-target"
-                assert ext.inference_engine == "vLLM"
+                assert ext.metrics_endpoints == result["metrics_endpoints"]
+                assert "grafana_job_name" not in (ext.extra_params or {})
 
     @pytest.mark.asyncio
     async def test_create_extracts_id_from_model_info(self, svc, mock_db):
@@ -473,13 +473,20 @@ class TestServiceUpdateModel:
                 model_id="uuid-123",
                 litellm_params={"model": "openai/test", "api_key": "sk-new"},
                 extras=UpdateModelExtras(
-                    instance_url="https://new.example.com/v1",
+                    metrics_endpoints=[{
+                        "inference_engine": "SGLang",
+                        "instance_url": "https://new.example.com/v1",
+                    }],
                     max_concurrent=8,
                 ),
             )
 
             assert result["model_name"] == "test-model"
-            assert result["instance_url"] == "https://new.example.com/v1"
+            assert result["metrics_endpoints"] == [{
+                "inference_engine": "SGLang",
+                "instance_url": "https://new.example.com/v1",
+                "grafana_job_name": "sglang-metrics-target",
+            }]
             assert result["max_concurrent"] == 8
 
             # 验证 URL 路径包含正确的 model_id
@@ -492,7 +499,7 @@ class TestServiceUpdateModel:
 
     @pytest.mark.asyncio
     async def test_update_request_body_structure(self, svc, mock_db):
-        """场景: 仅传必填参数 (无 instance_url/max_concurrent).
+        """场景: 仅传必填参数 (无 metrics_endpoints/max_concurrent).
         预期: LiteLLM 请求 URL 包含 model_id, body 包含 model_name, litellm_params."""
         from datetime import datetime, timezone
         from app.models.litellm_model_params import LitellmModelParams
@@ -859,12 +866,16 @@ class TestServiceListModels:
 
     @pytest.mark.asyncio
     async def test_list_models_merges_local_fields(self, svc):
-        """场景: LiteLLM 返回 2 个模型, 本地有 1 个的 instance_url.
-        预期: 合并后本地记录的 instance_url 正确注入到对应模型."""
+        """场景: LiteLLM 返回 2 个模型, 本地有 1 个的 metrics_endpoints.
+        预期: 合并后本地记录的 metrics_endpoints 正确注入到对应模型."""
         from app.models.litellm_model_params import LitellmModelParams
 
         mock_local = MagicMock(spec=LitellmModelParams)
-        mock_local.instance_url = "https://custom.example.com/v1"
+        mock_local.metrics_endpoints = [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://custom.example.com/v1",
+            "grafana_job_name": "vllm-custom.example.com:443",
+        }]
         mock_local.max_concurrent = 10
         mock_local.created_at = None
         mock_local.updated_at = None
@@ -895,10 +906,10 @@ class TestServiceListModels:
 
         assert result["total"] == 2
         local_item = next(i for i in result["items"] if i["model_name"] == "model-with-local")
-        assert local_item["instance_url"] == "https://custom.example.com/v1"
+        assert local_item["metrics_endpoints"] == mock_local.metrics_endpoints
 
         no_local = next(i for i in result["items"] if i["model_name"] == "model-no-local")
-        assert no_local["instance_url"] is None
+        assert no_local["metrics_endpoints"] == []
 
     @pytest.mark.asyncio
     async def test_list_models_pagination(self, svc, mock_db):
@@ -1107,11 +1118,15 @@ class TestServiceGetModel:
     @pytest.mark.asyncio
     async def test_get_model_with_local_fields(self, svc, mock_db):
         """场景: 查询的模型在本地 DB 中有扩展字段.
-        预期: instance_url 等本地字段被注入到结果中."""
+        预期: metrics_endpoints 等本地字段被注入到结果中."""
         from app.models.litellm_model_params import LitellmModelParams
 
         mock_local = MagicMock(spec=LitellmModelParams)
-        mock_local.instance_url = "https://my-instance.example.com/v1"
+        mock_local.metrics_endpoints = [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://my-instance.example.com/v1",
+            "grafana_job_name": "vllm-my-instance.example.com:443",
+        }]
         mock_local.max_concurrent = 5
         mock_local.created_at = None
         mock_local.updated_at = None
@@ -1134,7 +1149,7 @@ class TestServiceGetModel:
             result = await svc.get_model(mock_db, "my-model")
 
         assert result["id"] == "my-model"
-        assert result["instance_url"] == "https://my-instance.example.com/v1"
+        assert result["metrics_endpoints"] == mock_local.metrics_endpoints
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1189,7 +1204,10 @@ class TestRouteUpdateModel:
         预期: FastAPI 返回 422 Unprocessable Entity."""
         response = client.put(
             "/api/v1/litellm/model/uuid-test",
-            json={"instance_url": "https://example.com/v1"},
+            json={"metrics_endpoints": [{
+                "inference_engine": "vLLM",
+                "instance_url": "https://example.com/v1",
+            }]},
         )
         assert response.status_code == 422
 
@@ -1214,7 +1232,10 @@ class TestRouteUpdateModel:
                     "description": "test update",
                     "context_window": 16384,
                 },
-                "instance_url": "https://example.com/v1",
+                "metrics_endpoints": [{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com/v1",
+                }],
                 "max_concurrent": 5,
             },
         )
@@ -1229,6 +1250,11 @@ class TestRouteUpdateModel:
             "context_window": 16384,
         }
         assert "id" not in extras.model_info
+        assert extras.metrics_endpoints == [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://example.com/v1",
+            "grafana_job_name": None,
+        }]
 
     def test_update_model_info_optional(self, client):
         """场景: 不传 model_info (可选字段).

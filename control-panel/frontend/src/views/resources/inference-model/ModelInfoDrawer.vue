@@ -10,10 +10,11 @@ import {
   ElInputNumber,
   ElOption,
   ElSelect,
+  ElMessage,
 } from 'element-plus';
-import { ArrowDown, CopyDocument, Monitor } from '@element-plus/icons-vue';
+import { ArrowDown, CopyDocument, Monitor, Plus, Delete } from '@element-plus/icons-vue';
 import ModelInfoRow from './ModelInfoRow.vue';
-import type { ModelDetail } from '@/api/inference';
+import type { MetricsEndpoint, ModelDetail } from '@/api/inference';
 import { useAuth } from '@/composables/useAuth';
 
 const { effectiveIsAdmin: isAdmin } = useAuth();
@@ -36,11 +37,15 @@ function formatDateTime(value: string | null | undefined): string {
   return isNaN(date.getTime()) ? '--' : date.toLocaleString();
 }
 
+interface EndpointFormItem {
+  inference_engine: string;
+  instance_url: string;
+}
+
 interface FormData {
   id: string;
   model_name: string;
   deployName: string;
-  deployFramework: string;
   litellm_params: {
     model: string;
     api_base: string;
@@ -53,12 +58,10 @@ interface FormData {
     context_window: number | null;
     [key: string]: unknown;
   };
-  instance_url?: string;
+  metrics_endpoints: EndpointFormItem[];
   max_concurrent?: number;
-  inference_engine?: string;
   created_at?: string;
   updated_at?: string;
-  [key: string]: unknown;
 }
 
 function parseDeployName(model: string): string {
@@ -67,65 +70,50 @@ function parseDeployName(model: string): string {
   return slashIndex >= 0 ? model.substring(slashIndex + 1) : model;
 }
 
-const formData = ref<FormData>({
-  id: props.model?.id ?? '',
-  model_name: props.model?.model_name ?? '',
-  deployName: parseDeployName(props.model?.litellm_params?.model ?? ''),
-  deployFramework: props.model?.inference_engine ?? 'vLLM',
-  model_info: {
-    ...props.model?.model_info,
-    id: props.model?.model_info?.id ?? props.model?.id ?? '',
-    description: props.model?.model_info?.description ?? '',
-    context_window: props.model?.model_info?.context_window ?? null,
-  },
-  litellm_params: {
-    ...props.model?.litellm_params,
-    model: props.model?.litellm_params?.model ?? '',
-    api_base: props.model?.litellm_params?.api_base ?? '',
-    api_key: props.model?.litellm_params?.api_key ?? '',
-  },
-  instance_url: props.model?.instance_url,
-  max_concurrent: props.model?.max_concurrent,
-  inference_engine: props.model?.inference_engine,
-  created_at: props.model?.created_at,
-  updated_at: props.model?.updated_at,
-});
+function cloneEndpoints(list?: MetricsEndpoint[] | null): EndpointFormItem[] {
+  if (!list?.length) return [];
+  return list.map((ep) => ({
+    inference_engine: ep.inference_engine || 'vLLM',
+    instance_url: ep.instance_url || '',
+  }));
+}
+
+function buildForm(model?: ModelDetail | null): FormData {
+  return {
+    id: model?.id ?? '',
+    model_name: model?.model_name ?? '',
+    deployName: parseDeployName(model?.litellm_params?.model ?? ''),
+    model_info: {
+      ...model?.model_info,
+      id: model?.model_info?.id ?? model?.id ?? '',
+      description: model?.model_info?.description ?? '',
+      context_window: model?.model_info?.context_window ?? null,
+    },
+    litellm_params: {
+      ...model?.litellm_params,
+      model: model?.litellm_params?.model ?? '',
+      api_base: model?.litellm_params?.api_base ?? '',
+      api_key: model?.litellm_params?.api_key ?? '',
+    },
+    metrics_endpoints: cloneEndpoints(model?.metrics_endpoints),
+    max_concurrent: model?.max_concurrent,
+    created_at: model?.created_at,
+    updated_at: model?.updated_at,
+  };
+}
+
+const formData = ref<FormData>(buildForm(props.model));
 
 watch(
   () => props.model,
   (val) => {
-    if (val) {
-      formData.value = {
-        id: val.id,
-        model_name: val.model_name,
-        deployName: parseDeployName(val.litellm_params?.model ?? ''),
-        deployFramework: val.inference_engine ?? 'vLLM',
-        model_info: {
-          ...val.model_info,
-          id: val.model_info?.id ?? val.id,
-          description: val.model_info?.description ?? '',
-          context_window: val.model_info?.context_window ?? null,
-        },
-        litellm_params: {
-          ...val.litellm_params,
-          model: val.litellm_params?.model ?? '',
-          api_base: val.litellm_params?.api_base ?? '',
-          api_key: val.litellm_params?.api_key ?? '',
-        },
-        instance_url: val.instance_url,
-        max_concurrent: val.max_concurrent,
-        inference_engine: val.inference_engine,
-        created_at: val.created_at,
-        updated_at: val.updated_at,
-      };
-    }
+    if (val) formData.value = buildForm(val);
   },
   { immediate: true },
 );
 
 const sections = ref({
   basic: true,
-  deploy: true,
   service: true,
 });
 
@@ -139,10 +127,33 @@ function copyModelName() {
   }
 }
 
+function addEndpoint() {
+  formData.value.metrics_endpoints.push({
+    inference_engine: 'vLLM',
+    instance_url: '',
+  });
+}
+
+function removeEndpoint(index: number) {
+  formData.value.metrics_endpoints.splice(index, 1);
+}
+
 function handleSave() {
   const deployName = formData.value.deployName.trim();
   const apiKey = formData.value.litellm_params.api_key?.trim();
   const modelIdentifier = `openai/${deployName}`;
+
+  const endpoints: MetricsEndpoint[] = [];
+  for (const ep of formData.value.metrics_endpoints) {
+    const engine = ep.inference_engine?.trim();
+    const url = ep.instance_url?.trim();
+    if (!engine && !url) continue;
+    if (!engine || !url) {
+      ElMessage.warning('监控节点需同时填写部署框架和模型监控 URL，或删除该行');
+      return;
+    }
+    endpoints.push({ inference_engine: engine, instance_url: url });
+  }
 
   const saveData: Partial<ModelDetail> = {
     model_name: formData.value.model_name.trim(),
@@ -155,10 +166,9 @@ function handleSave() {
       id: formData.value.model_info.id,
       description: formData.value.model_info.description.trim(),
       context_window: formData.value.model_info.context_window,
-    } as any,
-    instance_url: formData.value.instance_url?.trim(),
+    } as ModelDetail['model_info'],
+    metrics_endpoints: endpoints,
     max_concurrent: formData.value.max_concurrent,
-    inference_engine: formData.value.deployFramework,
   };
   emit('save', saveData);
 }
@@ -166,7 +176,7 @@ function handleSave() {
 
 <template>
   <ElDrawer :model-value="visible" title="模型信息" size="480px" @close="emit('close')">
-    <div class="model-header" v-if="model">
+    <div v-if="model" class="model-header">
       <div class="model-header__icon">
         <ElIcon :size="32" color="#2563eb"><Monitor /></ElIcon>
       </div>
@@ -181,14 +191,25 @@ function handleSave() {
           <ModelInfoRow label="模型名称" :value="model.model_name" />
           <ModelInfoRow label="模型类型" :value="model.litellm_params?.model" />
           <ModelInfoRow label="API Base" :value="model.litellm_params?.api_base" />
-          <ModelInfoRow v-if="isAdmin" label="部署框架" :value="model.inference_engine" />
         </div>
       </div>
 
       <div class="info-section">
-        <h3 class="info-section__title">服务信息</h3>
-        <div class="info-grid">
-          <ModelInfoRow v-if="isAdmin" label="模型监控URL" :value="model.instance_url" span="full" />
+        <h3 class="info-section__title">监控信息</h3>
+        <div v-if="isAdmin" class="info-grid">
+          <template v-if="model.metrics_endpoints?.length">
+            <div
+              v-for="(ep, idx) in model.metrics_endpoints"
+              :key="`${ep.instance_url}-${idx}`"
+              class="endpoint-view form-grid__item--full"
+            >
+              <ModelInfoRow label="部署框架" :value="ep.inference_engine" />
+              <ModelInfoRow label="模型监控 URL" :value="ep.instance_url" span="full" />
+            </div>
+          </template>
+          <ModelInfoRow v-else label="监控节点" value="未配置" span="full" />
+        </div>
+        <div class="info-grid" style="margin-top: 12px">
           <ModelInfoRow label="创建时间" :value="formatDateTime(model.created_at)" />
           <ModelInfoRow label="更新时间" :value="formatDateTime(model.updated_at)" />
         </div>
@@ -198,9 +219,9 @@ function handleSave() {
     <template v-if="mode === 'edit' && model">
       <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('basic')">
-          <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
-            ><ArrowDown
-          /></ElIcon>
+          <ElIcon :style="{ transform: sections.basic ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }">
+            <ArrowDown />
+          </ElIcon>
           基础信息
         </h3>
         <ElForm v-show="sections.basic" :model="formData" label-position="top" class="form-grid">
@@ -209,7 +230,7 @@ function handleSave() {
           </ElFormItem>
           <ElFormItem label="部署模型名称" required class="form-grid__item">
             <ElInput v-model="formData.deployName" placeholder="例如: gpt-4" />
-            <span class="form-hint">仅支持Openai API格式，模型名将自动添加前缀: openai/</span>
+            <span class="form-hint">仅支持 Openai API 格式，模型名将自动添加前缀: openai/</span>
           </ElFormItem>
           <ElFormItem label="API Base" class="form-grid__item">
             <ElInput v-model="formData.litellm_params.api_base" placeholder="例如: http://localhost:8000/v1" />
@@ -218,7 +239,7 @@ function handleSave() {
             <ElInput
               v-model="formData.litellm_params.api_key"
               type="password"
-              placeholder="调用模型所需的API Key（可选）"
+              placeholder="调用模型所需的 API Key（可选）"
             />
             <span class="form-hint">用于调用第三方模型服务的认证密钥</span>
           </ElFormItem>
@@ -249,36 +270,39 @@ function handleSave() {
       </div>
 
       <div class="info-section">
-        <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('deploy')">
-          <ElIcon
-            :style="{ transform: sections.deploy ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
-            ><ArrowDown
-          /></ElIcon>
-          部署信息
-        </h3>
-        <ElForm v-show="sections.deploy" :model="formData" label-position="top" class="form-grid">
-          <ElFormItem label="部署框架" required class="form-grid__item">
-            <ElSelect v-model="formData.deployFramework" placeholder="请选择部署框架">
-              <ElOption label="vLLM" value="vLLM" />
-              <ElOption label="SGLang" value="SGLang" />
-            </ElSelect>
-          </ElFormItem>
-        </ElForm>
-      </div>
-
-      <div class="info-section">
         <h3 class="info-section__title info-section__title--clickable" @click="toggleSection('service')">
           <ElIcon
             :style="{ transform: sections.service ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform 0.2s' }"
-            ><ArrowDown
-          /></ElIcon>
-          服务信息
+          >
+            <ArrowDown />
+          </ElIcon>
+          监控信息
         </h3>
-        <ElForm v-show="sections.service" :model="formData" label-position="top" class="form-grid">
-          <ElFormItem label="模型监控URL" class="form-grid__item form-grid__item--full">
-            <ElInput v-model="formData.instance_url" placeholder="请输入模型监控URL" />
-          </ElFormItem>
-        </ElForm>
+        <div v-show="sections.service">
+          <p class="form-hint endpoint-hint">可添加多个监控节点（双机部署）；允许为空。Grafana 默认看第一项。</p>
+          <div v-for="(ep, index) in formData.metrics_endpoints" :key="index" class="endpoint-row">
+            <ElForm :model="ep" label-position="top" class="form-grid">
+              <ElFormItem label="部署框架" required class="form-grid__item">
+                <ElSelect v-model="ep.inference_engine" placeholder="请选择部署框架">
+                  <ElOption label="vLLM" value="vLLM" />
+                  <ElOption label="SGLang" value="SGLang" />
+                </ElSelect>
+              </ElFormItem>
+              <ElFormItem label="模型监控 URL" required class="form-grid__item">
+                <ElInput v-model="ep.instance_url" placeholder="例如: http://192.168.1.10:8000" />
+              </ElFormItem>
+            </ElForm>
+            <ElButton
+              class="endpoint-row__remove"
+              text
+              type="danger"
+              :icon="Delete"
+              title="删除该监控节点"
+              @click="removeEndpoint(index)"
+            />
+          </div>
+          <ElButton class="endpoint-add" :icon="Plus" @click="addEndpoint">添加监控节点</ElButton>
+        </div>
       </div>
     </template>
 
@@ -348,6 +372,8 @@ function handleSave() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
 .form-grid__item {
@@ -363,8 +389,35 @@ function handleSave() {
   color: var(--text-secondary);
 }
 
+.endpoint-hint {
+  margin: 0 0 12px;
+}
+
 .form-field {
   width: 100%;
+}
+
+.endpoint-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-separator, #e5e7eb);
+  border-radius: 8px;
+}
+
+.endpoint-row__remove {
+  margin-top: 28px;
+  flex-shrink: 0;
+}
+
+.endpoint-add {
+  width: 100%;
+}
+
+.endpoint-view {
+  display: contents;
 }
 
 .form-grid :deep(.el-form-item__label) {

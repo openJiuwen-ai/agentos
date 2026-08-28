@@ -59,6 +59,27 @@ class ModelInfo(BaseModel):
     )
 
 
+class MetricsEndpoint(BaseModel):
+    """模型监控抓取点：部署框架 + 监控 URL（可多条，支持双机）。"""
+
+    inference_engine: str = Field(
+        ...,
+        min_length=1,
+        description="部署框架（如 vLLM / SGLang）",
+        examples=["vLLM"],
+    )
+    instance_url: str = Field(
+        ...,
+        min_length=1,
+        description="推理引擎监控地址（含端口），用于 /metrics 抓取",
+        examples=["http://192.168.1.10:8000"],
+    )
+    grafana_job_name: str | None = Field(
+        None,
+        description="VictoriaMetrics/Grafana job 名（后端生成，只读）",
+    )
+
+
 class ModelCreate(BaseModel):
     """添加模型请求"""
 
@@ -69,19 +90,14 @@ class ModelCreate(BaseModel):
     )
     litellm_params: LitellmParams = Field(..., description="LiteLLM 模型参数")
     model_info: ModelInfo | None = Field(None, description="模型信息")
-    instance_url: str | None = Field(
-        None,
-        description="推理实例访问 URL",
-        examples=["https://example.com:8000/v1"],
+    metrics_endpoints: list[MetricsEndpoint] = Field(
+        default_factory=list,
+        description="监控抓取点列表（可空；双机可填多条，允许不同部署框架）",
     )
     max_concurrent: int | None = Field(
         None,
         ge=1,
         description="最大等待并发数",
-    )
-    inference_engine: str | None = Field(
-        None,
-        description="推理引擎名称（仅本地存储，不传给 LiteLLM）",
     )
 
 
@@ -91,18 +107,14 @@ class ModelUpdate(BaseModel):
     model_name: str | None = Field(None, description="模型名称")
     litellm_params: LitellmParams = Field(..., description="LiteLLM 模型参数")
     model_info: ModelInfo | None = Field(None, description="模型信息")
-    instance_url: str | None = Field(
+    metrics_endpoints: list[MetricsEndpoint] | None = Field(
         None,
-        description="推理实例访问 URL",
+        description="监控抓取点列表；传 [] 清空；省略则不改",
     )
     max_concurrent: int | None = Field(
         None,
         ge=1,
         description="最大等待并发数",
-    )
-    inference_engine: str | None = Field(
-        None,
-        description="推理引擎名称（仅本地存储，不传给 LiteLLM）",
     )
 
 
@@ -113,10 +125,8 @@ class ModelItem(BaseModel):
     model_name: str
     litellm_params: dict | None = None
     model_info: dict | None = None
-    instance_url: str | None = None
+    metrics_endpoints: list[MetricsEndpoint] = Field(default_factory=list)
     max_concurrent: int | None = None
-    inference_engine: str | None = None
-    grafana_job_name: str | None = None
     status: str = "unknown"
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -136,10 +146,8 @@ class ModelCreated(BaseModel):
 
     id: str
     model_name: str
-    instance_url: str | None = None
+    metrics_endpoints: list[MetricsEndpoint] = Field(default_factory=list)
     max_concurrent: int | None = None
-    inference_engine: str | None = None
-    grafana_job_name: str | None = None
     created_at: datetime | None = None
 
 
@@ -148,10 +156,8 @@ class ModelUpdated(BaseModel):
 
     id: str
     model_name: str
-    instance_url: str | None = None
+    metrics_endpoints: list[MetricsEndpoint] = Field(default_factory=list)
     max_concurrent: int | None = None
-    inference_engine: str | None = None
-    grafana_job_name: str | None = None
     updated_at: datetime | None = None
 
 

@@ -15,10 +15,9 @@ from app.models.base import Base
 class LocalModelExtension:
     """模型本地扩展字段 — 收敛 create/update 的可选参数。"""
 
-    instance_url: str | None = None
+    metrics_endpoints: list[dict] | None = None
     max_concurrent: int | None = None
     extra_params: dict | None = None
-    inference_engine: str | None = None
 
 
 class LitellmModelParams(Base):
@@ -26,10 +25,9 @@ class LitellmModelParams(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    instance_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    metrics_endpoints: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
     max_concurrent: Mapped[int | None] = mapped_column(nullable=True)
     extra_params: Mapped[dict | None] = mapped_column(JSON, default={}, nullable=True)
-    inference_engine: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -118,21 +116,20 @@ class LitellmModelParams(Base):
         """原子 upsert — INSERT ... ON CONFLICT (id) DO UPDATE。
 
         None 语义：保留已有值；空串与非空值：覆盖写入。
+        metrics_endpoints 传 [] 表示清空；传 None 表示不改。
         """
         ext = ext or LocalModelExtension()
         now = datetime.now(timezone.utc)
-        _ex_url = literal_column("excluded.instance_url")
+        _ex_endpoints = literal_column("excluded.metrics_endpoints")
         _ex_mc = literal_column("excluded.max_concurrent")
         _ex_extra = literal_column("excluded.extra_params")
-        _ex_engine = literal_column("excluded.inference_engine")
 
         stmt = pg_insert(LitellmModelParams).values(
             id=model_id,
             model_name=model_name,
-            instance_url=ext.instance_url,
+            metrics_endpoints=ext.metrics_endpoints,
             max_concurrent=ext.max_concurrent,
             extra_params=ext.extra_params,
-            inference_engine=ext.inference_engine,
             created_at=now,
             updated_at=now,
         )
@@ -144,9 +141,9 @@ class LitellmModelParams(Base):
                     (_ex_name.isnot(None), _ex_name),
                     else_=LitellmModelParams.model_name,
                 ),
-                "instance_url": case(
-                    (_ex_url.isnot(None), _ex_url),
-                    else_=LitellmModelParams.instance_url,
+                "metrics_endpoints": case(
+                    (_ex_endpoints.isnot(None), _ex_endpoints),
+                    else_=LitellmModelParams.metrics_endpoints,
                 ),
                 "max_concurrent": case(
                     (_ex_mc.isnot(None), _ex_mc),
@@ -155,10 +152,6 @@ class LitellmModelParams(Base):
                 "extra_params": case(
                     (_ex_extra.isnot(None), _ex_extra),
                     else_=LitellmModelParams.extra_params,
-                ),
-                "inference_engine": case(
-                    (_ex_engine.isnot(None), _ex_engine),
-                    else_=LitellmModelParams.inference_engine,
                 ),
                 "updated_at": now,
             },
@@ -197,6 +190,19 @@ class LitellmModelParams(Base):
         return result.rowcount
 
     @staticmethod
+    def _jobs_from_endpoints(endpoints: list | None) -> set[str]:
+        jobs: set[str] = set()
+        if not endpoints:
+            return jobs
+        for ep in endpoints:
+            if not isinstance(ep, dict):
+                continue
+            job = ep.get("grafana_job_name")
+            if job is not None and str(job).strip():
+                jobs.add(str(job).strip())
+        return jobs
+
+    @staticmethod
     async def count_by_grafana_job(
         db: AsyncSession,
         job: str,
@@ -204,15 +210,14 @@ class LitellmModelParams(Base):
     ) -> int:
         """统计引用了指定 grafana_job_name 的模型数（可排除当前模型）。
 
-        使用 Python 层过滤以兼容 SQLite（测试）和 PostgreSQL（生产），
-        避免 .astext / JSON_QUOTE 等方言特定行为。
+        使用 Python 层过滤以兼容 SQLite（测试）和 PostgreSQL（生产）。
         """
-        stmt = select(LitellmModelParams.id, LitellmModelParams.extra_params)
+        stmt = select(LitellmModelParams.id, LitellmModelParams.metrics_endpoints)
         if exclude_id:
             stmt = stmt.where(LitellmModelParams.id != exclude_id)
         result = await db.execute(stmt)
         count = 0
-        for _id, extra in result.all():
-            if extra and extra.get("grafana_job_name") == job:
+        for _id, endpoints in result.all():
+            if job in LitellmModelParams._jobs_from_endpoints(endpoints):
                 count += 1
         return count

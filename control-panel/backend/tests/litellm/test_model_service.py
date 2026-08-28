@@ -50,12 +50,15 @@ class TestListModels:
         """
         场景: LiteLLM 返回 2 个模型, 本地有 1 个的扩展字段.
 
-        预期: 合并后 total=2, 本地记录 instance_url 正确注入
+        预期: 合并后 total=2, 本地记录 metrics_endpoints 正确注入
         """
         await LitellmModelParams.upsert(
             db_session, "uuid-1", "deepseek-chat",
             LocalModelExtension(
-                instance_url="https://example.com:8000/v1",
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://example.com:8000/v1",
+                }],
             ),
         )
         llm = {
@@ -76,7 +79,10 @@ class TestListModels:
             result = await svc.list_models(db_session)
         assert result["total"] == 2
         ds = next(i for i in result["items"] if i["model_name"] == "deepseek-chat")
-        assert ds["instance_url"] == "https://example.com:8000/v1"
+        assert ds["metrics_endpoints"] == [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://example.com:8000/v1",
+        }]
 
     async def test_pagination(self, svc, db_session):
         """
@@ -133,24 +139,26 @@ class TestFetchModelDetail:
         """
         场景: 本地有记录.
 
-        预期: 合并 litellm_params 和 model_info, instance_url 来自本地
+        预期: 合并 litellm_params、model_info 和本地 metrics_endpoints
         """
         m = {"model_name": "gpt-4o", "litellm_params": {"model": "gpt"},
              "model_info": {"id": "hash-123"}}
         local = MagicMock()
         local.model_name = "gpt-4o"
-        local.instance_url = "https://x.example.com/v1"
+        local.metrics_endpoints = [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://x.example.com/v1",
+            "grafana_job_name": "vllm-x.example.com:443",
+        }]
         local.max_concurrent = None
-        local.inference_engine = "vLLM"
-        local.extra_params = {"grafana_job_name": "vllm-x.example.com:443"}
+        local.extra_params = {}
         local.created_at = None
         local.updated_at = None
         r = _fetch_model_detail(svc, m, local)
         assert r["litellm_params"] == {"model": "gpt"}
         assert r["model_info"] == {"id": "hash-123"}
         assert r["id"] == "hash-123"
-        assert r["instance_url"] == "https://x.example.com/v1"
-        assert r["grafana_job_name"] == "vllm-x.example.com:443"
+        assert r["metrics_endpoints"] == local.metrics_endpoints
 
     async def test_empty_model_name(self, svc):
         """
@@ -170,7 +178,7 @@ class TestFetchModelDetail:
              "model_info": {"f": "l"}}
         r = _fetch_model_detail(svc, m, None)
         assert r["litellm_params"] == {"m": "fb"}
-        assert r["instance_url"] is None
+        assert r["metrics_endpoints"] == []
 
 
 class TestCreateModel:
@@ -182,7 +190,7 @@ class TestCreateModel:
 
     async def test_success(self, svc, db_session):
         """
-        场景: LiteLLM 返回 model_id, 本地写入 instance_url.
+        场景: LiteLLM 返回 model_id, 本地写入 metrics_endpoints.
 
         预期: model_id 正确, 本地记录可查询
         """
@@ -194,19 +202,31 @@ class TestCreateModel:
                 }),
             ),
             patch(
-                "app.services.litellm_service._sync_metrics_on_create",
-                new=AsyncMock(return_value=None),
+                "app.services.litellm_service._sync_metrics_endpoints",
+                new=AsyncMock(return_value=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://x.example.com/v1",
+                    "grafana_job_name": "vllm-x.example.com:443",
+                }]),
             ),
         ):
             r = await svc.create_model(
                 db_session, model_name="ds",
                 litellm_params={"model": "openai/ds", "api_key": "sk"},
-                extras=CreateModelExtras(instance_url="https://x.example.com/v1"),
+                extras=CreateModelExtras(metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "https://x.example.com/v1",
+                }]),
             )
         assert r["id"] == "uuid-new"
         local = await LitellmModelParams.get_by_id(db_session, "uuid-new")
         assert local is not None
         assert local.model_name == "ds"
+        assert local.metrics_endpoints == [{
+            "inference_engine": "vLLM",
+            "instance_url": "https://x.example.com/v1",
+            "grafana_job_name": "vllm-x.example.com:443",
+        }]
 
     async def test_db_failure_rollback(self, svc, db_session):
         """
@@ -313,17 +333,21 @@ class TestDeleteModel:
         await LitellmModelParams.upsert(
             db_session, "uuid-a", "model-a",
             LocalModelExtension(
-                instance_url="http://1.2.3.4:8000",
-                inference_engine="vLLM",
-                extra_params={"grafana_job_name": shared_job},
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "http://1.2.3.4:8000",
+                    "grafana_job_name": shared_job,
+                }],
             ),
         )
         await LitellmModelParams.upsert(
             db_session, "uuid-b", "model-b",
             LocalModelExtension(
-                instance_url="http://1.2.3.4:8000",
-                inference_engine="vLLM",
-                extra_params={"grafana_job_name": shared_job},
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "http://1.2.3.4:8000",
+                    "grafana_job_name": shared_job,
+                }],
             ),
         )
 
@@ -351,9 +375,11 @@ class TestDeleteModel:
         await LitellmModelParams.upsert(
             db_session, "uuid-x", "model-x",
             LocalModelExtension(
-                instance_url="http://1.2.3.4:8000",
-                inference_engine="vLLM",
-                extra_params={"grafana_job_name": "vllm-1.2.3.4:8000"},
+                metrics_endpoints=[{
+                    "inference_engine": "vLLM",
+                    "instance_url": "http://1.2.3.4:8000",
+                    "grafana_job_name": "vllm-1.2.3.4:8000",
+                }],
             ),
         )
 
