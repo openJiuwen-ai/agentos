@@ -352,6 +352,7 @@ whl 包来源：`install` 时从 agentos 根目录匹配 `a2x_registry-*-py3-non
 | `MODEL_PROVIDER` / `MODEL_NAME` / `API_BASE` / `API_KEY` | 大模型接口配置 |
 | `EMBED_MODEL` / `EMBED_API_BASE` / `EMBED_API_KEY` | 向量模型接口配置 |
 | `GATEWAY_HOST` / `GATEWAY_PORT` | gateway 进程监听地址/端口（host 留空时自动绑定 `config.yaml` 的 `ingress_virtual_ip`） |
+| `ETCD_ENDPOINTS` | Cron etcd 地址。留空时由部署脚本从 `config.yaml` 的 `etcd_nodes` 拼 `http://ip:32379,...`。AgentOS 模板默认 `store_backend=etcd`，无需在此配 `CRON_STORE_BACKEND` |
 | `WEB_PORT` / `WEB_ENABLED` | web 前端端口/是否随 `up` 启动 |
 | `WEB_STATIC_PORT` | web 前端静态资源服务端口 |
 | `SANDBOX_TYPE` / `TOOL_SANDBOX_*` | 沙箱类型与工具沙箱配置 |
