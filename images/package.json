@@ -1,0 +1,21 @@
+{
+    "name": "pptx",
+    "version": "1.0.0",
+    "description": "HTML to PPTX conversion engine for ppt-pipeline-swarm",
+    "main": "html2pptx_cli.js",
+    "scripts": {
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "dependencies": {
+      "fast-glob": "^3.3.3",
+      "minimist": "^1.2.8",
+      "playwright": "^1.57.0",
+      "pptxgenjs": "^4.0.1",
+      "sharp": "^0.34.5"
+    }
+  }
+  
