@@ -1,60 +1,54 @@
-"""Agent Registry API routes — upload, build, build status.
-
-All routes require admin role (``require_admin`` dependency).
-Build progress is polled from image_process on status query (no callback).
-"""
+"""Third-party agent card APIs."""
 
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.iam.deps import require_admin
+from app.iam.deps import get_current_user, require_admin
 from app.iam.tokens import TokenData
 from app.schemas.litellm import ApiResponse
 from app.schemas.thirdparty_agent import (
-    BuildStatusResponse,
-    BuildTaskRequest,
-    BuildTaskResponse,
-    InstallerListItem,
-    InstallerListQuery,
-    InstallerListResponse,
+    CardDetail,
+    CardListQuery,
+    CardListResponse,
+    PublishAccepted,
+    SetDefaultRequest,
+    UnregisteredListResponse,
+    UnregisteredStatus,
 )
-
-from app.thirdparty_agent.exceptions import ThirdpartyAgentError
-from app.thirdparty_agent.package import PackageExtractError
-from app.models.thirdparty_agent import ConcurrentBuildLimitError
-from app.services.thirdparty_agent_service import (
-    AgentAlreadyExistsError,
+from app.services.thirdparty_agent_service import PublishParams, ThirdpartyAgentService
+from app.thirdparty_agent.exceptions import (
     AgentNotFoundError,
+    AgentServiceError,
+    CardHasInstancesError,
+    DefaultVersionProtectedError,
     InsufficientDiskSpaceError,
-    ThirdpartyAgentService,
+    InvalidUploadError,
+    PackageLockedError,
     PackageTooLargeError,
-    ListInstallersParams,
-    CreateBuildTaskParams,
+    ThirdpartyAgentError,
 )
 
 _svc = ThirdpartyAgentService()
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/thirdparty_agent", tags=["thirdparty_agent"])
 
-# ── 领域异常 → HTTP 状态码 ──────────────────────────────────────────────
-
 _EXCEPTION_STATUS: list[tuple[type[ThirdpartyAgentError], int]] = [
-    (PackageExtractError, 400),        # covers all subclasses via isinstance
+    (InvalidUploadError, 400),
     (PackageTooLargeError, 400),
-    (ConcurrentBuildLimitError, 409),
-    (AgentAlreadyExistsError, 409),
+    (PackageLockedError, 409),
+    (CardHasInstancesError, 409),
+    (DefaultVersionProtectedError, 409),
     (AgentNotFoundError, 404),
     (InsufficientDiskSpaceError, 507),
+    (AgentServiceError, 502),
 ]
 
 
 def _to_http(exc: ThirdpartyAgentError) -> HTTPException:
-    """Convert domain exception to HTTPException via isinstance mapping."""
     status = 500
     for cls, code in _EXCEPTION_STATUS:
         if isinstance(exc, cls):
@@ -62,83 +56,141 @@ def _to_http(exc: ThirdpartyAgentError) -> HTTPException:
             break
     return HTTPException(status_code=status, detail={"message": str(exc)})
 
-# ── Routes ──────────────────────────────────────────────────────────────
 
-
-@router.get("/installers", response_model=ApiResponse[InstallerListResponse])
-async def installer_list(
-    query: InstallerListQuery = Depends(),
-    session: AsyncSession = Depends(get_async_session),
-    _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[InstallerListResponse]:
-    """List agent installers with optional framework filter and pagination."""
-    result = await _svc.list_installers(
-        session,
-        ListInstallersParams(
-            uploaded_by=_admin.username,
-            framework=query.framework,
-            size=query.size,
-            page=query.page,
-        ),
-    )
-    return ApiResponse(data=result)
-
-
-@router.post("/installers", response_model=ApiResponse[InstallerListItem])
-async def installer_upload(
+@router.post("/cards", response_model=ApiResponse[PublishAccepted], status_code=202)
+async def publish_card(
     package: UploadFile = File(...),
+    launch_command: str = Form(..., min_length=1, max_length=512),
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[InstallerListItem]:
-    """Upload an Agent offline package (.tgz)."""
+) -> ApiResponse[PublishAccepted]:
     try:
-        result = await _svc.upload(session, _admin.username, package)
-    except ThirdpartyAgentError as e:
-        logger.warning("upload failed: %s", e)
-        raise _to_http(e) from e
-    return ApiResponse(data=result)
-
-
-@router.post("/build_tasks", response_model=ApiResponse[BuildTaskResponse])
-async def build_task_create(
-    body: BuildTaskRequest,
-    session: AsyncSession = Depends(get_async_session),
-    _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[BuildTaskResponse]:
-    """Trigger an image build for an uploaded agent.
-
-    Locates the installer by ``agent_name`` + ``version``, refreshes
-    ``display_name`` and ``entrypoint``, then submits the build to image_process.
-    """
-    try:
-        task = await _svc.create_build_task(
+        result = await _svc.publish(
             session,
-            CreateBuildTaskParams(
-                agent_name=body.agent_name,
-                version=body.version,
-                display_name=body.display_name,
-                entrypoint=body.entrypoint,
+            package,
+            PublishParams(
                 uploaded_by=_admin.username,
+                launch_command=launch_command,
             ),
         )
     except ThirdpartyAgentError as e:
-        logger.warning("build failed: %s", e)
         raise _to_http(e) from e
-    return ApiResponse(data=task)
+    return ApiResponse(data=result)
 
 
-@router.get("/build_tasks/{task_id}", response_model=ApiResponse[BuildStatusResponse])
-async def build_task_status(
-    task_id: str,
+@router.get("/cards", response_model=ApiResponse[CardListResponse])
+async def list_cards(
+    query: CardListQuery = Depends(),
+    session: AsyncSession = Depends(get_async_session),
+    user: TokenData = Depends(get_current_user),
+) -> ApiResponse[CardListResponse]:
+    try:
+        result = await _svc.list_cards(
+            session,
+            is_admin=user.role == "admin",
+            framework=query.framework,
+            page=query.page,
+            size=query.size,
+        )
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data=result)
+
+
+@router.get("/cards/{framework}/{version}", response_model=ApiResponse[CardDetail])
+async def get_card(
+    framework: str,
+    version: str,
+    session: AsyncSession = Depends(get_async_session),
+    user: TokenData = Depends(get_current_user),
+) -> ApiResponse[CardDetail]:
+    try:
+        result = await _svc.get_card(
+            session,
+            is_admin=user.role == "admin",
+            framework=framework,
+            version=version,
+        )
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data=result)
+
+
+@router.put("/cards/{framework}/default", response_model=ApiResponse[dict])
+async def set_default_version(
+    framework: str,
+    body: SetDefaultRequest,
+    _admin: TokenData = Depends(require_admin),
+) -> ApiResponse[dict]:
+    try:
+        await _svc.set_default_version(framework, body.framework_version)
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data={"status": "updated", "default": body.framework_version})
+
+
+@router.delete("/cards/{framework}/{version}", response_model=ApiResponse[dict])
+async def delete_card(
+    framework: str,
+    version: str,
     session: AsyncSession = Depends(get_async_session),
     _admin: TokenData = Depends(require_admin),
-) -> ApiResponse[BuildStatusResponse]:
-    """Query build status; syncs from image_process while task is active."""
-    result = await _svc.get_build_task(session, task_id)
-    if result is None:
-        logger.warning("build task not found: %s", task_id)
-        raise HTTPException(
-            status_code=404,
-            detail={"message": f"build task not found: {task_id}"},
-        )
+) -> ApiResponse[dict]:
+    try:
+        await _svc.delete_card(session, framework, version)
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data={"status": "deleted"})
+
+
+@router.get("/unregistered", response_model=ApiResponse[UnregisteredListResponse])
+async def list_unregistered(
+    session: AsyncSession = Depends(get_async_session),
+    _admin: TokenData = Depends(require_admin),
+) -> ApiResponse[UnregisteredListResponse]:
+    result = await _svc.list_unregistered(session)
     return ApiResponse(data=result)
+
+
+@router.get("/unregistered/{digest}", response_model=ApiResponse[UnregisteredStatus])
+async def get_unregistered(
+    digest: str,
+    session: AsyncSession = Depends(get_async_session),
+    _admin: TokenData = Depends(require_admin),
+) -> ApiResponse[UnregisteredStatus]:
+    try:
+        result = await _svc.get_unregistered(session, digest)
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data=result)
+
+
+@router.post(
+    "/unregistered/{digest}/retry",
+    response_model=ApiResponse[PublishAccepted],
+    status_code=202,
+)
+async def retry_unregistered(
+    digest: str,
+    launch_command: str = Form(..., min_length=1, max_length=512),
+    session: AsyncSession = Depends(get_async_session),
+    admin: TokenData = Depends(require_admin),
+) -> ApiResponse[PublishAccepted]:
+    try:
+        result = await _svc.retry(session, digest, launch_command, admin.username)
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data=result)
+
+
+@router.delete("/unregistered/{digest}", response_model=ApiResponse[dict])
+async def delete_unregistered(
+    digest: str,
+    session: AsyncSession = Depends(get_async_session),
+    _admin: TokenData = Depends(require_admin),
+) -> ApiResponse[dict]:
+    try:
+        await _svc.delete_unregistered(session, digest)
+    except ThirdpartyAgentError as e:
+        raise _to_http(e) from e
+    return ApiResponse(data={"status": "deleted"})

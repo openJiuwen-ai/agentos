@@ -197,6 +197,32 @@ docker load -i agentos-image-process_latest.tar
 docker load -i agent-base_1.0.tar
 ```
 
+### 三方 Agent 制品存储
+
+三方 Agent 软件包默认保存到宿主机 `${AGENTOS_BASE}/images/packages`，容器内路径为 `/home/agentos/images/packages`。相关配置：
+
+```env
+THIRDPARTY_AGENT_PACKAGE_DIR=/home/agentos/images/packages
+THIRDPARTY_AGENT_IMAGE_DIR=/home/agentos/images
+THIRDPARTY_AGENT_ARCHIVE_ENABLED=false
+THIRDPARTY_AGENT_INSTALLER_MAX_BYTES=524288000
+```
+
+`THIRDPARTY_AGENT_ARCHIVE_ENABLED=false` 是单机默认配置：镜像只保留在 Docker daemon，不额外生成 `.tar.gz`。多机分发需要镜像归档时改为 `true`，归档文件直接写入 `THIRDPARTY_AGENT_IMAGE_DIR`；软件包始终保存在其 `packages` 子目录中。
+
+当前三方 Agent 包规格如下：
+
+| 规格 | 默认值 | 说明 |
+| --- | --- | --- |
+| 包格式 | 上传层不限制扩展名 | 当前构建 Recipe 仅识别 npm tgz，格式与平台由 image-process 按内容校验 |
+| 单包上限 | 500 MB | 由 `THIRDPARTY_AGENT_INSTALLER_MAX_BYTES` 控制 |
+| 构建并发数 | 2 | 当前由管理面构建任务模型控制 |
+| 磁盘安全余量 | 50 MB | 包落盘前必须额外保留的空间 |
+
+> **TODO(spec-contract):** 后续提供只读规格接口，由前端动态读取上传上限等参数，消除前后端重复配置；构建并发数和磁盘安全余量也应统一配置化。
+
+> **NOTE:** 当前管理面数据库结构不因卡片功能发生变化，继续复用 `build_tasks` 与 `agent_registrations`。注册中心是卡片展示的数据基准，本地表只保存构建历史和软件包路径映射。
+
 **SkillHub 镜像（仅 `--with-skillhub` 时需要）**
 
 ```bash

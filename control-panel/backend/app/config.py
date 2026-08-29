@@ -68,7 +68,9 @@ class Settings(BaseSettings):
     # ── Loki ──
     LOKI_BASE_URL: str = "http://loki:8096/loki/api/v1"
     # ── Thirdparty Agents ──
-    AGENTOS_COMMON: str = "/home/agentos/common"  # shared resources directory for agent images
+    THIRDPARTY_AGENT_PACKAGE_DIR: str = "/home/agentos/images/packages"
+    THIRDPARTY_AGENT_IMAGE_DIR: str = "/home/agentos/images"
+    THIRDPARTY_AGENT_ARCHIVE_ENABLED: bool = False
     THIRDPARTY_AGENT_INSTALLER_MAX_BYTES: int = 524_288_000  # 500 MB
     AGENT_IMAGE_MODULE_VERSION: str = "1.0"         # 镜像模块版本
 

@@ -1,68 +1,91 @@
-import { post, get } from './index';
+import { post, get, put, del } from './index';
 
 const BASE = '/api/v1/thirdparty_agent';
 
-/** 已上传框架的基本信息 */
-export interface FrameworkItem {
-  agent_name: string;
-  version: string;
-  display_name: string;
-  entrypoint: string;
-  build_status?: string;
-  build_task_id?: string;
+export interface CardItem {
+  framework: string;
+  framework_version: string;
+  is_default?: boolean;
+  total_instances?: number;
+  running_instances?: number;
+  package_path?: string;
 }
 
-/** listFrameworks 查询参数 */
-export interface ListFrameworksParams {
+export interface ListCardsParams {
   framework?: string;
   size?: number;
   page?: number;
 }
 
-/** listFrameworks 分页响应 */
-export interface ListFrameworksResponse {
-  items: FrameworkItem[];
+export interface ListCardsResponse {
+  items: CardItem[];
   total: number;
 }
 
-/** 构建任务状态 */
-export interface BuildTaskStatus {
-  task_id: string;
-  status: 'pending' | 'building' | 'done' | 'failed';
-  progress: number;
-  image?: string;
-  image_digest?: string;
-  started_at?: string;
-  finished_at?: string;
-  registered: boolean;
-  error_message?: string;
+export interface PublishAccepted {
+  digest: string;
+  request_id: string;
 }
 
-/** POST /installers — 上传 tgz 包 */
-export function uploadPackage(file: File) {
-  const fd = new FormData();
-  fd.append('package', file);
-  return post<FrameworkItem>(`${BASE}/installers`, fd, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60 * 60 * 1000,  // 1 hour
-  });
+export interface UnregisteredItem {
+  digest: string;
+  original_filename: string;
+  package_path: string;
+  locked: boolean;
+  last_error?: string | null;
+  request_id?: string | null;
+  status?: string;
+  progress?: number;
 }
 
-/** GET /installers — 获取已上传框架列表（支持 framework 搜索 + 分页） */
-export function listFrameworks(params: ListFrameworksParams = {}) {
-  return get<ListFrameworksResponse>(`${BASE}/installers`, {
+export function listCards(params: ListCardsParams = {}) {
+  return get<ListCardsResponse>(`${BASE}/cards`, {
     framework: params.framework || '',
     size: params.size ?? 20,
     page: params.page ?? 1,
   });
 }
 
-/** POST /build_tasks — 触发构建 */
-export function triggerBuild(body: { agent_name: string; version: string; display_name: string; entrypoint: string }) {
-  return post<{ task_id: string; status: string; created_at?: string }>(`${BASE}/build_tasks`, body);
+export function getCard(framework: string, version: string) {
+  return get<CardItem>(`${BASE}/cards/${encodeURIComponent(framework)}/${encodeURIComponent(version)}`);
 }
 
-/** GET /build_tasks/{task_id} — 查询构建状态 */
-export function getBuildStatus(taskId: string) {
-  return get<BuildTaskStatus>(`${BASE}/build_tasks/${taskId}`);
+export function publishCard(file: File, launchCommand: string) {
+  const fd = new FormData();
+  fd.append('package', file);
+  fd.append('launch_command', launchCommand);
+  return post<PublishAccepted>(`${BASE}/cards`, fd, {
+    timeout: 60 * 60 * 1000,
+  });
 }
+
+export function deleteCard(framework: string, version: string) {
+  return del(`${BASE}/cards/${encodeURIComponent(framework)}/${encodeURIComponent(version)}`);
+}
+
+export function setDefaultVersion(framework: string, version: string) {
+  return put(`${BASE}/cards/${encodeURIComponent(framework)}/default`, {
+    framework_version: version,
+  });
+}
+
+export function listUnregistered() {
+  return get<{ items: UnregisteredItem[] }>(`${BASE}/unregistered`);
+}
+
+export function getUnregistered(digest: string) {
+  return get<UnregisteredItem>(`${BASE}/unregistered/${digest}`);
+}
+
+export function retryUnregistered(digest: string, launchCommand: string) {
+  const fd = new FormData();
+  fd.append('launch_command', launchCommand);
+  return post<PublishAccepted>(`${BASE}/unregistered/${digest}/retry`, fd);
+}
+
+export function deleteUnregistered(digest: string) {
+  return del(`${BASE}/unregistered/${digest}`);
+}
+
+/** @deprecated use CardItem */
+export type FrameworkItem = CardItem & { agent_name: string; version: string };

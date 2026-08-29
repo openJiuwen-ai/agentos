@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     PORT: int = 8091
     # Drop finished in-memory build records after this many seconds.
     TASK_TTL_SECONDS: int = 24 * 3600
+    THIRDPARTY_AGENT_ARCHIVE_ENABLED: bool = False
+    OUTPUT_DIR: str = "/home/agentos/images"
+    WORK_DIR: str = "/tmp/image_process/work"
 
 
 settings = Settings()

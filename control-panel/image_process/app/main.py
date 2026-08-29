@@ -6,8 +6,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from app import tasks
-from app.builder import BuildError, _SAFE_NAME_RE
-from app.schemas import BuildCreateRequest, BuildCreateResponse, BuildStatusResponse
+from app.builder import BuildError
+from app.factory.models import FactoryError
+from app.schemas import (
+    BuildCreateRequest,
+    BuildCreateResponse,
+    BuildStatusResponse,
+    ImageRemoveRequest,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,33 +36,38 @@ app = FastAPI(title="AgentOS image_process", version="0.1.0", lifespan=lifespan)
 async def health() -> dict:
     ok = await tasks.docker_available()
     if not ok:
-        raise HTTPException(status_code=503, detail={"message": "docker daemon not available"})
+        raise HTTPException(
+            status_code=503, detail={"message": "docker daemon not available"}
+        )
     return {"status": "ok", "docker": True}
 
 
 @app.post("/v1/builds", response_model=BuildCreateResponse, status_code=202)
 async def create_build(body: BuildCreateRequest) -> BuildCreateResponse:
-    for field, value in (("agent_name", body.agent_name), ("version", body.version)):
-        if not _SAFE_NAME_RE.match(value):
-            raise HTTPException(
-                status_code=400,
-                detail={"message": f"invalid {field}: {value!r}"},
-            )
     try:
         rec = await tasks.enqueue_build(body)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail={"message": str(e)}) from e
-    except BuildError as e:
+    except (BuildError, FactoryError) as e:
         raise HTTPException(status_code=400, detail={"message": str(e)}) from e
-    return BuildCreateResponse(task_id=rec.task_id, status="pending")
+    return BuildCreateResponse(request_id=rec.request_id, status="pending")
 
 
-@app.get("/v1/builds/{task_id}", response_model=BuildStatusResponse)
-async def get_build(task_id: str) -> BuildStatusResponse:
-    status = tasks.list_task_status(task_id)
+@app.get("/v1/builds/{request_id}", response_model=BuildStatusResponse)
+async def get_build(request_id: str) -> BuildStatusResponse:
+    status = tasks.list_task_status(request_id)
     if status is None:
         raise HTTPException(
             status_code=404,
-            detail={"message": f"build task not found: {task_id}"},
+            detail={"message": f"build task not found: {request_id}"},
         )
     return status
+
+
+@app.post("/v1/images/remove")
+async def remove_image(body: ImageRemoveRequest) -> dict:
+    try:
+        await tasks.remove_loaded_image(body.tag)
+    except FactoryError as e:
+        raise HTTPException(status_code=400, detail={"message": str(e)}) from e
+    return {"status": "removed", "tag": body.tag}

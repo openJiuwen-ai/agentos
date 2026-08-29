@@ -1,294 +1,336 @@
-"""Unit tests for thirdparty_agent schemas."""
+"""Unit tests for thirdparty_agent schemas and card listing."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.schemas.thirdparty_agent import (
-    InstallerListItem,
-    BuildStatusResponse,
-    BuildTaskRequest,
-    BuildTaskResponse,
+from app.models.thirdparty_agent import AgentRegistration
+from app.schemas.thirdparty_agent import CardDetail, PublishAccepted
+from app.services.agent_register_client import AgentRegisterError
+from app.services.thirdparty_agent_service import (
+    ThirdpartyAgentService,
+    _semantic_version_key,
 )
+from app.thirdparty_agent.card_view import CardViewProjector
 
 
-def _has_sqlalchemy():
-    from importlib.util import find_spec
-    return find_spec("sqlalchemy") is not None
+@pytest.fixture(autouse=True)
+def _mock_local_card_store():
+    with (
+        patch.object(AgentRegistration, "list_all", AsyncMock(return_value=[])),
+        patch.object(AgentRegistration, "get", AsyncMock(return_value=None)),
+        patch.object(AgentRegistration, "delete_by_key", AsyncMock()),
+    ):
+        yield
 
 
-_skip_sql = pytest.mark.skipif(not _has_sqlalchemy(), reason="sqlalchemy not installed")
+def test_publish_accepted_fields():
+    r = PublishAccepted(digest="abc", request_id="build-1")
+    assert r.digest == "abc"
 
 
-class TestBuildTaskRequest:
-    @staticmethod
-    def test_all_fields():
-        r = BuildTaskRequest(
-            agent_name="opencode",
-            version="1.1.0",
-            display_name="OpenCode v2",
-            entrypoint="opencode",
-        )
-        assert r.agent_name == "opencode"
-        assert r.version == "1.1.0"
-        assert r.display_name == "OpenCode v2"
-        assert r.entrypoint == "opencode"
+def test_card_detail_optional_paths():
+    d = CardDetail(framework="demo", framework_version="1.0")
+    assert d.package_path is None
 
 
-class TestInstallerListItem:
-    @staticmethod
-    def test_all_fields():
-        r = InstallerListItem(
-            agent_name="opencode",
-            version="1.0.0",
-            display_name="OpenCode",
-            entrypoint="opencode",
-        )
-        assert r.agent_name == "opencode"
-        assert r.version == "1.0.0"
+def test_projector_user_strips_paths():
+    p = CardViewProjector()
+    dto = p.for_user(
+        {
+            "framework": "demo",
+            "framework_version": "1.0",
+            "package_path": "/secret.tgz",
+        }
+    )
+    assert "package_path" not in dto
+    assert "description" not in dto
+    assert dto["is_default"] is False
 
 
-class TestBuildTaskResponse:
-    @staticmethod
-    def test_pending_creation():
-        r = BuildTaskResponse(task_id="build-abc123", status="pending")
-        assert r.task_id == "build-abc123"
-        assert r.status == "pending"
-        assert r.created_at is None
+def test_projector_admin_counts_and_paths():
+    p = CardViewProjector()
+    dto = p.for_admin(
+        {"framework": "demo", "framework_version": "1.0", "package_path": "/p"},
+        total_count=2,
+        running_count=1,
+        include_paths=True,
+    )
+    assert dto["total_instances"] == 2
+    assert dto["running_instances"] == 1
+    assert dto["package_path"] == "/p"
+    assert dto["is_default"] is False
 
 
-class TestBuildStatusResponse:
-    @staticmethod
-    def test_done():
-        from datetime import datetime, timezone
-
-        now = datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 7, 15, 12, 5, 0, tzinfo=timezone.utc)
-        r = BuildStatusResponse(
-            task_id="build-abc", status="done", progress=100,
-            image="opencode:1.0.0", image_digest="sha256:abc",
-            started_at=now, finished_at=end,
-            registered=True,
-        )
-        assert r.status == "done"
-        assert r.progress == 100
-        assert r.registered is True
-        assert r.image == "opencode:1.0.0"
-
-    @staticmethod
-    def test_failed():
-        r = BuildStatusResponse(task_id="build-abc", status="failed")
-        assert r.status == "failed"
-        assert r.registered is False
-        assert r.progress == 0
-
-    @staticmethod
-    def test_building():
-        r = BuildStatusResponse(
-            task_id="build-abc", status="building", progress=42,
-        )
-        assert r.status == "building"
-        assert r.progress == 42
-        assert r.registered is False
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# list_installers with framework filter + pagination
-# ═══════════════════════════════════════════════════════════════════════════
+def test_projector_keeps_default_flag():
+    p = CardViewProjector()
+    dto = p.for_user(
+        {"framework": "demo", "framework_version": "2.0", "is_default": True}
+    )
+    assert dto["is_default"] is True
 
 
 @pytest.mark.asyncio
-@_skip_sql
-class TestListInstallers:
-
-    @staticmethod
-    async def test_forwards_framework_and_pagination_params_to_registry():
-        """Framework + page/size params are all forwarded to the external registry."""
-        from app.services.thirdparty_agent_service import (
-            ThirdpartyAgentService, ListInstallersParams,
+async def test_list_cards_user_view():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [{"framework": "demo", "framework_version": "1.0", "package_path": "/p"}],
+            1,
         )
+    )
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    result = await svc.list_cards(AsyncMock(), is_admin=False)
+    assert result.total == 1
+    assert "package_path" not in result.items[0]
+    registry.list_instances.assert_not_called()
 
-        mock_images = [
-            {"framework": "opencode", "framework_version": "1.0.0"},
-            {"framework": "opencode", "framework_version": "1.1.0"},
+
+@pytest.mark.asyncio
+async def test_list_cards_merges_local_metadata_without_hiding_registry_card():
+    registry = AsyncMock()
+    registry.list_images.return_value = (
+        [
+            {
+                "framework": "demo",
+                "framework_version": "1.0",
+            }
+        ],
+        1,
+    )
+    local = AgentRegistration(
+        framework="demo",
+        framework_version="1.0",
+        installer_path="/local/demo.tgz",
+        agent_name="demo-agent",
+        display_name="Local description",
+    )
+    with patch.object(AgentRegistration, "list_all", AsyncMock(return_value=[local])):
+        result = await ThirdpartyAgentService(
+            factory=AsyncMock(),
+            registry=registry,
+        ).list_cards(AsyncMock(), is_admin=True)
+    assert "description" not in result.items[0]
+    assert result.items[0]["framework"] == "demo"
+
+
+@pytest.mark.asyncio
+async def test_list_cards_admin_adds_counts():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [{"framework": "demo", "framework_version": "1.0"}],
+            1,
+        )
+    )
+    registry.list_instances = AsyncMock(
+        return_value=[
+            {"framework": "demo", "framework_version": "1.0", "status": "运行"},
+            {"framework": "demo", "framework_version": "1.0", "status": "停止"},
         ]
-        mock_headers = {"X-Total-Count": "2"}
-        mock_resp = MagicMock(status_code=200, headers=mock_headers)
-        mock_resp.json.return_value = mock_images
+    )
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    result = await svc.list_cards(AsyncMock(), is_admin=True)
+    assert result.items[0]["total_instances"] == 2
+    assert result.items[0]["running_instances"] == 1
 
-        with patch(
-            "app.services.thirdparty_agent_service.AgentRegistration"
-        ) as mock_reg, patch(
-            "httpx.AsyncClient.get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "app.services.thirdparty_agent_service.settings"
-        ) as mock_settings:
-            mock_settings.AGENT_REGISTER_URL = "http://registry"
-            mock_get.return_value = mock_resp
-            mock_reg.get = AsyncMock(return_value=None)
 
-            result = await ThirdpartyAgentService.list_installers(
-                AsyncMock(),
-                ListInstallersParams(uploaded_by="admin", framework="opencode", size=20, page=1),
-            )
-
-            # Verify all expected params are forwarded to registry
-            call_args = mock_get.call_args
-            assert call_args is not None
-            params = call_args[1]["params"]
-            assert params["framework"] == "opencode"
-            assert params["uploaded_by"] == "admin"
-            assert params["page"] == "1"
-            assert params["size"] == "20"
-            # total from X-Total-Count header
-            assert result.total == 2
-            assert len(result.items) == 2
-
-    @staticmethod
-    async def test_server_side_pagination():
-        """Page 2 with size=2: registry returns only page items + X-Total-Count."""
-        from app.services.thirdparty_agent_service import (
-            ThirdpartyAgentService, ListInstallersParams,
+@pytest.mark.asyncio
+async def test_delete_card_allows_idle_default_last_version():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [
+                {
+                    "framework": "demo",
+                    "framework_version": "1.0",
+                    "is_default": True,
+                    "imageurl": "demo:1",
+                    "package_path": "",
+                    "image_archive_path": "",
+                }
+            ],
+            1,
         )
+    )
+    registry.list_instances = AsyncMock(return_value=[])
+    factory = AsyncMock()
+    svc = ThirdpartyAgentService(factory=factory, registry=registry)
+    await svc.delete_card(AsyncMock(), "demo", "1.0")
+    registry.set_default_version.assert_not_called()
+    registry.delete_image.assert_awaited_once_with("demo", "1.0")
 
-        # Registry returns only page 2 items (indices 2,3 of 5)
-        mock_images = [
-            {"framework": "fw2", "framework_version": "v2"},
-            {"framework": "fw3", "framework_version": "v3"},
-        ]
-        mock_headers = {"X-Total-Count": "5"}
-        mock_resp = MagicMock(status_code=200, headers=mock_headers)
-        mock_resp.json.return_value = mock_images
 
-        with patch(
-            "app.services.thirdparty_agent_service.AgentRegistration"
-        ) as mock_reg, patch(
-            "httpx.AsyncClient.get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "app.services.thirdparty_agent_service.settings"
-        ) as mock_settings:
-            mock_settings.AGENT_REGISTER_URL = "http://registry"
-            mock_get.return_value = mock_resp
-            mock_reg.get = AsyncMock(return_value=None)
-
-            result = await ThirdpartyAgentService.list_installers(
-                AsyncMock(),
-                ListInstallersParams(uploaded_by="admin", framework="", size=2, page=2),
-            )
-
-            # Params forwarded to registry
-            call_args = mock_get.call_args
-            assert call_args is not None
-            assert call_args[1]["params"]["page"] == "2"
-            assert call_args[1]["params"]["size"] == "2"
-
-            # Total from X-Total-Count header, items are what registry returned
-            assert result.total == 5
-            assert len(result.items) == 2
-            assert result.items[0].entrypoint == "fw2"
-            assert result.items[1].entrypoint == "fw3"
-
-    @staticmethod
-    async def test_registry_error_propagates():
-        """Non-2xx from registry raises AgentServiceError."""
-        from app.services.thirdparty_agent_service import (
-            AgentServiceError, ThirdpartyAgentService, ListInstallersParams)
-
-        mock_resp = MagicMock(status_code=500, text="internal error")
-        mock_resp.json.return_value = []
-
-        with patch(
-            "httpx.AsyncClient.get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "app.services.thirdparty_agent_service.settings"
-        ) as mock_settings:
-            mock_settings.AGENT_REGISTER_URL = "http://registry"
-            mock_get.return_value = mock_resp
-
-            with pytest.raises(AgentServiceError) as exc:
-                await ThirdpartyAgentService.list_installers(
-                    AsyncMock(),
-                    ListInstallersParams(uploaded_by="admin"),
-                )
-            assert "500" in str(exc.value)
-
-    @staticmethod
-    async def test_enriches_with_local_registration():
-        """Registry images are enriched with agent_name/display_name from local DB."""
-        from app.services.thirdparty_agent_service import (
-            ThirdpartyAgentService, ListInstallersParams,
+@pytest.mark.asyncio
+async def test_delete_card_promotes_sibling_when_deleting_default():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [
+                {
+                    "framework": "demo",
+                    "framework_version": "1.0",
+                    "is_default": True,
+                    "imageurl": "demo:1",
+                    "package_path": "",
+                    "image_archive_path": "",
+                },
+                {"framework": "demo", "framework_version": "2.0", "is_default": False},
+            ],
+            2,
         )
-        from app.models.thirdparty_agent import AgentRegistration
+    )
+    registry.list_instances = AsyncMock(return_value=[])
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    await svc.delete_card(AsyncMock(), "demo", "1.0")
+    registry.set_default_version.assert_awaited_once_with("demo", "2.0")
+    registry.delete_image.assert_awaited_once_with("demo", "1.0")
 
-        mock_images = [
-            {"framework": "opencode", "framework_version": "1.0.0"},
-        ]
-        mock_resp = MagicMock(status_code=200, headers={})
-        mock_resp.json.return_value = mock_images
 
-        mock_reg = AgentRegistration(
-            framework="opencode", framework_version="1.0.0",
-            installer_path="/tmp/opencode-1.0.0.tgz",
-            agent_name="opencode", display_name="OpenCode",
+@pytest.mark.asyncio
+async def test_delete_card_promotes_highest_semantic_version():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [
+                {"framework": "demo", "framework_version": "1.0.0", "is_default": True},
+                {
+                    "framework": "demo",
+                    "framework_version": "2.9.0",
+                    "is_default": False,
+                },
+                {
+                    "framework": "demo",
+                    "framework_version": "2.10.0-rc.1",
+                    "is_default": False,
+                },
+                {
+                    "framework": "demo",
+                    "framework_version": "2.10.0",
+                    "is_default": False,
+                },
+            ],
+            4,
         )
+    )
+    registry.list_instances = AsyncMock(return_value=[])
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    await svc.delete_card(AsyncMock(), "demo", "1.0.0")
+    registry.set_default_version.assert_awaited_once_with("demo", "2.10.0")
 
-        with patch(
-            "app.services.thirdparty_agent_service.AgentRegistration"
-        ) as mock_reg_cls, patch(
-            "httpx.AsyncClient.get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "app.services.thirdparty_agent_service.settings"
-        ) as mock_settings:
-            mock_settings.AGENT_REGISTER_URL = "http://registry"
-            mock_get.return_value = mock_resp
-            mock_reg_cls.get = AsyncMock(return_value=mock_reg)
 
-            result = await ThirdpartyAgentService.list_installers(
-                AsyncMock(),
-                ListInstallersParams(uploaded_by="admin"),
-            )
+def test_semantic_version_key_supports_common_version_forms():
+    versions = ["2.9.0", "2.10.0-rc.2", "2.10.0-rc.10", "2.10.0+build.7"]
+    assert max(versions, key=_semantic_version_key) == "2.10.0+build.7"
+    assert _semantic_version_key("v2.10") == _semantic_version_key("2.10.0+build.7")
 
-            assert result.total == 1
-            item = result.items[0]
-            assert item.agent_name == "opencode"
-            assert item.display_name == "OpenCode"
-            assert item.version == "1.0.0"
-            assert item.entrypoint == "opencode"
 
-    @staticmethod
-    async def test_default_size_pagination():
-        """Default size=20 is forwarded; registry returns page 1 with total count."""
-        from app.services.thirdparty_agent_service import (
-            ThirdpartyAgentService, ListInstallersParams,
+@pytest.mark.asyncio
+async def test_delete_card_refuses_when_instances():
+    from app.thirdparty_agent.exceptions import CardHasInstancesError
+
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [
+                {
+                    "framework": "demo",
+                    "framework_version": "1.0",
+                    "is_default": True,
+                    "imageurl": "demo:1",
+                }
+            ],
+            1,
         )
+    )
+    registry.list_instances = AsyncMock(return_value=[{"service_id": "s1"}])
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    with pytest.raises(CardHasInstancesError):
+        await svc.delete_card(AsyncMock(), "demo", "1.0")
+    registry.delete_image.assert_not_called()
 
-        # 25 items total, registry returns first 20 for page 1
-        mock_images = [{"framework": f"fw{i}", "framework_version": "1.0"} for i in range(20)]
-        mock_headers = {"X-Total-Count": "25"}
-        mock_resp = MagicMock(status_code=200, headers=mock_headers)
-        mock_resp.json.return_value = mock_images
 
-        with patch(
-            "app.services.thirdparty_agent_service.AgentRegistration"
-        ) as mock_reg, patch(
-            "httpx.AsyncClient.get", new_callable=AsyncMock
-        ) as mock_get, patch(
-            "app.services.thirdparty_agent_service.settings"
-        ) as mock_settings:
-            mock_settings.AGENT_REGISTER_URL = "http://registry"
-            mock_get.return_value = mock_resp
-            mock_reg.get = AsyncMock(return_value=None)
+@pytest.mark.asyncio
+async def test_delete_card_refuses_when_instance_query_fails():
+    from app.thirdparty_agent.exceptions import AgentServiceError
 
-            result = await ThirdpartyAgentService.list_installers(
-                AsyncMock(),
-                ListInstallersParams(uploaded_by="admin"),
-            )
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [{"framework": "demo", "framework_version": "1.0", "is_default": True}],
+            1,
+        )
+    )
+    registry.list_instances = AsyncMock(side_effect=AgentRegisterError("unavailable"))
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    with pytest.raises(AgentServiceError, match="agent registry unavailable"):
+        await svc.delete_card(AsyncMock(), "demo", "1.0")
+    registry.delete_image.assert_not_called()
 
-            # Default page=1, size=20 forwarded
-            call_args = mock_get.call_args
-            assert call_args is not None
-            assert call_args[1]["params"]["page"] == "1"
-            assert call_args[1]["params"]["size"] == "20"
 
-            assert result.total == 25
-            assert len(result.items) == 20  # page 1
+@pytest.mark.asyncio
+async def test_get_card_maps_registry_failure_to_service_error():
+    from app.thirdparty_agent.exceptions import AgentServiceError
+
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(side_effect=AgentRegisterError("unavailable"))
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    with pytest.raises(AgentServiceError, match="agent registry unavailable"):
+        await svc.get_card(AsyncMock(), is_admin=True, framework="demo", version="1.0")
+
+
+@pytest.mark.asyncio
+async def test_delete_card_cleans_and_unregisters():
+    registry = AsyncMock()
+    registry.list_images = AsyncMock(
+        return_value=(
+            [
+                {
+                    "framework": "demo",
+                    "framework_version": "1.0",
+                    "imageurl": "demo:1",
+                    "package_path": "",
+                    "image_archive_path": "",
+                }
+            ],
+            1,
+        )
+    )
+    registry.list_instances = AsyncMock(return_value=[])
+    factory = AsyncMock()
+    factory.remove_loaded_image = AsyncMock()
+    svc = ThirdpartyAgentService(factory=factory, registry=registry)
+    await svc.delete_card(AsyncMock(), "demo", "1.0")
+    factory.remove_loaded_image.assert_awaited_once_with("demo:1")
+    registry.delete_image.assert_awaited_once_with("demo", "1.0")
+
+
+@pytest.mark.asyncio
+async def test_delete_card_reads_nested_registry_image_tag():
+    registry = AsyncMock()
+    registry.list_images.return_value = (
+        [
+            {
+                "framework": "demo",
+                "framework_version": "1.0",
+                "runtime_spec": {"rootfs": {"imageurl": "demo:1.0"}},
+            }
+        ],
+        1,
+    )
+    registry.list_instances.return_value = []
+    factory = AsyncMock()
+    await ThirdpartyAgentService(factory=factory, registry=registry).delete_card(
+        AsyncMock(),
+        "demo",
+        "1.0",
+    )
+    factory.remove_loaded_image.assert_awaited_once_with("demo:1.0")
+
+
+@pytest.mark.asyncio
+async def test_set_default_version():
+    registry = AsyncMock()
+    svc = ThirdpartyAgentService(factory=AsyncMock(), registry=registry)
+    await svc.set_default_version("demo", "2.0")
+    registry.set_default_version.assert_awaited_once_with("demo", "2.0")

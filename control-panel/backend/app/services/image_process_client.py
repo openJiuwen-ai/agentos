@@ -1,9 +1,10 @@
-"""HTTP client for the standalone image_process service."""
+"""HTTP client for the standalone image_process factory."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -13,105 +14,128 @@ logger = logging.getLogger(__name__)
 
 
 class ImageProcessError(Exception):
-    """Raised when image_process is unreachable or rejects a build request."""
+    """Raised when image_process is unreachable or rejects a request."""
 
 
-@dataclass(frozen=True)
+def _json_body(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+@dataclass
 class RemoteBuildStatus:
-    """Subset of image_process GET /v1/builds/{id} used for DB sync."""
-
     status: str
     progress: int = 0
-    image: str | None = None
-    image_digest: str | None = None
-    image_path: str | None = None
-    base_image: str | None = None
+    name: str | None = None
+    version: str | None = None
+    image_ref: str | None = None
+    archive_path: str | None = None
     runtime_spec: dict | None = None
+    recipe_id: str | None = None
+    base_ref: str | None = None
+    image_digest: str | None = None
     image_module_version: str | None = None
     error_message: str | None = None
 
 
-def _base_url() -> str:
-    base = (settings.IMAGE_PROCESS_URL or "").rstrip("/")
-    if not base:
-        raise ImageProcessError("IMAGE_PROCESS_URL is not configured")
-    return base
-
-
-async def submit_build(
-    *,
-    task_id: str,
-    agent_name: str,
-    version: str,
-    installer_path: str,
-    output_dir: str,
-    work_dir: str | None = None,
-) -> None:
-    """Enqueue a build on image_process. Raises ImageProcessError on failure."""
-    url = f"{_base_url()}/v1/builds"
-    payload = {
-        "task_id": task_id,
-        "agent_name": agent_name,
-        "version": version,
-        "installer_path": installer_path,
-        "output_dir": output_dir,
-        "work_dir": work_dir,
-    }
-    timeout = settings.IMAGE_PROCESS_TIMEOUT_SECONDS
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload)
-    except httpx.TimeoutException as e:
-        raise ImageProcessError(f"image_process timeout: {url}") from e
-    except httpx.HTTPError as e:
-        raise ImageProcessError(f"image_process unreachable: {e}") from e
-
-    if resp.status_code >= 400:
-        detail = resp.text[:500]
-        raise ImageProcessError(
-            f"image_process rejected build ({resp.status_code}): {detail}"
+class ImageProcessClient:
+    def __init__(
+        self,
+        client: httpx.AsyncClient | None = None,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        self._client = client
+        self._base_url = (
+            base_url if base_url is not None else settings.IMAGE_PROCESS_URL
+        ).rstrip("/")
+        self._timeout = (
+            timeout if timeout is not None else settings.IMAGE_PROCESS_TIMEOUT_SECONDS
         )
-    logger.info("build submitted to image_process task=%s", task_id)
 
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        if self._client is not None:
+            return await self._client.request(
+                method, url, timeout=self._timeout, **kwargs
+            )
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            return await client.request(method, url, **kwargs)
 
-async def fetch_build(task_id: str) -> RemoteBuildStatus | None:
-    """Poll image_process for task status.
+    def _require_url(self) -> str:
+        if not self._base_url:
+            raise ImageProcessError("IMAGE_PROCESS_URL is not configured")
+        return self._base_url
 
-    Returns ``None`` when the remote task is missing (404) or temporarily
-    unreachable — caller keeps the local DB snapshot.
-    """
-    try:
-        url = f"{_base_url()}/v1/builds/{task_id}"
-    except ImageProcessError:
-        logger.warning("fetch_build skipped task=%s: IMAGE_PROCESS_URL not configured", task_id)
-        return None
+    async def build_from_path(
+        self,
+        package_path: str,
+        request_id: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> str:
+        url = f"{self._require_url()}/v1/builds"
+        payload: dict[str, Any] = {"package_path": package_path}
+        if request_id:
+            payload["request_id"] = request_id
+        if options:
+            payload["options"] = options
+        try:
+            resp = await self._request("POST", url, json=payload)
+        except httpx.TimeoutException as e:
+            raise ImageProcessError(f"image_process timeout: {url}") from e
+        except httpx.HTTPError as e:
+            raise ImageProcessError(f"image_process unreachable: {e}") from e
+        if resp.status_code >= 400:
+            raise ImageProcessError(
+                f"image_process rejected build ({resp.status_code}): {resp.text[:500]}"
+            )
+        data = _json_body(resp) or {}
+        rid = data.get("request_id") or request_id
+        if not rid:
+            raise ImageProcessError("image_process did not return request_id")
+        logger.info("build submitted to image_process request=%s", rid)
+        return str(rid)
 
-    timeout = settings.IMAGE_PROCESS_TIMEOUT_SECONDS
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(url)
-    except httpx.HTTPError as e:
-        logger.warning("fetch_build unreachable task=%s: %s", task_id, e)
-        return None
-
-    if resp.status_code == 404:
-        return None
-    if resp.status_code >= 400:
-        logger.warning(
-            "fetch_build rejected task=%s status=%s body=%s",
-            task_id, resp.status_code, resp.text[:300],
+    async def fetch_build(self, request_id: str) -> RemoteBuildStatus | None:
+        url = f"{self._require_url()}/v1/builds/{request_id}"
+        try:
+            resp = await self._request("GET", url)
+        except httpx.HTTPError:
+            return None
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 400:
+            return None
+        data = _json_body(resp) or {}
+        return RemoteBuildStatus(
+            status=data.get("status") or "pending",
+            progress=int(data.get("progress") or 0),
+            name=data.get("name"),
+            version=data.get("version"),
+            image_ref=data.get("image_ref"),
+            archive_path=data.get("archive_path"),
+            runtime_spec=data.get("runtime_spec"),
+            recipe_id=data.get("recipe_id"),
+            base_ref=data.get("base_ref"),
+            image_digest=data.get("image_digest"),
+            image_module_version=data.get("image_module_version"),
+            error_message=data.get("error_message"),
         )
-        return None
 
-    body = resp.json()
-    return RemoteBuildStatus(
-        status=body.get("status") or "pending",
-        progress=int(body.get("progress") or 0),
-        image=body.get("image"),
-        image_digest=body.get("image_digest"),
-        image_path=body.get("image_path"),
-        base_image=body.get("base_image"),
-        runtime_spec=body.get("runtime_spec", {}),
-        image_module_version=body.get("image_module_version"),
-        error_message=body.get("error_message"),
-    )
+    async def remove_loaded_image(self, tag: str) -> None:
+        url = f"{self._require_url()}/v1/images/remove"
+        try:
+            resp = await self._request(
+                "POST",
+                url,
+                json={"tag": tag},
+            )
+        except httpx.TimeoutException as e:
+            raise ImageProcessError(f"image_process timeout: {url}") from e
+        except httpx.HTTPError as e:
+            raise ImageProcessError(f"image_process unreachable: {e}") from e
+        if resp.status_code >= 400:
+            raise ImageProcessError(
+                f"image_process rejected remove ({resp.status_code}): {resp.text[:500]}"
+            )

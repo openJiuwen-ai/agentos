@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import type { FrameworkItem } from '@/api/framework';
+import type { CardItem } from '@/api/framework';
 import defaultIcon from '@/assets/images/framework-page/default-framework-icon.png';
 
-defineProps<{
-  framework: FrameworkItem;
-  mode: 'grid' | 'list';
-}>();
+withDefaults(
+  defineProps<{
+    card: CardItem;
+    mode: 'grid' | 'list';
+    clickable?: boolean;
+  }>(),
+  {
+    clickable: true,
+  },
+);
 
 function onIconError(e: Event) {
   const img = e.target as HTMLImageElement;
@@ -16,18 +22,27 @@ function onIconError(e: Event) {
 <template>
   <div
     class="framework-card"
-    :class="mode === 'grid' ? 'framework-card--grid' : 'framework-card--list'"
+    :class="[
+      mode === 'grid' ? 'framework-card--grid' : 'framework-card--list',
+      { 'framework-card--static': !clickable },
+    ]"
   >
     <img
       :src="defaultIcon"
-      :alt="framework.agent_name"
+      :alt="card.framework"
       class="framework-card__icon"
       :class="mode === 'grid' ? 'framework-card__icon--grid' : 'framework-card__icon--list'"
       @error="onIconError"
     />
     <div class="framework-card__info">
-      <span class="framework-card__name">{{ framework.agent_name }}</span>
-      <span class="framework-card__version">v{{ framework.version }}</span>
+      <span class="framework-card__name">
+        {{ card.framework }}
+        <span v-if="card.is_default" class="framework-card__badge">默认</span>
+      </span>
+      <span class="framework-card__version">v{{ card.framework_version }}</span>
+      <span v-if="card.total_instances != null" class="framework-card__counts">
+        实例总数 {{ card.total_instances }} · 运行中 {{ card.running_instances ?? 0 }}
+      </span>
     </div>
   </div>
 </template>
@@ -37,17 +52,21 @@ function onIconError(e: Event) {
   background: rgba(255, 255, 255, 1);
   border-radius: 8px;
   display: flex;
+  cursor: pointer;
 }
 
-/* ── Grid mode ── */
+.framework-card--static {
+  cursor: default;
+}
+
 .framework-card--grid {
   width: 100%;
-  height: 108px;
+  min-height: 108px;
   flex-direction: row;
   justify-content: flex-start;
   align-items: center;
   gap: 12px;
-  padding: 0 20px;
+  padding: 12px 20px;
 }
 
 .framework-card--grid .framework-card__info {
@@ -66,7 +85,6 @@ function onIconError(e: Event) {
   flex-shrink: 0;
 }
 
-/* ── List mode ── */
 .framework-card--list {
   width: 100%;
   flex-direction: row;
@@ -77,9 +95,8 @@ function onIconError(e: Event) {
 
 .framework-card--list .framework-card__info {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .framework-card__icon--list {
@@ -91,12 +108,24 @@ function onIconError(e: Event) {
   flex-shrink: 0;
 }
 
-/* ── Shared typography ── */
 .framework-card__name {
   font-size: 20px;
   font-weight: 500;
   color: var(--text-primary);
   line-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.framework-card__badge {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--color-primary);
 }
 
 .framework-card__version {
@@ -110,5 +139,11 @@ function onIconError(e: Event) {
   padding: 2px 8px;
   line-height: 20px;
   white-space: nowrap;
+}
+
+.framework-card__counts {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 18px;
 }
 </style>

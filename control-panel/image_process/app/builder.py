@@ -1,123 +1,70 @@
-"""Standalone image builder — no control-panel dependencies.
+"""Docker image runtime used by factory Recipes.
 
-Usage as library::
-
-    from app.builder import build, BuildError, BuildResult
-
-Usage as CLI::
-
-    python -m app.builder --agent-name <name> --version <ver> --installer-path <tgz> --output-dir <dir>
+This module is the ImageRuntime adapter (formerly AbstractBuilder / DockerBuilder).
+Recipe orchestration lives in ``app.factory``.
 """
 
+from __future__ import annotations
+
 import asyncio
+import json
 import logging
-import os
 import re
-import shutil
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
-# Only allow safe characters in image names/tags to prevent command injection
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][-a-zA-Z0-9_.]*$")
 
 
-@dataclass
-class BuildParams:
-    """Parameters for the ``build()`` function."""
-    task_id: str
-    agent_name: str
-    version: str
-    installer_path: Path
-    output_dir: Path
-    on_progress: "callable | None" = None
-    work_dir: Path | None = None
-
-# Path to the Dockerfile template at image_process/ root (sibling of app/).
-_DOCKERFILE_PATH = Path(__file__).resolve().parent.parent / "agent.Dockerfile"
-_BASE_IMAGE = "agent-base:1.0"
-_IMAGE_MODULE_VERSION = "1.0"
-
-
-async def _read_runtime_spec(base_image: str) -> dict:
-    """docker inspect base_image → extract agentos.runtime_spec LABEL as dict."""
-    import json
-
-    proc = await asyncio.create_subprocess_exec(
-        "docker", "inspect", "--format={{json .Config.Labels}}", base_image,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise BuildError(
-            f"docker inspect {base_image!r} labels failed: "
-            f"{stderr.decode(errors='replace').strip()}"
-        )
-
-    labels_raw = stdout.decode(errors="replace").strip()
-    labels = json.loads(labels_raw) if labels_raw else {}
-    raw = labels.get("agentos.runtime_spec", "{}")
-    return json.loads(raw) if isinstance(raw, str) else raw
-
-
-# ── Exceptions ──────────────────────────────────────────────────────────
-
-
 class BuildError(Exception):
-    """Raised when image build fails."""
+    """Raised when image build or docker operations fail."""
 
 
-class BuildResult(NamedTuple):
-    image: str
-    image_digest: str
-    image_path: str
-    base_image: str
-    runtime_spec: dict
-    image_module_version: str
-
-
-# ── Backend interface ───────────────────────────────────────────────────
-
-
-class AbstractBuilder(ABC):
-    """Pluggable image build backend."""
+class ImageRuntime(ABC):
+    """Pluggable image execution backend (docker)."""
 
     @abstractmethod
-    async def build_image(
-        self, work_dir: Path, image_name: str, build_args: dict[str, str],
-    ) -> None:
-        ...
+    async def build(self, work_dir: Path, tag: str, build_args: dict[str, str]) -> None:
+        raise NotImplementedError
 
     @abstractmethod
-    async def save_image(self, image_name: str, agent_name: str, version: str, work_dir: Path) -> None:
-        ...
+    async def load_archive(self, archive_path: Path) -> None:
+        raise NotImplementedError
 
     @abstractmethod
-    async def get_image_id(self, image_name: str) -> str:
-        ...
+    async def save_archive(self, tag: str, dest: Path) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove(self, tag: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def inspect(self, tag: str) -> dict:
+        """Return ``{id, labels, runtime_spec}`` for *tag*."""
+        raise NotImplementedError
 
     @abstractmethod
     async def check_available(self) -> bool:
-        ...
+        raise NotImplementedError
 
     @abstractmethod
     async def get_sandbox_type(self) -> str:
         """Return sandbox type for registry registration (e.g. 'docker')."""
+        raise NotImplementedError
 
 
-# ── Docker backend ──────────────────────────────────────────────────────
-
-
-class DockerBuilder(AbstractBuilder):
-    """Builds OCI images via ``docker build`` / ``docker save``."""
+class DockerRuntime(ImageRuntime):
+    """Builds OCI images via docker build / docker save."""
 
     async def check_available(self) -> bool:
         proc = await asyncio.create_subprocess_exec(
-            "docker", "version",
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            "docker",
+            "version",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
         return proc.returncode == 0
@@ -125,43 +72,70 @@ class DockerBuilder(AbstractBuilder):
     async def get_sandbox_type(self) -> str:
         return "docker"
 
-    async def build_image(
-        self, work_dir: Path, image_name: str, build_args: dict[str, str],
-    ) -> None:
-        cmd = ["docker", "build", "-t", image_name]
+    async def build(self, work_dir: Path, tag: str, build_args: dict[str, str]) -> None:
+        cmd = ["docker", "build", "-t", tag]
         for k, v in build_args.items():
             cmd += ["--build-arg", f"{k}={v}"]
         cmd += ["-f", str(work_dir / "Dockerfile"), str(work_dir)]
         logger.info("docker build: %s", " ".join(cmd))
         await self._run(cmd, "docker build failed")
 
-    async def save_image(self, image_name: str, agent_name: str, version: str, work_dir: Path) -> None:
-        oci_tarball = work_dir / "oci" / f"{agent_name}-{version}.tar.gz"
-        oci_tarball.parent.mkdir(parents=True, exist_ok=True)
-        cmd = f"docker save {image_name} | gzip -c > {oci_tarball}"
+    async def save_archive(self, tag: str, dest: Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        cmd = f"docker save {tag} | gzip -c > {dest}"
         logger.info("docker save: %s", cmd)
         await self._run_shell(cmd, "docker save failed")
 
-    async def get_image_id(self, image_name: str) -> str:
+    async def load_archive(self, archive_path: Path) -> None:
+        cmd = ["docker", "load", "-i", str(archive_path)]
+        logger.info("docker load: %s", " ".join(cmd))
+        await self._run(cmd, "docker load failed")
+
+    async def remove(self, tag: str) -> None:
+        cmd = ["docker", "rmi", tag]
+        logger.info("docker rmi: %s", " ".join(cmd))
+        await self._run(cmd, "docker rmi failed")
+
+    async def inspect(self, tag: str) -> dict:
         proc = await asyncio.create_subprocess_exec(
-            "docker", "inspect", "--format={{.Id}}", image_name,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            "docker",
+            "inspect",
+            tag,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await proc.communicate()
-        logger.debug("%s", stdout.decode(errors="replace").strip())
-        if proc.returncode == 0:
-            return stdout.decode().strip()
-        raise BuildError("docker inspect failed")
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise BuildError(
+                f"docker inspect {tag!r} failed: "
+                f"{stderr.decode(errors='replace').strip()}"
+            )
+        data = json.loads(stdout.decode())
+        if not data:
+            raise BuildError(f"docker inspect {tag!r} returned empty")
+        info = data[0]
+        labels = (info.get("Config") or {}).get("Labels") or {}
+        raw = labels.get("agentos.runtime_spec", "{}")
+        runtime_spec = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        return {
+            "id": info.get("Id", ""),
+            "labels": labels,
+            "runtime_spec": runtime_spec,
+        }
 
     async def _run(self, cmd: list[str], fail_msg: str) -> None:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         await self._stream(proc, fail_msg)
 
     async def _run_shell(self, cmd: str, fail_msg: str) -> None:
         proc = await asyncio.create_subprocess_shell(
-            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         await self._stream(proc, fail_msg)
 
@@ -183,137 +157,4 @@ class DockerBuilder(AbstractBuilder):
             raise BuildError(f"{fail_msg} (exit {proc.returncode}):\n{output}")
 
 
-# ── Builder ─────────────────────────────────────────────────────────────
-
-_builder: AbstractBuilder = DockerBuilder()
-
-
-# ── Public API ──────────────────────────────────────────────────────────
-
-
-async def build(params: BuildParams) -> BuildResult:
-    """Build an OCI image from the agent tgz.
-
-    *work_dir* is the temporary build workspace (default: ``output_dir / task_id``).
-    *output_dir* receives the final ``{name}-{version}.tar.gz`` tarball.
-    """
-    # Validate safe names to prevent command injection
-    for field, value in (("agent_name", params.agent_name),
-                         ("version", params.version)):
-        if not _SAFE_NAME_RE.match(value):
-            logger.error("invalid %s %r — rejected for safety", field, value)
-            raise BuildError(f"invalid {field}: {value!r}")
-
-    image_name = f"{params.agent_name}:{params.version}"
-    tgz_file = params.installer_path.name
-    tarball_name = f"{params.agent_name}-{params.version}.tar.gz"
-
-    work_dir = params.work_dir or params.output_dir / params.task_id
-
-    params.output_dir.mkdir(parents=True, exist_ok=True)
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(params.installer_path, work_dir / tgz_file)
-    shutil.copy(_DOCKERFILE_PATH, work_dir / "Dockerfile")
-
-    build_args = {
-        "BASE_IMAGE": _BASE_IMAGE,
-        "TGZ_FILE": tgz_file,
-        "AGENT_NAME": params.agent_name,
-        "VERSION": params.version,
-        "AGENTOS_SYS_UID": os.environ.get("AGENTOS_SYS_UID", "1000"),
-        "AGENTOS_SYS_GID": os.environ.get("AGENTOS_SYS_GID", "1000"),
-    }
-
-    try:
-        runtime_spec = await _read_runtime_spec(_BASE_IMAGE)
-        runtime_spec["sandbox_type"] = await _builder.get_sandbox_type()
-
-        await _report(params.on_progress, 10)
-        await _builder.build_image(work_dir, image_name, build_args)
-        await _report(params.on_progress, 50)
-        await _builder.save_image(image_name, params.agent_name, params.version, work_dir)
-        await _report(params.on_progress, 90)
-        digest = await _builder.get_image_id(image_name)
-
-        tarball = work_dir / "oci" / tarball_name
-        if not tarball.exists():
-            logger.error("tarball not found after save: %s", tarball)
-            raise BuildError(f"tarball not found after save: {tarball}")
-        shutil.move(str(tarball), str(params.output_dir / tarball_name))
-
-        return BuildResult(
-            image=image_name,
-            image_digest=digest,
-            image_path=str(params.output_dir / tarball_name),
-            base_image=_BASE_IMAGE,
-            runtime_spec=runtime_spec,
-            image_module_version=_IMAGE_MODULE_VERSION,
-        )
-    except BuildError:
-        raise
-    except Exception as e:
-        logger.error("unexpected build error: %s", e)
-        raise BuildError(str(e)) from e
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
-async def _report(on_progress, pct: int) -> None:
-    if on_progress:
-        await on_progress(pct)
-
-
-# ── CLI ─────────────────────────────────────────────────────────────────
-
-def main() -> None:
-    """CLI entry point.
-
-    ``python -m app.builder --agent-name <name> --version <ver>
-    --installer-path <tgz> --output-dir <dir> [--loglevel LEVEL]``
-    """
-    import argparse
-    import sys
-    import uuid
-
-    parser = argparse.ArgumentParser(description="Build an Agent OCI image")
-    parser.add_argument("--agent-name", required=True, help="e.g. opencode")
-    parser.add_argument("--version", required=True, help="e.g. 1.0.0")
-    parser.add_argument("--installer-path", required=True, help="Path to the agent .tgz file")
-    parser.add_argument("--output-dir", required=True, help="Output directory for OCI tarball")
-    parser.add_argument("--loglevel", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-                        help="Log level (default: INFO)")
-    args = parser.parse_args()
-    logging.basicConfig(level=getattr(logging, args.loglevel),
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
-    async def _run() -> int:
-        if not await _builder.check_available():
-            logger.error("docker daemon not available")
-            return 1
-
-        task_id = f"build-{uuid.uuid4().hex[:12]}"
-        installer_path = Path(args.installer_path)
-        if not installer_path.is_file():
-            logger.error("%s is not a file", installer_path)
-            return 1
-
-        output_dir = Path(args.output_dir)
-        try:
-            result = await build(BuildParams(
-                task_id=task_id,
-                agent_name=args.agent_name,
-                version=args.version,
-                installer_path=installer_path,
-                output_dir=output_dir,
-            ))
-            logger.info("OK image=%s digest=%s", result.image, result.image_digest)
-            return 0
-        except BuildError:
-            return 1
-
-    sys.exit(asyncio.run(_run()))
-
-
-if __name__ == "__main__":
-    main()
+_runtime: ImageRuntime = DockerRuntime()

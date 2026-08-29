@@ -1,115 +1,93 @@
-"""Unit tests for image_process HTTP client."""
+"""Unit tests for image_process HTTP client (path-only factory API)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_submit_build_requires_url():
-    from app.services.image_process_client import ImageProcessError, submit_build
+def _client(client, url="http://image-process:8091"):
+    from app.services.image_process_client import ImageProcessClient
 
-    with patch("app.services.image_process_client.settings") as settings:
-        settings.IMAGE_PROCESS_URL = ""
-        settings.IMAGE_PROCESS_TIMEOUT_SECONDS = 5.0
-        with pytest.raises(ImageProcessError, match="IMAGE_PROCESS_URL"):
-            await submit_build(
-                task_id="t1", agent_name="a", version="1",
-                installer_path="/x.tgz", output_dir="/out",
-            )
+    return ImageProcessClient(client=client, base_url=url, timeout=5.0)
+
+
+def _response(status_code=200, *, json=None, text=None):
+    if json is not None:
+        return httpx.Response(status_code, json=json)
+    return httpx.Response(status_code, text=text or "")
 
 
 @pytest.mark.asyncio
-async def test_submit_build_posts_payload():
-    from app.services.image_process_client import submit_build
+async def test_build_from_path_requires_url():
+    from app.services.image_process_client import ImageProcessClient, ImageProcessError
 
-    mock_resp = MagicMock(status_code=202, text="")
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("app.services.image_process_client.settings") as settings, \
-         patch("app.services.image_process_client.httpx.AsyncClient", return_value=mock_client):
-        settings.IMAGE_PROCESS_URL = "http://image-process:8091"
-        settings.IMAGE_PROCESS_TIMEOUT_SECONDS = 5.0
-        await submit_build(
-            task_id="build-1", agent_name="opencode", version="1.0",
-            installer_path="/i.tgz", output_dir="/out", work_dir="/w",
-        )
-
-    mock_client.post.assert_awaited_once()
-    args, kwargs = mock_client.post.await_args
-    assert args[0] == "http://image-process:8091/v1/builds"
-    assert kwargs["json"]["task_id"] == "build-1"
-    assert "headers" not in kwargs or "Authorization" not in (kwargs.get("headers") or {})
+    client = ImageProcessClient(client=AsyncMock(), base_url="", timeout=5.0)
+    with pytest.raises(ImageProcessError, match="IMAGE_PROCESS_URL"):
+        await client.build_from_path("/x.tgz")
 
 
 @pytest.mark.asyncio
-async def test_submit_build_connect_error():
-    from app.services.image_process_client import ImageProcessError, submit_build
+async def test_build_from_path_posts_payload():
+    http_client = AsyncMock()
+    http_client.request = AsyncMock(
+        return_value=_response(202, json={"request_id": "build-1"})
+    )
+    client = _client(http_client)
+    rid = await client.build_from_path("/i.tgz", request_id="build-1")
+    assert rid == "build-1"
+    args, kwargs = http_client.request.await_args
+    assert args[0] == "POST"
+    assert args[1] == "http://image-process:8091/v1/builds"
+    assert kwargs["json"]["package_path"] == "/i.tgz"
+    assert kwargs["json"]["request_id"] == "build-1"
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.image_process_client.settings") as settings, \
-         patch("app.services.image_process_client.httpx.AsyncClient", return_value=mock_client):
-        settings.IMAGE_PROCESS_URL = "http://image-process:8091"
-        settings.IMAGE_PROCESS_TIMEOUT_SECONDS = 5.0
-        with pytest.raises(ImageProcessError, match="unreachable"):
-            await submit_build(
-                task_id="t", agent_name="a", version="1",
-                installer_path="/x", output_dir="/o",
-            )
+@pytest.mark.asyncio
+async def test_build_from_path_connect_error():
+    from app.services.image_process_client import ImageProcessError
+
+    http_client = AsyncMock()
+    http_client.request = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    client = _client(http_client)
+    with pytest.raises(ImageProcessError, match="unreachable"):
+        await client.build_from_path("/x")
 
 
 @pytest.mark.asyncio
 async def test_fetch_build_returns_status():
-    from app.services.image_process_client import fetch_build
-
-    mock_resp = MagicMock(
-        status_code=200,
-        json=MagicMock(return_value={
-            "task_id": "build-1",
-            "status": "building",
-            "progress": 55,
-            "image": None,
-        }),
-        text="",
+    http_client = AsyncMock()
+    http_client.request = AsyncMock(
+        return_value=_response(
+            json={
+                "request_id": "build-1",
+                "status": "building",
+                "progress": 55,
+                "image_ref": None,
+                "name": "demo",
+            },
+        )
     )
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("app.services.image_process_client.settings") as settings, \
-         patch("app.services.image_process_client.httpx.AsyncClient", return_value=mock_client):
-        settings.IMAGE_PROCESS_URL = "http://image-process:8091"
-        settings.IMAGE_PROCESS_TIMEOUT_SECONDS = 5.0
-        remote = await fetch_build("build-1")
-
+    remote = await _client(http_client).fetch_build("build-1")
     assert remote is not None
     assert remote.status == "building"
     assert remote.progress == 55
-    args, _kwargs = mock_client.get.await_args
-    assert args[0] == "http://image-process:8091/v1/builds/build-1"
+    assert remote.name == "demo"
 
 
 @pytest.mark.asyncio
 async def test_fetch_build_404_returns_none():
-    from app.services.image_process_client import fetch_build
+    http_client = AsyncMock()
+    http_client.request = AsyncMock(return_value=_response(404, text="missing"))
+    assert await _client(http_client).fetch_build("missing") is None
 
-    mock_resp = MagicMock(status_code=404, text="missing")
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.image_process_client.settings") as settings, \
-         patch("app.services.image_process_client.httpx.AsyncClient", return_value=mock_client):
-        settings.IMAGE_PROCESS_URL = "http://image-process:8091"
-        settings.IMAGE_PROCESS_TIMEOUT_SECONDS = 5.0
-        assert await fetch_build("missing") is None
+@pytest.mark.asyncio
+async def test_remove_loaded_image():
+    http_client = AsyncMock()
+    http_client.request = AsyncMock(return_value=_response(json={}))
+    await _client(http_client).remove_loaded_image("demo:1.0")
+    args, kwargs = http_client.request.await_args
+    assert args[0] == "POST"
+    assert args[1].endswith("/v1/images/remove")
+    assert kwargs["json"] == {"tag": "demo:1.0"}

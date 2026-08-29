@@ -9,7 +9,7 @@ _BASE_DOCKERFILE = _IMAGE_PROCESS_DIR / "base.Dockerfile"
 class TestBaseDockerfileContract:
     @staticmethod
     def test_base_is_system_plus_scaffolding():
-        content = _BASE_DOCKERFILE.read_text()
+        content = _BASE_DOCKERFILE.read_text(encoding="utf-8")
         # 无用户层
         assert "groupadd" not in content
         assert "useradd" not in content
@@ -29,7 +29,7 @@ _AGENT_DOCKERFILE = _IMAGE_PROCESS_DIR / "agent.Dockerfile"
 class TestAgentDockerfileContract:
     @staticmethod
     def test_agent_owns_user_and_package_install():
-        content = _AGENT_DOCKERFILE.read_text()
+        content = _AGENT_DOCKERFILE.read_text(encoding="utf-8")
         # 用户与归属权
         assert "ARG AGENTOS_SYS_UID=1000" in content
         assert "ARG AGENTOS_SYS_GID=1000" in content
@@ -40,7 +40,8 @@ class TestAgentDockerfileContract:
         assert "USER agentos" in content
         # 顺序：用户创建先于 COPY（用户名需可解析）
         assert content.index("useradd -m agentos") < content.index(
-            "COPY --chown=agentos:agentos")
+            "COPY --chown=agentos:agentos"
+        )
         # 脚手架与 runtime 标识不在 agent
         assert "ENTRYPOINT" not in content
         assert "CMD" not in content

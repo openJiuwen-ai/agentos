@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { useAuth } from '@/composables/useAuth';
 import {
   ElButton,
   ElDialog,
   ElInput,
   ElProgress,
   ElMessage,
+  ElMessageBox,
   ElUpload,
   ElPagination,
   vLoading,
@@ -13,19 +15,23 @@ import {
 import { Plus, Search } from '@element-plus/icons-vue';
 import type { UploadFile } from 'element-plus';
 import {
-  listFrameworks,
-  uploadPackage,
-  triggerBuild,
-  getBuildStatus,
-  type FrameworkItem,
-  type BuildTaskStatus,
+  listCards,
+  publishCard,
+  getUnregistered,
+  listUnregistered,
+  retryUnregistered,
+  deleteUnregistered,
+  getCard,
+  deleteCard,
+  setDefaultVersion,
+  type CardItem,
+  type UnregisteredItem,
 } from '@/api/framework';
 import FrameworkCard from './FrameworkCard.vue';
 import gridViewIcon from '@/assets/images/framework-page/grid-view-icon.png';
 import listViewIcon from '@/assets/images/framework-page/list-view-icon.png';
 import uploadIcon from '@/assets/images/framework-page/upload-icon.png';
 import closeDialogIcon from '@/assets/images/framework-page/close-icon.png';
-import parsingIcon from '@/assets/images/framework-page/parsing-icon.png';
 
 defineOptions({
   directives: {
@@ -33,26 +39,40 @@ defineOptions({
   },
 });
 
-
-// ── framework list ──
-const frameworks = ref<FrameworkItem[]>([]);
+const { effectiveIsAdmin: isAdmin } = useAuth();
+const frameworks = ref<CardItem[]>([]);
+const unregistered = ref<UnregisteredItem[]>([]);
 const total = ref(0);
 const loading = ref(false);
-
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
+const searchQuery = ref('');
+const viewMode = ref<'grid' | 'list'>('grid');
+const currentPage = ref(1);
+const pageSize = ref(12);
+const pageSizes = [12, 24, 36];
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 async function loadFrameworks() {
   loading.value = true;
   try {
-    const result = await listFrameworks({
+    const result = await listCards({
       framework: searchQuery.value.trim(),
       size: pageSize.value,
       page: currentPage.value,
     });
     frameworks.value = result.items;
     total.value = result.total;
-  } catch (e: any) {
-    ElMessage.error(e.message || '加载失败');
+    if (isAdmin.value) {
+      const pending = await listUnregistered();
+      unregistered.value = pending.items;
+    } else {
+      unregistered.value = [];
+    }
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '加载失败'));
   } finally {
     loading.value = false;
   }
@@ -66,43 +86,20 @@ function onSearchInput() {
   }, 300);
 }
 
-function onPageChange(page: number) {
-  currentPage.value = page;
-  loadFrameworks();
-}
-
-function onPageSizeChange(size: number) {
-  pageSize.value = size;
-  currentPage.value = 1;
-  loadFrameworks();
-}
-
-// ── search ──
-const searchQuery = ref('');
-
-// ── view mode ──
-const viewMode = ref<'grid' | 'list'>('grid');
-
-// ── pagination ──
-const currentPage = ref(1);
-const pageSize = ref(12);
-const pageSizes = [12, 24, 36];
-
-// ── step 1: upload dialog ──
 const showUpload = ref(false);
-const uploading = ref(false);
-const uploadPercent = ref(0);
-const uploadedMeta = ref<FrameworkItem | null>(null);
 const uploadRef = ref<InstanceType<typeof ElUpload>>();
 const selectedFile = ref<File | null>(null);
-
-// ── parsing dialog ──
-const showParsing = ref(false);
-
+const launchCommand = ref('');
+const showBuild = ref(false);
+const building = ref(false);
+const buildProgress = ref(0);
+const buildError = ref('');
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+const showDetail = ref(false);
+const detail = ref<CardItem | null>(null);
 
 function openUpload() {
-  uploadedMeta.value = null;
-  uploadPercent.value = 0;
+  launchCommand.value = '';
   selectedFile.value = null;
   uploadRef.value?.clearFiles();
   showUpload.value = true;
@@ -110,104 +107,206 @@ function openUpload() {
 
 function handleFileSelect(file: UploadFile) {
   const raw = file.raw;
-  if (raw) {
-    selectedFile.value = raw;
-  }
+  if (!raw) return;
+  selectedFile.value = raw;
 }
-
-const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;  // 500 MiB, matches backend THIRDPARTY_AGENT_INSTALLER_MAX_BYTES
 
 async function startUpload() {
   if (!selectedFile.value) return;
-  if (selectedFile.value.size > MAX_UPLOAD_BYTES) {
-    ElMessage.error(`文件大小超过限制（最大 500 MB）`);
+  const command = launchCommand.value.trim();
+  if (!command) {
+    ElMessage.error('请填写启动 Agent 的命令');
     return;
   }
-  uploading.value = true;
-  uploadPercent.value = 0;
-  showUpload.value = false;
-  showParsing.value = true;
-  try {
-    uploadPercent.value = 30;
-    uploadedMeta.value = await uploadPackage(selectedFile.value);
-    uploadPercent.value = 100;
-    showParsing.value = false;
-    showConfirm.value = true;
-    form.value.agent_name = uploadedMeta.value.agent_name;
-    form.value.version = uploadedMeta.value.version;
-    form.value.display_name = uploadedMeta.value.display_name;
-    form.value.entrypoint = uploadedMeta.value.entrypoint;
-  } catch (e: any) {
-    ElMessage.error(e.message || '上传失败');
-    uploadRef.value?.clearFiles();
-    selectedFile.value = null;
-    showParsing.value = false;
-    await loadFrameworks();
-  } finally {
-    uploading.value = false;
+  // TODO(spec-contract): read this limit from the backend specification API
+  // once available; the backend remains the source of truth meanwhile.
+  if (selectedFile.value.size > 500 * 1024 * 1024) {
+    ElMessage.error('文件大小超过限制（最大 500 MB）');
+    return;
   }
-}
-
-// ── step 2: confirm dialog ──
-const showConfirm = ref(false);
-const form = ref({ agent_name: '', version: '', display_name: '', entrypoint: '' });
-
-// ── step 3: create (build) dialog ──
-const showBuild = ref(false);
-const building = ref(false);
-const buildTaskId = ref('');
-const buildStatus = ref<BuildTaskStatus | null>(null);
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-async function confirmBuild() {
-  buildStatus.value = null;
-  showConfirm.value = false;
+  showUpload.value = false;
   showBuild.value = true;
   building.value = true;
+  buildProgress.value = 0;
+  buildError.value = '';
   try {
-    const { task_id } = await triggerBuild({
-      ...form.value,
-      display_name: uploadedMeta.value?.display_name || form.value.display_name,
-    });
-    buildTaskId.value = task_id;
-    startPolling(task_id);
-  } catch (e: any) {
-    ElMessage.error(e.message || '构建失败');
+    const accepted = await publishCard(selectedFile.value, command);
+    startPolling(accepted.digest);
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '上架失败'));
     showBuild.value = false;
     building.value = false;
-    await loadFrameworks();
   }
 }
 
-function startPolling(taskId: string) {
+function startPolling(digest: string) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
-      buildStatus.value = await getBuildStatus(taskId);
-      if (buildStatus.value.status !== 'done' && buildStatus.value.status !== 'failed') {
+      const st = await getUnregistered(digest);
+      buildProgress.value = st.progress ?? 0;
+      if (st.last_error && !st.locked) {
+        clearInterval(pollTimer!);
+        building.value = false;
+        buildError.value = st.last_error;
+        loadFrameworks();
         return;
       }
+      if (!st.locked && !st.last_error) {
+        clearInterval(pollTimer!);
+        building.value = false;
+        showBuild.value = false;
+        ElMessage.success('上架成功');
+        loadFrameworks();
+      }
+    } catch {
       clearInterval(pollTimer!);
       building.value = false;
+      showBuild.value = false;
       loadFrameworks();
-    } catch {
-      // retry on next tick
     }
   }, 2000);
 }
 
-function closeBuild() {
-  if (pollTimer) clearInterval(pollTimer);
-  showBuild.value = false;
-  building.value = false;
-  buildStatus.value = null;
+async function openDetail(card: CardItem) {
+  try {
+    detail.value = await getCard(card.framework, card.framework_version);
+    showDetail.value = true;
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '加载详情失败'));
+  }
+}
+
+async function markDefault() {
+  if (!detail.value) return;
+  try {
+    await setDefaultVersion(detail.value.framework, detail.value.framework_version);
+    ElMessage.success('已设为默认版本');
+    showDetail.value = false;
+    loadFrameworks();
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '设置失败'));
+  }
+}
+
+function highestOtherVersion(cards: CardItem[], framework: string, version: string): string | null {
+  const others = cards
+    .filter((c) => c.framework === framework && c.framework_version !== version)
+    .map((c) => c.framework_version);
+  if (!others.length) return null;
+  return others.reduce((a, b) => (compareSemanticVersions(a, b) > 0 ? a : b));
+}
+
+function compareSemanticVersions(left: string, right: string): number {
+  const parse = (value: string) => {
+    const match = value
+      .trim()
+      .match(/^[vV]?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
+    if (!match) return null;
+    return { core: match[1].split('.').map(Number), prerelease: match[2]?.split('.') ?? null };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) {
+    if (a) return 1;
+    if (b) return -1;
+    return left.localeCompare(right);
+  }
+  const coreLength = Math.max(a.core.length, b.core.length, 3);
+  for (let index = 0; index < coreLength; index += 1) {
+    const difference = (a.core[index] ?? 0) - (b.core[index] ?? 0);
+    if (difference) return difference;
+  }
+  if (!a.prerelease && !b.prerelease) return 0;
+  if (!a.prerelease) return 1;
+  if (!b.prerelease) return -1;
+  const prereleaseLength = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < prereleaseLength; index += 1) {
+    const aPart = a.prerelease[index];
+    const bPart = b.prerelease[index];
+    if (aPart == null) return -1;
+    if (bPart == null) return 1;
+    if (aPart === bPart) continue;
+    const aNumeric = /^\d+$/.test(aPart);
+    const bNumeric = /^\d+$/.test(bPart);
+    if (aNumeric && bNumeric) return Number(aPart) - Number(bPart);
+    if (aNumeric) return -1;
+    if (bNumeric) return 1;
+    return aPart.localeCompare(bPart);
+  }
+  return 0;
+}
+
+async function confirmDeleteDefault(framework: string, version: string): Promise<boolean> {
+  let successor: string | null;
+  try {
+    const listed = await listCards({ framework, size: -1, page: 1 });
+    successor = highestOtherVersion(listed.items, framework, version);
+  } catch {
+    successor = highestOtherVersion(frameworks.value, framework, version);
+  }
+  const message = successor
+    ? `当前是默认版本。点「是」将直接删除，并把默认切换为 v${successor}（其余版本中版本号最高的）。点「否」可先手动指定默认版本再删除。`
+    : '当前是默认版本，且没有其他版本。确定删除该卡片吗？';
+  try {
+    await ElMessageBox.confirm(message, '删除默认版本', {
+      confirmButtonText: '是',
+      cancelButtonText: '否',
+      type: 'warning',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeCard() {
+  if (!detail.value) return;
+  if (detail.value.is_default) {
+    const ok = await confirmDeleteDefault(detail.value.framework, detail.value.framework_version);
+    if (!ok) return;
+  }
+  try {
+    await deleteCard(detail.value.framework, detail.value.framework_version);
+    ElMessage.success('已拆除');
+    showDetail.value = false;
+    loadFrameworks();
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '删除失败'));
+  }
+}
+
+async function retryPending(item: UnregisteredItem) {
+  try {
+    const { value } = await ElMessageBox.prompt('失败包不会保存启动命令，请重新填写启动 Agent 的命令。', '重新构建', {
+      confirmButtonText: '重新构建',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如 opencode',
+      inputValidator: (value) => Boolean(value.trim()) || '启动命令不能为空',
+    });
+    const accepted = await retryUnregistered(item.digest, value.trim());
+    showBuild.value = true;
+    building.value = true;
+    startPolling(accepted.digest);
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '重试失败'));
+  }
+}
+
+async function dropPending(item: UnregisteredItem) {
+  try {
+    await deleteUnregistered(item.digest);
+    ElMessage.success('已删除未注册包');
+    loadFrameworks();
+  } catch (error: unknown) {
+    ElMessage.error(errorMessage(error, '删除失败'));
+  }
 }
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
   if (searchTimer) clearTimeout(searchTimer);
 });
-
 onMounted(loadFrameworks);
 </script>
 
@@ -215,10 +314,8 @@ onMounted(loadFrameworks);
   <section class="framework-page">
     <div class="framework-page__header">
       <h1 class="framework-page__title">三方智能体管理</h1>
-      <ElButton type="primary" :icon="Plus" @click="openUpload">接入新智能体</ElButton>
+      <ElButton v-if="isAdmin" type="primary" :icon="Plus" @click="openUpload">接入新智能体</ElButton>
     </div>
-
-    <!-- Toolbar: search + view toggle -->
     <div class="framework-page__toolbar">
       <ElInput
         v-model="searchQuery"
@@ -228,39 +325,35 @@ onMounted(loadFrameworks);
         @input="onSearchInput"
       />
       <div class="framework-page__toggle">
-        <ElButton
-          text
+        <button
           class="framework-page__toggle-btn"
           :class="{ 'framework-page__toggle-btn--active': viewMode === 'grid' }"
           @click="viewMode = 'grid'"
         >
           <img :src="gridViewIcon" alt="网格视图" class="framework-page__toggle-icon" />
-        </ElButton>
-        <ElButton
-          text
+        </button>
+        <button
           class="framework-page__toggle-btn"
           :class="{ 'framework-page__toggle-btn--active': viewMode === 'list' }"
           @click="viewMode = 'list'"
         >
           <img :src="listViewIcon" alt="列表视图" class="framework-page__toggle-icon" />
-        </ElButton>
+        </button>
       </div>
     </div>
-
-    <!-- Card area -->
     <div v-loading="loading" class="framework-page__cards" :class="`framework-page__cards--${viewMode}`">
       <template v-if="frameworks.length > 0">
         <FrameworkCard
           v-for="item in frameworks"
-          :key="item.agent_name"
-          :framework="item"
+          :key="item.framework + item.framework_version"
+          :card="item"
           :mode="viewMode"
+          :clickable="isAdmin"
+          @click="isAdmin && openDetail(item)"
         />
       </template>
       <div v-else class="framework-page__empty">暂无已接入智能体</div>
     </div>
-
-    <!-- Pagination -->
     <div v-if="total > pageSize" class="framework-page__pagination">
       <ElPagination
         v-model:current-page="currentPage"
@@ -269,143 +362,101 @@ onMounted(loadFrameworks);
         :total="total"
         layout="total, sizes, prev, pager, next"
         background
-        @current-change="onPageChange"
-        @size-change="onPageSizeChange"
+        @current-change="
+          (p: number) => {
+            currentPage = p;
+            loadFrameworks();
+          }
+        "
+        @size-change="
+          (s: number) => {
+            pageSize = s;
+            currentPage = 1;
+            loadFrameworks();
+          }
+        "
       />
     </div>
 
-    <!-- Upload dialog -->
+    <section v-if="isAdmin" class="pending-box">
+      <h2 class="pending-box__title">未注册包</h2>
+      <div v-if="unregistered.length" class="pending-list">
+        <div v-for="item in unregistered" :key="item.digest" class="pending-row">
+          <span class="pending-row__digest" :title="item.digest">{{ item.original_filename }}</span>
+          <span class="pending-row__status">{{ item.last_error || (item.locked ? '构建中' : '待处理') }}</span>
+          <span class="pending-row__actions">
+            <ElButton size="small" :disabled="item.locked" @click="retryPending(item)">重新构建</ElButton>
+            <ElButton size="small" :disabled="item.locked" @click="dropPending(item)">删除</ElButton>
+          </span>
+        </div>
+      </div>
+      <div v-else class="pending-box__empty">暂无未注册包</div>
+    </section>
+
     <ElDialog v-model="showUpload" width="452px" :close-on-click-modal="false" :show-close="false">
       <template #header>
         <div class="dialog-header">
           <span class="dialog-title">接入新智能体</span>
-          <ElButton text class="dialog-close" @click="showUpload = false">
-            <img :src="closeDialogIcon" alt="关闭" />
-          </ElButton>
+          <button class="dialog-close" @click="showUpload = false"><img :src="closeDialogIcon" alt="关闭" /></button>
         </div>
       </template>
       <div class="dialog-body">
-        <p class="dialog-desc">上传三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
-        <div class="upload-zone">
+        <p class="dialog-desc">上传三方智能体 npm 二进制包，并填写启动 Agent 的命令。</p>
+        <ElInput v-model="launchCommand" placeholder="启动命令（必填），例如 opencode" maxlength="512" />
+        <p class="dialog-desc">当前启动命令同时作为框架名，请确认与实际可执行命令一致。</p>
+        <ElUpload
+          ref="uploadRef"
+          class="upload-zone"
+          drag
+          :auto-upload="false"
+          :show-file-list="false"
+          :on-change="handleFileSelect"
+        >
           <img :src="uploadIcon" alt="上传" class="upload-zone__icon" />
-          <span class="upload-zone__text">
-            {{ selectedFile ? selectedFile.name : '将文件拖到此处或单击上传' }}
-          </span>
-          <span class="upload-zone__hint">支持tar.gz、tgz</span>
-          <ElUpload
-            ref="uploadRef"
-            :auto-upload="false"
-            :on-change="handleFileSelect"
-            accept=".tgz,.tar.gz"
-            :limit="1"
-            :show-file-list="false"
-            class="upload-zone__input"
-          >
-            <span class="upload-zone__trigger"></span>
-          </ElUpload>
-        </div>
-        <div v-if="uploading" class="upload-progress">
-          <ElProgress :percentage="uploadPercent" :show-text="uploadPercent > 0" />
-          <span class="upload-progress__text">正在上传并解析框架包…</span>
-        </div>
+          <span class="upload-zone__text">{{ selectedFile ? selectedFile.name : '将文件拖到此处或单击上传' }}</span>
+          <span class="upload-zone__hint">上传制品；当前构建 Recipe 支持 npm tgz</span>
+        </ElUpload>
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <ElButton class="dialog-footer__btn" @click="showUpload = false">取消</ElButton>
-          <ElButton type="primary" class="dialog-footer__btn" :disabled="!selectedFile" @click="startUpload">上传</ElButton>
+          <button class="btn-cancel" @click="showUpload = false">取消</button>
+          <button class="btn-primary" :disabled="!selectedFile || !launchCommand.trim()" @click="startUpload">
+            上架
+          </button>
         </div>
       </template>
     </ElDialog>
 
-    <!-- Parsing dialog -->
-    <ElDialog v-model="showParsing" width="452px" :close-on-click-modal="false" :show-close="false">
-      <template #header>
-        <div class="dialog-header">
-          <span class="dialog-title">接入新智能体</span>
-          <ElButton text class="dialog-close" @click="showParsing = false">
-            <img :src="closeDialogIcon" alt="关闭" />
-          </ElButton>
-        </div>
-      </template>
-      <div class="dialog-body dialog-body--center">
-        <p class="dialog-desc">上传三方智能体NPM安装包，系统将自动识别智能体信息并完成接入配置</p>
-        <div class="parsing-content">
-          <img :src="parsingIcon" alt="解析中" class="parsing-icon" />
-          <span class="parsing-text">解析文件中</span>
-        </div>
-      </div>
-      <template #footer>
-        <div class="dialog-footer">
-          <ElButton class="dialog-footer__btn" @click="showParsing = false">取消</ElButton>
-        </div>
-      </template>
-    </ElDialog>
-
-    <!-- Confirm dialog -->
-    <ElDialog v-model="showConfirm" width="452px" :close-on-click-modal="false" :show-close="false">
-      <template #header>
-        <div class="dialog-header">
-          <span class="dialog-title">确认智能体信息</span>
-          <ElButton text class="dialog-close" @click="showConfirm = false">
-            <img :src="closeDialogIcon" alt="关闭" />
-          </ElButton>
-        </div>
-      </template>
-      <div class="dialog-body">
-        <p class="dialog-desc">已成功识别以下智能体信息，请确认后创建。</p>
-        <div class="confirm-form">
-          <div class="confirm-form__row">
-            <label class="confirm-form__label">智能体名称</label>
-            <div class="confirm-form__input confirm-form__input--disabled">{{ form.display_name }}</div>
-          </div>
-          <div class="confirm-form__row">
-            <label class="confirm-form__label">版本</label>
-            <div class="confirm-form__input confirm-form__input--disabled">v{{ form.version }}</div>
-          </div>
-          <div class="confirm-form__row">
-            <label class="confirm-form__label">启动命令</label>
-            <input
-              v-model="form.entrypoint"
-              class="confirm-form__input"
-              :class="{ 'confirm-form__input--disabled': uploadedMeta?.entrypoint }"
-              :disabled="!!uploadedMeta?.entrypoint"
-            />
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <div class="dialog-footer">
-          <ElButton class="dialog-footer__btn" @click="showConfirm = false">取消</ElButton>
-          <ElButton type="primary" class="dialog-footer__btn" @click="confirmBuild">确认</ElButton>
-        </div>
-      </template>
-    </ElDialog>
-
-    <!-- Create dialog -->
     <ElDialog v-model="showBuild" width="452px" :close-on-click-modal="false" :show-close="false">
-      <template #header>
-        <span class="dialog-title">创建智能体</span>
-      </template>
+      <template #header><span class="dialog-title">上架智能体</span></template>
       <div class="dialog-body dialog-body--center">
-        <p v-if="building" class="dialog-desc">正在配置三方智能体并完成接入，请勿关闭当前页面。</p>
         <div v-if="building" class="create-content">
-          <ElProgress :percentage="buildStatus?.progress ?? 0" style="width: 60%" />
-          <span class="create-text">正在创建智能体……</span>
+          <ElProgress :percentage="buildProgress" style="width: 60%" />
+          <span class="create-text">正在构建并注册……</span>
         </div>
-        <div v-else-if="buildStatus" class="create-result">
-          <template v-if="buildStatus.status === 'done'">
-            <span class="create-result__success">创建成功</span>
-            <span v-if="buildStatus.image" class="create-result__image">镜像: {{ buildStatus.image }}</span>
-          </template>
-          <template v-else-if="buildStatus.status === 'failed'">
-            <span class="create-result__error">创建失败</span>
-            <span v-if="buildStatus.error_message" class="create-result__detail">{{ buildStatus.error_message }}</span>
-          </template>
+        <div v-else-if="buildError" class="create-result">
+          <span class="create-result__error">上架失败</span>
+          <span class="create-result__detail">{{ buildError }}</span>
         </div>
       </div>
       <template #footer>
-        <div class="dialog-footer" v-if="!building">
-          <ElButton class="dialog-footer__btn" @click="closeBuild">关闭</ElButton>
+        <div v-if="!building" class="dialog-footer">
+          <button class="btn-cancel" @click="showBuild = false">关闭</button>
+        </div>
+      </template>
+    </ElDialog>
+
+    <ElDialog v-model="showDetail" width="520px" :show-close="true">
+      <template #header><span class="dialog-title">卡片详情</span></template>
+      <div v-if="detail" class="dialog-body">
+        <p>{{ detail.framework }} · v{{ detail.framework_version }}{{ detail.is_default ? ' · 默认版本' : '' }}</p>
+        <p v-if="isAdmin">实例总数 {{ detail.total_instances ?? 0 }} · 运行中 {{ detail.running_instances ?? 0 }}</p>
+        <p v-if="isAdmin && detail.package_path">包路径：{{ detail.package_path }}</p>
+      </div>
+      <template #footer>
+        <div v-if="isAdmin" class="dialog-footer">
+          <button class="btn-cancel" @click="removeCard">删除卡片</button>
+          <button v-if="!detail?.is_default" class="btn-cancel" @click="markDefault">设为默认</button>
         </div>
       </template>
     </ElDialog>
@@ -416,78 +467,66 @@ onMounted(loadFrameworks);
 .framework-page {
   margin: 32px 24px;
 }
-
 .framework-page__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
-
 .framework-page__title {
   font-size: 20px;
   font-weight: 500;
   margin: 0;
   color: var(--text-primary);
 }
-
-/* ── Toolbar ── */
 .framework-page__toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-top: 20px;
 }
-
 .framework-page__search {
   width: 296px;
 }
-
 .framework-page__toggle {
   display: flex;
   background: rgba(25, 25, 25, 0.05);
   border-radius: 6px;
   padding: 2px;
-  gap: 0;
 }
-
 .framework-page__toggle-btn {
   width: 28px;
   height: 28px;
-  min-height: 28px;
-  margin: 0;
-  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 4px;
+  cursor: pointer;
   background: transparent;
+  padding: 0;
 }
-
 .framework-page__toggle-btn--active {
   background: #ffffff;
   box-shadow: 0px 1px 6px 0px rgba(0, 0, 0, 0.08);
 }
-
 .framework-page__toggle-icon {
   width: 16px;
   height: 16px;
   display: block;
   object-fit: contain;
 }
-
-/* ── Card area ── */
 .framework-page__cards--grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 20px;
   margin-top: 20px;
 }
-
 .framework-page__cards--list {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-top: 20px;
 }
-
 .framework-page__empty {
   grid-column: 1 / -1;
   text-align: center;
@@ -495,95 +534,133 @@ onMounted(loadFrameworks);
   padding: 48px 0;
   font-size: 14px;
 }
-
-/* ── Pagination ── */
 .framework-page__pagination {
   display: flex;
   justify-content: center;
   margin-top: 24px;
 }
-
-/* ── Shared dialog styles ── */
-:deep(.el-dialog) {
-  border-radius: 8px;
-  box-shadow: 0px 16px 48px 0px rgba(0, 0, 0, 0.16);
+.pending-box {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
 }
-
-:deep(.el-dialog__header) {
-  padding: 0;
-  margin: 0;
+.pending-box__title {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0 0 12px;
   color: var(--text-primary);
 }
-
-:deep(.el-dialog__body) {
-  padding: 0;
+.pending-box__empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 16px 0;
 }
-
+.pending-list {
+  display: flex;
+  flex-direction: column;
+}
+.pending-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pending-row__digest {
+  flex: 0 0 120px;
+  font-family: monospace;
+  color: var(--text-primary);
+}
+.pending-row__status {
+  flex: 1;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.pending-row__actions {
+  flex-shrink: 0;
+}
+:deep(.el-dialog) {
+  border-radius: 8px;
+}
+:deep(.el-dialog__header),
+:deep(.el-dialog__body),
 :deep(.el-dialog__footer) {
   padding: 0;
+  margin: 0;
 }
-
 .dialog-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   padding: 20px 24px 0 24px;
 }
-
 .dialog-title {
   font-size: 20px;
   font-weight: 500;
   color: var(--text-primary);
-  line-height: 28px;
 }
-
 .dialog-close {
   width: 14px;
   height: 14px;
-  min-height: 14px;
-  margin-top: 7px;
-  padding: 0;
   border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
 }
-
 .dialog-close img {
   width: 14px;
   height: 14px;
-  display: block;
 }
-
 .dialog-body {
   padding: 8px 24px 0 24px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
-
 .dialog-body--center {
   align-items: center;
 }
-
 .dialog-desc {
   font-size: 14px;
-  font-weight: 400;
   color: var(--text-secondary);
-  line-height: 22px;
   margin: 0;
 }
-
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 24px 24px 20px 24px;
+  padding: 24px;
+  flex-wrap: wrap;
 }
-
-.dialog-footer__btn {
-  width: 88px;
+.btn-cancel,
+.btn-primary {
+  min-width: 88px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
 }
-
-/* ── Upload dialog ── */
+.btn-cancel {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+.btn-primary {
+  background: var(--color-primary);
+  border: none;
+  color: #fff;
+}
 .upload-zone {
+  width: 100%;
+}
+.upload-zone :deep(.el-upload) {
+  width: 100%;
+}
+.upload-zone :deep(.el-upload-dragger) {
+  width: 100%;
+  height: auto;
+  padding: 40px 0;
   background: rgba(25, 25, 25, 0.05);
   border-radius: 4px;
   border: 1px dashed var(--border);
@@ -591,169 +668,30 @@ onMounted(loadFrameworks);
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: 60px 0;
-  cursor: pointer;
-  position: relative;
 }
-
 .upload-zone__icon {
   width: 22px;
   height: 20px;
-  display: block;
 }
-
 .upload-zone__text {
   font-size: 14px;
-  font-weight: 400;
   color: var(--text-primary);
-  line-height: 22px;
 }
-
 .upload-zone__hint {
   font-size: 12px;
-  font-weight: 400;
   color: var(--text-secondary);
-  line-height: 20px;
 }
-
-.upload-zone__input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-}
-
-.upload-zone__trigger {
-  position: absolute;
-  inset: 0;
-}
-
-.upload-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.upload-progress__text {
-  color: #909399;
-  font-size: 13px;
-}
-
-/* ── Parsing dialog ── */
-.parsing-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 48px 0 32px 0;
-}
-
-.parsing-icon {
-  width: 48px;
-  height: 48px;
-  display: block;
-  animation: spin 1.5s linear infinite;
-}
-
-.parsing-text {
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-placeholder);
-  line-height: 22px;
-}
-
-/* ── Confirm dialog ── */
-.confirm-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.confirm-form__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.confirm-form__label {
-  width: 80px;
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-primary);
-  line-height: 22px;
-  margin-top: 9px;
-  flex-shrink: 0;
-}
-
-.confirm-form__input {
-  width: 324px;
-  height: 40px;
-  background: #ffffff;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  padding: 9px 12px;
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-primary);
-  line-height: 22px;
-  font-family: inherit;
-}
-
-.confirm-form__input--disabled {
-  background: #f5f5f5;
-  color: var(--text-primary);
-}
-
-/* ── Create dialog ── */
-.create-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 0 8px 0;
-  width: 100%;
-}
-
-.create-text {
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-placeholder);
-  line-height: 22px;
-}
-
+.create-content,
 .create-result {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
   padding: 24px 0;
+  width: 100%;
 }
-
-.create-result__success {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  line-height: 22px;
-}
-
-.create-result__error {
-  font-size: 14px;
-  font-weight: 500;
-  color: #f56c6c;
-  line-height: 22px;
-}
-
-.create-result__image {
-  font-size: 13px;
-  color: #606266;
-}
-
+.create-result__error,
 .create-result__detail {
-  font-size: 13px;
   color: #f56c6c;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>
