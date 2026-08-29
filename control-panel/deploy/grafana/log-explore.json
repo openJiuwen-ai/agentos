@@ -24,7 +24,7 @@
         {
           "datasource": { "type": "loki", "uid": "agentos-loki" },
           "refId": "A",
-          "expr": "{category=~\"$category\",filename=~\"$filename\"} |~ \"(?i)$keyword\""
+          "expr": "{category=~\"$category\",filename=~\"$filename\",ip=\"$ip\"} |~ \"(?i)$keyword\""
         }
       ],
       "title": "",
@@ -64,6 +64,16 @@
         "current": { "selected": true, "text": "全部", "value": ".+" },
         "label": "文件名",
         "name": "filename",
+        "options": [
+          { "selected": true, "text": "全部", "value": ".+" }
+        ],
+        "query": "",
+        "type": "textbox"
+      },
+      {
+        "current": { "selected": true, "text": "全部", "value": ".+" },
+        "label": "节点 IP",
+        "name": "ip",
         "options": [
           { "selected": true, "text": "全部", "value": ".+" }
         ],

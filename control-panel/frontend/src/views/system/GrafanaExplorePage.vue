@@ -51,7 +51,11 @@ onMounted(async () => {
 function buildLogQL(): string {
   let expr = '';
   if (selectedCategory.value) {
-    expr = `{category="${selectedCategory.value}"}`;
+    expr = `{category="${selectedCategory.value}"`;
+    if (ipFromQuery) {
+      expr += `,ip="${ipFromQuery}"`;
+    }
+    expr += '}';
   }
   if (keyword.value.trim()) {
     expr += ` |~ "(?i)${keyword.value.trim()}"`;
@@ -68,6 +72,9 @@ const grafanaUrl = computed(() => {
   }
   if (keyword.value.trim()) {
     params.set('var-keyword', keyword.value.trim());
+  }
+  if (ipFromQuery) {
+    params.set('var-ip', ipFromQuery);
   }
   if (filename.value.trim()) {
     params.set('var-filename', filename.value.trim());
