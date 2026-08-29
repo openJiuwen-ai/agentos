@@ -11,6 +11,7 @@
 | `moosefs` | 分布式共享存储 | MooseFS 集群（master + chunkserver + client），单机自动跳过 |
 | `jiuwenbox` | 沙箱服务 | 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
 | `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
+| `conch` | Conch 沙箱引擎 | RPM 安装 erofs-utils、StratoVirt、Conch |
 | `agent-gateway` | A2X 注册中心 | a2x-registry 后端（sqlite 存储），优先 systemd 托管，抢占 ingress VIP 的节点启动 |
 | `jiuwenswarm` | jiuwenswarm gateway + web | gateway 进程 + web 前端（whl 包已包含 gateway） |
 
@@ -35,6 +36,9 @@ deploy/
 ├── yuanrong/
 │   ├── module.sh             # yuanrong 钩子函数
 │   └── yuanrong_deploy.sh    # yuanrong 原始部署脚本
+├── conch/
+│   ├── module.sh             # conch 钩子函数
+│   └── conch_deploy.sh       # Conch 部署脚本
 ├── agent-gateway/
 │   └── module.sh             # agent-gateway 钩子（A2X 注册中心，systemd/nohup 双模式）
 ├── jiuwenswarm/

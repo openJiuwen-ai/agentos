@@ -21,6 +21,10 @@ DOWNLOAD_JOBS=3
 REGISTRY_RELEASE_TAG="agentos-registry-prerelease-v0.2.1"
 REGISTRY_WHL_VERSION="0.3.3"
 RQLITE_VERSION="10.2.7"
+CONCH_RPM_VERSION="0.1.0-6.oe2403sp4"
+# Conch Python wheel 内置于 Conch RPM，不单独下载。
+STRATOVIRT_RPM_VERSION="2.4.0-12.oe2403sp4"
+EROFS_RPM_VERSION="1.9.3-2.oe2403sp4"
 # ./ build parameters
 
 YUANRONG_DAILY_INDEX_URL="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html"
@@ -476,7 +480,23 @@ build_agent_gateway() {
 }
 
 build_conch() {
-  echo "==> build_conch"
+  echo "==> build_conch (${ARCH})"
+  mkdir -p "${DOWNLOAD_DIR}/conch"
+
+  download_packages \
+    "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/EPOL/update/main/${ARCH}/Packages" \
+    "${DOWNLOAD_DIR}/conch" \
+    "erofs-utils-${EROFS_RPM_VERSION}.${ARCH}.rpm"
+
+  download_packages \
+    "https://atomgit.com/hu-zhangying/Conch/releases/download/conch-0.1.0" \
+    "${DOWNLOAD_DIR}/conch" \
+    "stratovirt-${STRATOVIRT_RPM_VERSION}.${ARCH}.rpm"
+
+  download_packages \
+    "https://atomgit.com/hu-zhangying/Conch/releases/download/conch-0.1.0" \
+    "${DOWNLOAD_DIR}/conch" \
+    "conch-${CONCH_RPM_VERSION}.${ARCH}.rpm"
 }
 
 build_tui_launcher() {
@@ -605,7 +625,6 @@ main() {
   build_jiuwenswarm
   build_tui_launcher
   build_agent_gateway
-  build_conch
   pack
   echo "done"
 }
