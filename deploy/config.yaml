@@ -14,8 +14,12 @@ cluster:
     - "127.0.0.1"
 
   # master 节点（主备）
+  # 多机 HA 时配置 2 个节点: 第一个为默认 MASTER（keepalived priority 最高），
+  # 其余为 BACKUP；管理面服务仅在 VIP 持有节点上运行（keepalived notify 驱动切换）
   master_nodes:
     - "127.0.0.1"
 
   # 统一入口虚拟 IP（抢占成功后启动 gateway/registry/web-server）
+  # 多机 HA 时由 keepalived VRRP 在 master_nodes 间竞争持有；
+  # 单机/回环 VIP 时 keepalived 模块自动跳过
   ingress_virtual_ip: "127.0.0.1"

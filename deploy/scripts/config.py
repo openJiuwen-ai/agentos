@@ -260,6 +260,8 @@ def main():
     sub.add_parser("initial-cluster", help="Print etcd --initial-cluster value")
     sub.add_parser("etcd-address-list", help="Print yr etcd address list value")
     sub.add_parser("master-ip", help="Print master_nodes[0]")
+    sub.add_parser("master-index", help="Print this host's index in master_nodes (0-based)")
+    sub.add_parser("master-nodes", help="Print all master node IPs, space-separated")
     sub.add_parser("etcd-advertise-ip", help="Print this host's etcd advertise IP")
     sub.add_parser("etcd-nodes", help="Print all etcd node IPs, space-separated")
     sub.add_parser("ingress-vip", help="Print ingress_virtual_ip")
@@ -291,6 +293,16 @@ def main():
         return
     if args.cmd == "master-ip":
         _LOGGER.info(get_function_master_ip(cluster))
+        return
+    if args.cmd == "master-index":
+        idx = find_local_match_index(local_ip, cluster["master_nodes"])
+        if idx < 0:
+            _LOGGER.error("local IP %s not in master_nodes", local_ip)
+            sys.exit(1)
+        _LOGGER.info(str(idx))
+        return
+    if args.cmd == "master-nodes":
+        _LOGGER.info(" ".join(cluster["master_nodes"]))
         return
     if args.cmd == "etcd-advertise-ip":
         _LOGGER.info(get_etcd_advertise_ip(local_ip, cluster))

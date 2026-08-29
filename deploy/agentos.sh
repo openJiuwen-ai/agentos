@@ -32,7 +32,15 @@ AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ETCD_SH="${SCRIPT_DIR}/etcd.sh"
 
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
-MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
+# keepalived 放最后: up 时管理面 unit 已就绪，由 VRRP notify 驱动主备启停；
+# down 时最先停 keepalived（释放 VIP 让 peer 接管），再逆序停其余组件。
+MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "keepalived")
+
+# ===== 管理面 unit 清单（集中感知，供 `mgmt` 子命令与 keepalived notify 使用） =====
+# registry/gateway/web 绑定 ingress VIP，随 VRRP 主备角色启停。
+# 增删管理面服务只需改此处；keepalived-notify.sh 只调用 `agentos.sh mgmt start/stop`，
+# 不感知具体 unit，遵循"服务由 agentos.sh 统一编排"的分层。
+MGMT_UNITS=("agent-registry.service" "jiuwenswarm-gateway.service" "jiuwenswarm-web.service")
 
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
@@ -110,7 +118,7 @@ parse_args() {
 
     while [ $i -lt ${#args[@]} ]; do
         case "${args[$i]}" in
-            up|down|restart|install|uninstall|init|deinit|status)
+            up|down|restart|install|uninstall|init|deinit|status|mgmt)
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
@@ -125,7 +133,7 @@ parse_args() {
     done
 
     if [ -z "${CMD}" ]; then
-        error "Command not specified! Use 'install', 'init', 'up', 'down', 'status', 'deinit', 'uninstall' or 'restart'"
+        error "Command not specified! Use 'install', 'init', 'up', 'down', 'status', 'mgmt', 'deinit', 'uninstall' or 'restart'"
     fi
 }
 
@@ -228,6 +236,43 @@ deploy_uninstall() {
     info "Python version: ${YR_PYTHON_VERSION}"
     run_hooks uninstall
     _print_summary uninstall
+}
+
+# ===== mgmt: 管理面 unit 集中启停/查询（供 keepalived notify 与人工运维调用） =====
+# keepalived-notify.sh 不感知注册的具体 unit，只调用 `agentos.sh mgmt start/stop`；
+# registry/gateway/web 的增删在此处统一维护。
+deploy_mgmt() {
+    local action="${EXTRA_ARGS[0]:-}"
+    [ -n "${action}" ] || error "mgmt requires an action: start|stop|status"
+    case "${action}" in
+        start)
+            info "Starting management units: ${MGMT_UNITS[*]}"
+            for u in "${MGMT_UNITS[@]}"; do
+                systemctl enable --now "${u}" 2>/dev/null \
+                    && success "${u} enabled & started" \
+                    || warning "${u} failed (is it installed? check unit file or ExecStartPre gate)"
+            done
+            ;;
+        stop)
+            info "Stopping management units: ${MGMT_UNITS[*]}"
+            for u in "${MGMT_UNITS[@]}"; do
+                systemctl disable --now "${u}" 2>/dev/null \
+                    && success "${u} disabled & stopped" \
+                    || warning "${u} not running / not found"
+            done
+            ;;
+        status)
+            for u in "${MGMT_UNITS[@]}"; do
+                local substate
+                substate=$(systemctl is-active "${u}" 2>/dev/null || echo "unknown")
+                enable_state=$(systemctl is-enabled "${u}" 2>/dev/null || echo "unknown")
+                echo "mgmt|${u}|${substate}|enabled=${enable_state}"
+            done
+            ;;
+        *)
+            error "mgmt: unknown action '${action}' (expected start|stop|status)"
+            ;;
+    esac
 }
 
 # ===== status: 一键查询各组件状态（只读探测，不启停服务） =====
@@ -382,6 +427,9 @@ Commands (Required):
   deinit      停 etcd + 删 unit（委托 etcd.sh down，保留数据）
   uninstall   在本机卸载全部组件的 whl 包
   status      查询全部组件运行状态（只读探测，不启停服务；含 etcd + MODULES）
+  mgmt        管理面 unit 集中启停/查询: mgmt start|stop|status
+              管理面清单在本脚本 MGMT_UNITS 中统一维护（registry/gateway/web），
+              keepalived notify 主备切换即通过本命令启停管理面，不感知具体 unit
   restart     重启全部应用组件（先 down 再 up；不含 init/deinit）
 
 Options:
@@ -486,6 +534,7 @@ main() {
         deinit)    deploy_deinit ;;
         uninstall) deploy_uninstall ;;
         status)    deploy_status ;;
+        mgmt)      deploy_mgmt ;;
         restart)   deploy_restart ;;
         *)         error "Unknown command: ${CMD}" ;;
     esac

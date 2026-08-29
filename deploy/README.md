@@ -13,6 +13,7 @@
 | `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
 | `agent-gateway` | A2X 注册中心 | a2x-registry 后端（sqlite 存储），优先 systemd 托管，抢占 ingress VIP 的节点启动 |
 | `jiuwenswarm` | jiuwenswarm gateway + web | gateway 进程 + web 前端（whl 包已包含 gateway） |
+| `keepalived` | 管理面高可用（VIP 主备） | master 节点部署 keepalived，VRRP 竞争 ingress VIP，notify 回调驱动管理面服务主备切换，单机自动跳过 |
 
 ## 目录结构
 
@@ -40,6 +41,9 @@ deploy/
 ├── jiuwenswarm/
 │   ├── module.sh             # jiuwenswarm 钩子函数
 │   └── .env.custom           # jiuwenswarm 配置文件
+├── keepalived/
+│   ├── module.sh             # keepalived 钩子函数（生成 keepalived.conf）
+│   └── keepalived-notify.sh  # notify_master/backup/fault 主备切换回调（薄适配层，调用 agentos.sh mgmt）
 └── scripts/
     └── config.py             # 集群配置解析与角色推导工具
 ```
@@ -49,7 +53,7 @@ deploy/
 核心机制：**模块注册 + 钩子函数 + 调度引擎**。
 
 1. **模块注册**：`agentos.sh` 顶部的 `MODULES` 数组声明所有模块及其部署顺序：
-   `MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")`
+   `MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "keepalived")`
 2. **钩子约定**：每个模块在 `deploy/<module>/module.sh` 中实现 5 个钩子函数：
    - `<module>_up` — 启动/部署
    - `<module>_down` — 停止/卸载
@@ -83,6 +87,7 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - **系统命令**：部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
 - **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`（单机开发模式默认全为 `127.0.0.1`）
 - **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
+- **keepalived**（多机 HA）：多机部署时 master 节点需预装 keepalived（`yum install -y keepalived`），用于 ingress VIP 主备漂移；单机部署无需安装
 
 ### 安装包获取
 
@@ -220,7 +225,7 @@ bash etcd.sh clean
 
 #### config.yaml（集群拓扑）
 
-配置文件：`deploy/config.yaml`。角色推导由 `scripts/config.py` 解析，支持 `local-ip`、`is-etcd-node`、`is-master-node`、`etcd-name`、`initial-cluster`、`etcd-advertise-ip`、`etcd-nodes`、`ingress-vip`、`all` 等子命令。
+配置文件：`deploy/config.yaml`。角色推导由 `scripts/config.py` 解析，支持 `local-ip`、`is-etcd-node`、`is-master-node`、`master-index`、`master-nodes`、`etcd-name`、`initial-cluster`、`etcd-advertise-ip`、`etcd-nodes`、`ingress-vip`、`all` 等子命令。
 
 #### moosefs
 
@@ -373,6 +378,53 @@ docker save -o yr-runtime-sandbox.tar swr.cn-southwest-2.myhuaweicloud.com/yuanr
 # 传输到目标主机后导入
 docker load -i yr-runtime-sandbox.tar
 ```
+
+#### keepalived（管理面高可用 / VIP 主备）
+
+多机部署时，master 节点通过 keepalived（VRRP 协议）竞争 `ingress_virtual_ip`（VIP），实现管理面统一入口高可用与管理面服务（agent-registry / jiuwenswarm-gateway / jiuwenswarm-web）主备切换。**单机模式（`master_nodes` 单节点或 VIP 为回环地址）自动跳过全部钩子，无需任何额外配置。**
+
+**架构设计**：
+
+1. **管理面部署在 master nodes 上**：仅 `config.yaml` 中 `master_nodes` 列出的节点部署 keepalived 与管理面服务
+2. **基于 VIP 提供服务**：管理面服务绑定 VIP，客户端只访问 VIP，无需感知主备切换
+3. **主备部署**：仅 VRRP MASTER（VIP 持有节点）运行管理面服务，standby 节点不运行
+4. **notify 驱动主备切换**：`notify_master` / `notify_backup` / `notify_fault` 统一回调 `/etc/keepalived/agentos-notify.sh`：
+   - `MASTER`：`systemctl enable --now` 启动全部管理面 unit
+   - `BACKUP` / `FAULT`：`systemctl disable --now` 停止全部管理面 unit
+
+**关键机制**：
+
+- **非抢占（`state BACKUP` + `nopreempt`）**：初次由 priority 决出 MASTER（`master_nodes[0]`=150，后继每节点 -10）；原 master 故障恢复后不夺回 VIP，避免二次切换抖动
+- **单播组网（`unicast_peer`）**：peer 列表由 `master_nodes` 推导，不依赖交换机组播能力
+- **服务存活由 systemd 负责**：keepalived 不做管理面健康探测；管理面 unit 异常退出由 systemd `Restart` 策略原地拉起（秒级自愈，VIP 不漂移），keepalived 只负责节点级故障（宕机/断网）经 VRRP 通告触发 VIP 漂移
+- **二道防线**：全部管理面 unit（agent-registry / jiuwenswarm-gateway / jiuwenswarm-web）的 `ExecStartPre`（check-ingress-master）再次校验本机是否真持有 VIP，非 master 节点即使 unit 被误启动也会 fail-closed
+- **生命周期**：`install` 时校验 keepalived 二进制、安装 notify 脚本（root 属主 + 700 权限，满足 `enable_script_security`，并注入 `agentos.sh` 路径）并生成 `/etc/keepalived/keepalived.conf`；`up` 启动 keepalived（管理面服务不设开机自启，统一由 notify 驱动）；`down` 停 keepalived 释放 VIP 让 peer 接管；`status` 输出 systemd 状态 + VRRP 角色（MASTER/BACKUP）
+
+**管理面编排（`agentos.sh mgmt`）**：管理面 unit 清单（agent-registry / jiuwenswarm-gateway / jiuwenswarm-web）在 `agentos.sh` 顶部的 `MGMT_UNITS` 数组统一维护；`keepalived-notify.sh` 只是 VRRP 状态的薄适配层，仅调用 `agentos.sh mgmt start|stop`，不感知具体 unit。增删管理面服务只需改 `MGMT_UNITS`：
+
+```bash
+agentos.sh mgmt start   # 启动全部管理面 unit（notify_master 调用）
+agentos.sh mgmt stop    # 停止全部管理面 unit（notify_backup/notify_fault 调用）
+agentos.sh mgmt status  # 查询管理面 unit 激活/启用状态
+```
+
+**环境变量**：
+
+| 环境变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `KEEPALIVED_VRID` | VRRP virtual_router_id（同网段多套集群需错开） | `51` |
+| `KEEPALIVED_ADVERT_INT` | VRRP 通告间隔（秒） | `1` |
+| `KEEPALIVED_AUTH_PASS` | VRRP 认证密码 | `agentos51` |
+
+**故障场景覆盖**：
+
+| 故障场景 | 检测方 | 行为 |
+| --- | --- | --- |
+| master 节点宕机/断网 | VRRP 通告超时 | backup 升 MASTER，`notify_master` 拉起管理面服务 |
+| master 节点管理面服务异常退出/挂死 | systemd | `Restart` 策略原地拉起，秒级自愈，VIP 不漂移 |
+| keepalived 进程故障 | VRRP 通告停止 | 同宕机场景，backup 接管 |
+| 原 master 恢复 | — | `nopreempt` 保持 BACKUP，不夺回 VIP，无二次切换 |
+
 
 #### whl 包来源
 
