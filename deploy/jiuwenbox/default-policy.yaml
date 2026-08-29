@@ -18,8 +18,7 @@ filesystem_policy:
   # Paths must be absolute sandbox-visible paths. Directories persist for the sandbox
   # lifecycle and are removed when the sandbox is deleted. Access is still controlled
   # by the directory permissions and Landlock.
-  directories:
-    - "/home/agentos/.jiuwenswarm/logs"
+  directories: []
 
   # Lifecycle files to create for the sandbox and bind into the sandbox path.
   # Items may be either:
