@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# 模块: agent-gateway (A2X 注册中心 + sqlite 存储)
+# 模块: agent-gateway (A2X 注册中心，存储 etcd)
 # 优先使用 systemd 托管；无 systemd 时回退到 nohup 后台进程。
 # 钩子函数: agent-gateway_up / agent-gateway_down / agent-gateway_install / agent-gateway_uninstall / agent-gateway_status
 # ============================================================
@@ -12,6 +12,21 @@ A2X_REGISTRY_PORT="${A2X_REGISTRY_PORT:-4003}"
 A2X_REGISTRY_TLS_CERTFILE="${A2X_REGISTRY_TLS_CERTFILE:-}"
 A2X_REGISTRY_TLS_KEYFILE="${A2X_REGISTRY_TLS_KEYFILE:-}"
 A2X_REGISTRY_TLS_CA_CERTS="${A2X_REGISTRY_TLS_CA_CERTS:-}"
+
+# ===== 存储后端（固定 etcd） =====
+# up 时自动探测 yuanrong 的 etcd（etcd 在本模块 up 之前应已启动），探测不到直接报错失败。
+# endpoint 留空时自动填充首个可达 etcd_node 的 client endpoint；显式配置则跳过探测。
+# 未配证书必须 http://，配齐证书必须 https://。
+A2X_REGISTRY_DB_ENDPOINT="${A2X_REGISTRY_DB_ENDPOINT:-}"
+# etcd client 端口（自动探测用，与 etcd.sh / scripts/config.py 的默认值一致）
+AGENTREGISTRY_ETCD_CLIENT_PORT="${YR_ETCD_CLIENT_PORT:-32379}"
+# etcd key 前缀（默认 a2x-registry）
+A2X_REGISTRY_ETCD_NAMESPACE="${A2X_REGISTRY_ETCD_NAMESPACE:-}"
+
+# ===== etcd mTLS 证书（三者齐全=https+双向 TLS，空=纯 http 不认证） =====
+A2X_REGISTRY_ETCD_TLS_CA="${A2X_REGISTRY_ETCD_TLS_CA:-}"
+A2X_REGISTRY_ETCD_TLS_CERT="${A2X_REGISTRY_ETCD_TLS_CERT:-}"
+A2X_REGISTRY_ETCD_TLS_KEY="${A2X_REGISTRY_ETCD_TLS_KEY:-}"
 
 # ===== 公共常量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
@@ -43,6 +58,34 @@ _agentregistry_tls_enabled() {
     [ -n "${A2X_REGISTRY_TLS_CERTFILE}" ] && [ -n "${A2X_REGISTRY_TLS_KEYFILE}" ] && [ -n "${A2X_REGISTRY_TLS_CA_CERTS}" ]
 }
 
+# ===== 检测是否配置了 etcd mTLS（三者齐全才算开启） =====
+_agentregistry_etcd_tls_enabled() {
+    [ -n "${A2X_REGISTRY_ETCD_TLS_CA}" ] && [ -n "${A2X_REGISTRY_ETCD_TLS_CERT}" ] && [ -n "${A2X_REGISTRY_ETCD_TLS_KEY}" ]
+}
+
+# ===== 校验 etcd 存储配置（与后端 startup._resolve_db_config 规则一致，出错即失败） =====
+_agentregistry_validate_etcd() {
+    [ -n "${A2X_REGISTRY_DB_ENDPOINT}" ] || error "A2X_REGISTRY_DB_ENDPOINT is required"
+
+    # 部分配置证书视为错误，避免误以为开了 TLS 实则裸 http
+    if { [ -n "${A2X_REGISTRY_ETCD_TLS_CA}" ] || [ -n "${A2X_REGISTRY_ETCD_TLS_CERT}" ] || [ -n "${A2X_REGISTRY_ETCD_TLS_KEY}" ]; } \
+        && ! _agentregistry_etcd_tls_enabled; then
+        error "etcd TLS certs partially set; provide all of A2X_REGISTRY_ETCD_TLS_CA/CERT/KEY or none"
+    fi
+    # endpoint scheme 必须与证书配置一致：配齐证书 -> https://，未配 -> http://
+    if _agentregistry_etcd_tls_enabled; then
+        case "${A2X_REGISTRY_DB_ENDPOINT}" in
+            https://*) ;;
+            *) error "etcd certs configured but A2X_REGISTRY_DB_ENDPOINT is not https://" ;;
+        esac
+    else
+        case "${A2X_REGISTRY_DB_ENDPOINT}" in
+            http://*) ;;
+            *) error "etcd certs not configured; A2X_REGISTRY_DB_ENDPOINT must be http://" ;;
+        esac
+    fi
+}
+
 # 监听地址：优先绑定 ingress_virtual_ip（VIP），使注册中心对外可通过统一入口访问；
 # 无 VIP 配置时回退到 --hosts 首个 IP / 本机网卡 IP。
 # 注意：注册中心后端禁止 A2X_REGISTRY_BIND=0.0.0.0，故只能绑定具体 VIP。
@@ -72,6 +115,51 @@ except Exception:
     [ -z "${ip}" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "${ip}" ] && ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
     echo "${ip:-127.0.0.1}"
+}
+
+# ===== etcd 探测：yuanrong 先 up，etcd 此时应已启动 =====
+# 从 ~/.agentos/deploy/config.yaml 读 etcd_nodes，对 client 端口做 TCP 连通探测，
+# 与 etcd.sh check 同逻辑；endpoint 未显式配置时自动填充首个可达 etcd_node 的 client endpoint。
+# etcd 是注册中心唯一的存储后端：探测不到直接报错失败。
+_agentregistry_detect_etcd() {
+    local config_file="${HOME:-/root}/.agentos/deploy/config.yaml"
+    local py="python${YR_PYTHON_VERSION}" nodes="" node endpoint=""
+
+    if [ -f "${config_file}" ] \
+        && command -v "${py}" >/dev/null 2>&1 && "${py}" -c 'import yaml' >/dev/null 2>&1; then
+        nodes=$("${py}" -c '
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f)
+    nodes = (cfg or {}).get("cluster", {}).get("etcd_nodes", []) or []
+    print(" ".join(str(n) for n in nodes), end="")
+except Exception:
+    print("", end="")
+' "${config_file}" 2>/dev/null)
+    fi
+
+    if [ -z "${nodes}" ]; then
+        error "No etcd_nodes found in ${config_file}; agent-registry requires etcd (run 'agentos.sh init' first)"
+    fi
+
+    # 探测仅做 TCP 连通性检查（TLS 层不区分），scheme 按证书配置决定：
+    # 配齐 etcd mTLS 证书 -> https://，否则 http://，与 _agentregistry_validate_etcd 保持一致。
+    local scheme="http"
+    _agentregistry_etcd_tls_enabled && scheme="https"
+    for node in ${nodes}; do
+        if timeout 3 bash -c "exec 3<>/dev/tcp/${node}/${AGENTREGISTRY_ETCD_CLIENT_PORT}" 2>/dev/null; then
+            endpoint="${scheme}://${node}:${AGENTREGISTRY_ETCD_CLIENT_PORT}"
+            break
+        fi
+    done
+
+    if [ -z "${endpoint}" ]; then
+        error "etcd not reachable on port ${AGENTREGISTRY_ETCD_CLIENT_PORT} (checked: ${nodes}); run 'agentos.sh init' first"
+    fi
+
+    A2X_REGISTRY_DB_ENDPOINT="${endpoint}"
+    success "Detected running etcd: ${A2X_REGISTRY_DB_ENDPOINT}"
 }
 
 # ===== nohup 模式辅助函数 =====
@@ -197,7 +285,12 @@ agent-gateway_up() {
     local bind port i scheme curl_tls
     bind=$(_agentregistry_bind)
     port="${A2X_REGISTRY_PORT}"
-    info "Starting agent-registry on ${bind}:${port} (db: sqlite)"
+    # endpoint 未显式配置时自动探测 etcd（探测不到直接失败）
+    if [ -z "${A2X_REGISTRY_DB_ENDPOINT}" ]; then
+        _agentregistry_detect_etcd
+    fi
+    _agentregistry_validate_etcd
+    info "Starting agent-registry on ${bind}:${port} (etcd: ${A2X_REGISTRY_DB_ENDPOINT})"
 
     command -v curl >/dev/null 2>&1 || error "curl not found (required for health check)"
 
@@ -225,7 +318,9 @@ agent-gateway_up() {
 Environment=A2X_REGISTRY_BIND=${bind}
 Environment=A2X_REGISTRY_PORT=${port}
 Environment=A2X_REGISTRY_MODE=appliance
-Environment=A2X_REGISTRY_DB_KIND=sqlite
+Environment=A2X_REGISTRY_DB_KIND=etcd
+Environment=A2X_REGISTRY_DB_ENDPOINT=${A2X_REGISTRY_DB_ENDPOINT}
+Environment=A2X_REGISTRY_ETCD_NAMESPACE=${A2X_REGISTRY_ETCD_NAMESPACE}
 Environment=A2X_REGISTRY_LOG_DIR=${A2X_REGISTRY_LOG_DIR}
 Environment=A2X_REGISTRY_LOG_RETENTION_DAYS=${A2X_REGISTRY_LOG_RETENTION_DAYS}
 EOF
@@ -234,6 +329,13 @@ EOF
 Environment=A2X_REGISTRY_TLS_CERTFILE=${A2X_REGISTRY_TLS_CERTFILE}
 Environment=A2X_REGISTRY_TLS_KEYFILE=${A2X_REGISTRY_TLS_KEYFILE}
 Environment=A2X_REGISTRY_TLS_CA_CERTS=${A2X_REGISTRY_TLS_CA_CERTS}
+EOF
+        fi
+        if _agentregistry_etcd_tls_enabled; then
+            cat >> "${AGENTREGISTRY_DROPIN}" <<EOF
+Environment=A2X_REGISTRY_ETCD_TLS_CA=${A2X_REGISTRY_ETCD_TLS_CA}
+Environment=A2X_REGISTRY_ETCD_TLS_CERT=${A2X_REGISTRY_ETCD_TLS_CERT}
+Environment=A2X_REGISTRY_ETCD_TLS_KEY=${A2X_REGISTRY_ETCD_TLS_KEY}
 EOF
         fi
         systemctl daemon-reload
@@ -270,12 +372,16 @@ EOF
         if _agentregistry_tls_enabled; then
             export A2X_REGISTRY_TLS_CERTFILE A2X_REGISTRY_TLS_KEYFILE A2X_REGISTRY_TLS_CA_CERTS
         fi
+        export A2X_REGISTRY_DB_ENDPOINT A2X_REGISTRY_ETCD_NAMESPACE
+        if _agentregistry_etcd_tls_enabled; then
+            export A2X_REGISTRY_ETCD_TLS_CA A2X_REGISTRY_ETCD_TLS_CERT A2X_REGISTRY_ETCD_TLS_KEY
+        fi
         PATH="${py_bindir}:${PATH}" \
         LD_LIBRARY_PATH="${py_libdir}:${LD_LIBRARY_PATH:-}" \
         A2X_REGISTRY_BIND="${bind}" \
         A2X_REGISTRY_PORT="${port}" \
         A2X_REGISTRY_MODE=appliance \
-        A2X_REGISTRY_DB_KIND=sqlite \
+        A2X_REGISTRY_DB_KIND=etcd \
         A2X_REGISTRY_LOG_DIR="${A2X_REGISTRY_LOG_DIR}" \
         A2X_REGISTRY_LOG_RETENTION_DAYS="${A2X_REGISTRY_LOG_RETENTION_DAYS}" \
             _start_bg agent-registry "${REGISTRY_PID_FILE}" "${REGISTRY_LOG}" \
