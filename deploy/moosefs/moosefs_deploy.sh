@@ -450,6 +450,17 @@ EOF
 ${MFS_CHUNK_DIR}
 EOF
 
+    # 统一设置配置文件权限：属主 root:mfs，权限 0640
+    # 避免 umask 不确定导致权限不一致，同时仅允许 root 可写、mfs 组可读
+    if id mfs >/dev/null 2>&1; then
+        chown root:mfs "${mfs_conf_dir}" "${mfs_conf_dir}"/*.cfg
+        chmod 0750 "${mfs_conf_dir}"
+        chmod 0640 "${mfs_conf_dir}"/*.cfg
+    else
+        chmod 0750 "${mfs_conf_dir}"
+        chmod 0640 "${mfs_conf_dir}"/*.cfg
+    fi
+
     # 8. 初始化 metadata 目录（uninstall 清空了内容但保留目录）
     local mfs_data_dir="/var/lib/mfs"
     mkdir -p "${mfs_data_dir}"
@@ -642,7 +653,7 @@ deploy_mfs_up() {
         # 挂载所有节点
         for host in "${_hosts_arr[@]}"; do
             info "Mounting MooseFS on ${host}..."
-            exec_on_host "${host}" "${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT}" || warning "Failed to mount MooseFS on ${host}"
+            exec_on_host "${host}" "${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT}" || error "Failed to mount MooseFS on ${host}"
         done
 
         # 设置 goal
@@ -692,7 +703,7 @@ deploy_mfs_up() {
             info "Enabling and starting moosefs-client..."
             systemctl enable --now moosefs-client 2>/dev/null || {
                 warning "moosefs-client.service failed, trying direct mfsmount..."
-                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || warning "Direct mfsmount also failed"
+                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || error "Direct mfsmount also failed"
             }
 
             info "Setting goal=${MFS_GOAL} on ${MFS_MOUNT_POINT}..."
@@ -719,7 +730,7 @@ deploy_mfs_up() {
             info "Enabling and starting moosefs-client..."
             systemctl enable --now moosefs-client 2>/dev/null || {
                 warning "moosefs-client.service failed, trying direct mfsmount..."
-                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || warning "Direct mfsmount also failed"
+                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || error "Direct mfsmount also failed"
             }
         fi
 
@@ -761,7 +772,7 @@ deploy_mfs_up() {
     ${MFS_BIN_CHUNKSERVER} start || error "Failed to start mfschunkserver"
 
     info "Mounting MooseFS..."
-    ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${local_ip} -P ${MFS_CLIENT_PORT} || warning "Failed to mount MooseFS"
+    ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${local_ip} -P ${MFS_CLIENT_PORT} || error "Failed to mount MooseFS"
 
     info "Setting goal=${goal} on ${MFS_MOUNT_POINT}..."
     ${MFS_BIN_SETGOAL} -r ${goal} ${MFS_MOUNT_POINT} 2>/dev/null || warning "Failed to set goal on ${MFS_MOUNT_POINT}"
