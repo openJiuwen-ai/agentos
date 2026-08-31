@@ -171,23 +171,23 @@ deploy_up() {
     _print_summary up
 }
 
-# ===== init: bootstrap etcd（委托 etcd.sh clean + up，非 etcd 节点自动跳过） =====
+# ===== init: 启动 etcd（委托 etcd.sh up，非 etcd 节点自动跳过） =====
 # etcd 是全集群前置依赖，作为一次性 bootstrap 步骤独立于日常 up/down。
 # 可在所有节点统一执行：仅 etcd_nodes 节点实际启动，其余为 no-op。
-# 自动清理历史 etcd 数据（对齐 yr start 语义：每次 bootstrap 视为干净启动），
-# 修改 etcd_nodes 拓扑后无需用户手动 clean 即可直接重新 bootstrap。
+# 保留已有 etcd 数据实现平滑升级：up 自动根据数据目录是否存在 member/ 选择
+# --initial-cluster-state（existing/new）。如需彻底清理数据（拓扑变更等），
+# 请显式执行 ./etcd.sh clean。
 deploy_init() {
     echo ""
     info "Initializing etcd (bootstrap)"
     [ -r "${ETCD_SH}" ] || error "etcd script not found or not readable: ${ETCD_SH}"
-    bash "${ETCD_SH}" clean || error "etcd data clean failed"
     bash "${ETCD_SH}" up || error "etcd init failed"
     success "etcd init completed"
 }
 
 # ===== deinit: 停 etcd + 删 unit（委托 etcd.sh down，保留数据） =====
 # 与 init 互逆。仅停服务、删 unit，保留 /var/lib/agentos/etcd 数据，便于 restart。
-# 彻底清数据由 init（自动 clean）或独立 ./etcd.sh clean 完成。
+# 彻底清数据仅由显式 ./etcd.sh clean 完成。
 deploy_deinit() {
     echo ""
     info "Uninitializing etcd (stop + remove unit, data preserved)"
@@ -375,8 +375,8 @@ Usage: ./$(basename "$0") <COMMAND> [OPTIONS]
 
 Commands (Required):
   install     在本机安装全部组件的 whl 包（不启动服务）
-  init        bootstrap etcd（委托 etcd.sh clean + up，非 etcd 节点自动跳过）
-              自动清理历史 etcd 数据（默认 yes，对齐 yr start 语义），无需手动 clean
+  init        启动 etcd（委托 etcd.sh up，非 etcd 节点自动跳过）
+              保留已有 etcd 数据实现平滑升级；如需彻底清理数据请显式 ./etcd.sh clean
   up          按顺序部署全部应用组件（前置检查 etcd 可达，不可达则提示先 init）
   down        逆序停止全部应用组件（不动 etcd）
   deinit      停 etcd + 删 unit（委托 etcd.sh down，保留数据）
@@ -387,8 +387,9 @@ Commands (Required):
 Options:
   -h, --help      显示帮助信息
 
-etcd 数据删除（独立操作，不并入 deinit；默认直接清理无交互确认）:
-  ./etcd.sh clean   彻底删除 /var/lib/agentos/etcd 数据（对齐 yr start 语义）
+etcd 数据清理（独立操作，需交互确认；-y 跳过确认）:
+  ./etcd.sh clean   彻底删除 /var/lib/agentos/etcd 数据
+  适用场景: etcd 拓扑变更（增减节点）、数据损坏修复、全新 re-bootstrap
 
 Config:
   moosefs     配置文件: deploy/moosefs/moosefs.conf (端口/目录/副本数/systemd 开关等)
@@ -464,8 +465,8 @@ Examples:
 注意:
   - up/restart 不安装 whl 包，请先执行 install
   - up 前需先执行 init：etcd 作为一次性 bootstrap 独立于 up/down（up 会前置检查可达性）
-  - init 自动清理历史 etcd 数据（对齐 yr start 语义：每次 bootstrap 视为干净启动）
-  - down 不停 etcd，etcd 作为持久基础设施；拆 etcd 用 deinit（保留数据），强制仅清数据用 ./etcd.sh clean
+  - init 保留已有 etcd 数据实现平滑升级（自动选择 new/existing 状态）
+  - down 不停 etcd，etcd 作为持久基础设施；拆 etcd 用 deinit（保留数据），彻底清数据用 ./etcd.sh clean
   - init/deinit 委托 deploy/etcd.sh，etcd 逻辑只在 etcd.sh 一处维护
   - gateway 依赖 jiuwenswarm 部署后产生的 FUNCTION_ID/FRONTEND_PORT，同一进程内自动传递
 EOF
