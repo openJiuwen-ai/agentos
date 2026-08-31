@@ -114,6 +114,42 @@ body,
   color: var(--text-primary);
 }
 
+/** 一级标题 — 20px / medium(500) / line-height 28px */
+.title-l1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+  color: var(--text-primary);
+}
+
+/** 二级标题 — 18px / medium(500) / line-height 26px */
+.title-l2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
+  color: var(--text-primary);
+}
+
+/** 三级标题 — 16px / medium(500) / line-height 24px */
+.title-l3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+/** 四级标题 — 14px / medium(500) / line-height 22px */
+.title-l4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
 /* Filter tabs */
 .filter-tabs {
   display: flex;
@@ -277,32 +313,7 @@ body,
   padding: 20px 24px;
 }
 
-/* Table */
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 12px 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-separator);
-}
-
-.data-table td {
-  padding: 12px 16px;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-separator);
-}
-
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-/* Element Plus 表格 —— ElTable 加 class="app-table" 即可 */
+/* Element Plus 表格公共样式 —— <ElTable class="app-table"> 即可 */
 .app-table {
   --el-table-header-bg-color: rgba(25, 25, 25, 0.05);
   --el-table-header-text-color: var(--text-primary);

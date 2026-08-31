@@ -313,7 +313,7 @@ onMounted(loadFrameworks);
 <template>
   <section class="framework-page">
     <div class="framework-page__header">
-      <h1 class="framework-page__title">三方智能体管理</h1>
+      <h1 class="title-l1">三方智能体管理</h1>
       <ElButton v-if="isAdmin" type="primary" :icon="Plus" @click="openUpload">接入新智能体</ElButton>
     </div>
     <div class="framework-page__toolbar">
@@ -419,10 +419,15 @@ onMounted(loadFrameworks);
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <button class="btn-cancel" @click="showUpload = false">取消</button>
-          <button class="btn-primary" :disabled="!selectedFile || !launchCommand.trim()" @click="startUpload">
+          <ElButton class="dialog-footer__btn" @click="showUpload = false">取消</ElButton>
+          <ElButton
+            type="primary"
+            class="dialog-footer__btn"
+            :disabled="!selectedFile || !launchCommand.trim()"
+            @click="startUpload"
+          >
             上架
-          </button>
+          </ElButton>
         </div>
       </template>
     </ElDialog>
@@ -471,12 +476,6 @@ onMounted(loadFrameworks);
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-.framework-page__title {
-  font-size: 20px;
-  font-weight: 500;
-  margin: 0;
-  color: var(--text-primary);
 }
 .framework-page__toolbar {
   display: flex;

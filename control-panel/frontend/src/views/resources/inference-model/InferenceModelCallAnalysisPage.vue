@@ -17,7 +17,7 @@ function goBack() {
       <ElButton class="detail-page__back" text @click="goBack">
         <img :src="arrowLeftIcon" alt="" class="detail-page__back-icon" width="20" height="20" />
       </ElButton>
-      <h1 class="detail-page__title">推理模型调用分析</h1>
+      <h1 class="title-l1">推理模型调用分析</h1>
     </div>
 
     <div class="detail-page__body">
@@ -64,16 +64,6 @@ function goBack() {
   width: 20px;
   height: 20px;
   object-fit: contain;
-}
-
-.detail-page__title {
-  margin: 0;
-  font-style: normal;
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
-  letter-spacing: 0;
-  color: var(--text-primary);
 }
 
 .detail-page__body {

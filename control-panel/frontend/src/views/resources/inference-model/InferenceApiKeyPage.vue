@@ -134,15 +134,26 @@ onMounted(() => {
 <template>
   <section class="page">
     <div class="page-header">
-      <h1 class="page-header__title">API Key</h1>
-      <ElButton type="primary" @click="openCreateDialog">新建API Key</ElButton>
+      <h1 class="title-l1">API 接入</h1>
     </div>
 
     <div class="card">
+      <div class="card-header">
+        <h2 class="title-l3">API Key</h2>
+        <ElButton type="primary" @click="openCreateDialog">新建API Key</ElButton>
+      </div>
+
       <ElSkeleton v-if="loading" :rows="5" animated style="padding: 20px" />
 
-      <ElTable v-else :data="paginatedApiKeys" style="width: 100%">
-        <ElTableColumn label="名称" min-width="140">
+      <ElTable
+        v-else
+        :data="paginatedApiKeys"
+        class="app-table"
+        style="width: 100%"
+        :border="false"
+        empty-text="暂无数据"
+      >
+        <ElTableColumn label="名称" prop="key_name" min-width="140" sortable>
           <template #default="{ row }">
             {{ row.key_name || row.key_preview }}
           </template>
@@ -157,7 +168,7 @@ onMounted(() => {
             {{ row.bound_model || '所有模型' }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="创建日期" min-width="180">
+        <ElTableColumn label="创建日期" prop="created_at" min-width="180" sortable>
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
@@ -182,13 +193,16 @@ onMounted(() => {
         </ElTableColumn>
       </ElTable>
 
-      <ElPagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :total="apiKeys.length"
-        :page-sizes="[10, 20, 50]"
-        layout="total, sizes, prev, pager, next, jumper"
-      />
+      <div class="pagination-row">
+        <span class="pagination-total">共 {{ apiKeys.length }} 条</span>
+        <ElPagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="apiKeys.length"
+          :page-sizes="[10, 20, 50]"
+          layout="sizes, prev, pager, next, jumper"
+        />
+      </div>
     </div>
 
     <ElDialog
@@ -248,6 +262,46 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.page {
+  display: flex;
+  flex-direction: column;
+}
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  min-height: 32px;
+}
+
+.pagination-total {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-primary);
+}
+
+.pagination-row :deep(.el-pagination) {
+  margin: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .mono-text {
   font-family: ui-monospace, monospace;
 }

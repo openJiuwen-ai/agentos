@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessageBox, ElButton, ElTabs, ElTabPane, ElAlert, ElSkeleton, ElEmpty, ElMessage } from 'element-plus';
+import { ElMessageBox, ElButton, ElTabs, ElTabPane, ElAlert, ElSkeleton, ElSkeletonItem, ElEmpty, ElMessage } from 'element-plus';
+import * as echarts from 'echarts';
 import ModelCard from './ModelCard.vue';
 import AddModelModal from './AddModelModal.vue';
 import ModelInfoDrawer from './ModelInfoDrawer.vue';
@@ -16,15 +17,17 @@ import {
   deleteModel,
   fetchUsageOverview,
   fetchUserUsage,
+  fetchUserModelTrend,
   fetchGatewayConfig,
 } from '@/api/inference';
-import type { ModelDetail } from '@/api/inference';
+import type { ModelDetail, ModelTrendResponse } from '@/api/inference';
 import { useAuth } from '@/composables/useAuth';
 import {
   calculateOverviewTotals,
   calculateUserTotals,
   formatTokens,
   getDateRange,
+  generateDateSeriesFromRange,
   USAGE_ALL_TIME_START,
 } from './utils/usage';
 import apiCallIcon from '@/assets/images/api_call.svg';
@@ -53,7 +56,7 @@ interface ModelCardData {
 }
 
 const models = ref<ModelCardData[]>([]);
-const gatewayUrl = ref<string>('');
+const gatewayUrl = ref('');
 const exampleModelName = computed(() => models.value[0]?.name ?? '');
 const exampleContextWindow = computed(() => models.value[0]?.contextWindow ?? null);
 const activeFilter = ref('all');
@@ -81,53 +84,278 @@ const overviewData = ref({
   total: { requests: 0, tokens: 0 },
 });
 const overviewError = ref('');
+const overviewLoading = ref(false);
 const activeUsersCount = ref(0);
 const successRate = ref(0);
+/** 个人工作台图表：与调用分析「模型调用量」同源 fetchUserModelTrend */
+const userModelTrendData = ref<ModelTrendResponse | null>(null);
 
-const overviewCards = computed(() => {
-  const cards = [
-    {
-      key: 'requests',
-      title: '调用次数',
-      value: overviewData.value.today.requests.toLocaleString(),
-      desc: '今日调用次数',
-      icon: apiCallIcon,
-    },
-    {
-      key: 'tokens',
-      title: 'Token数',
-      value: formatTokens(overviewData.value.today.tokens),
-      desc: '今日Token使用量',
-      icon: tokenIcon,
-    },
-  ];
+const requestsChartRef = ref<HTMLElement | null>(null);
+const tokensChartRef = ref<HTMLElement | null>(null);
+let requestsChart: echarts.ECharts | null = null;
+let tokensChart: echarts.ECharts | null = null;
 
-  if (isAdmin.value) {
-    cards.push({
-      key: 'users',
-      title: '用户',
-      value: String(activeUsersCount.value),
-      desc: '近一周活跃用户数',
-      icon: personIcon,
-    });
-  }
-
-  cards.push({
+const adminOverviewCards = computed(() => [
+  {
+    key: 'requests',
+    title: '调用次数',
+    value: overviewData.value.today.requests.toLocaleString(),
+    desc: '今日调用次数',
+    icon: apiCallIcon,
+  },
+  {
+    key: 'tokens',
+    title: 'Token数',
+    value: formatTokens(overviewData.value.today.tokens),
+    desc: '今日Token使用量',
+    icon: tokenIcon,
+  },
+  {
+    key: 'users',
+    title: '用户',
+    value: String(activeUsersCount.value),
+    desc: '近一周活跃用户数',
+    icon: personIcon,
+  },
+  {
     key: 'status',
     title: '调用状况',
     value: successRate.value >= 0 ? successRate.value + '%' : '--',
     desc: '近一周请求成功率',
     icon: dataStatisticsIcon,
-  });
+  },
+]);
 
-  return cards;
-});
+const userTrendCards = computed(() => [
+  {
+    key: 'requests',
+    title: '调用次数',
+    icon: apiCallIcon,
+    metrics: [
+      { label: '今日', value: overviewData.value.today.requests.toLocaleString() },
+      { label: '本周', value: overviewData.value.week.requests.toLocaleString() },
+      { label: '累计', value: overviewData.value.total.requests.toLocaleString() },
+    ],
+  },
+  {
+    key: 'tokens',
+    title: 'Token数',
+    icon: tokenIcon,
+    metrics: [
+      { label: '今日', value: formatTokens(overviewData.value.today.tokens) },
+      { label: '本周', value: formatTokens(overviewData.value.week.tokens) },
+      { label: '累计', value: formatTokens(overviewData.value.total.tokens) },
+    ],
+  },
+]);
+
+function formatAxisDate(dateStr: string) {
+  const parts = dateStr.split('-');
+  if (parts.length < 3) return dateStr;
+  return `${Number(parts[1])}-${Number(parts[2])}`;
+}
+
+/** 与 CallAnalysis.renderModelChart 相同：按日汇总各模型 metric */
+function buildSeriesFromModelTrend(metric: 'requests' | 'tokens') {
+  const data = userModelTrendData.value;
+  if (!data?.start_date || !data?.end_date) {
+    return { dates: [] as string[], values: [] as number[] };
+  }
+  const dates = generateDateSeriesFromRange(data.start_date, data.end_date);
+  const items = (data.items ?? []).filter((m) => m.model?.trim());
+  const byDate = new Map<string, number>();
+  for (const d of dates) byDate.set(d, 0);
+  for (const item of items) {
+    if (!byDate.has(item.date)) continue;
+    byDate.set(item.date, (byDate.get(item.date) || 0) + item[metric]);
+  }
+  return {
+    dates: dates.map(formatAxisDate),
+    values: dates.map((d) => byDate.get(d) || 0),
+  };
+}
+
+function formatAxisValue(v: number) {
+  if (v >= 10000) return (v / 10000).toFixed(1) + 'w';
+  if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+  return String(v);
+}
+
+function renderRequestsChart() {
+  if (!requestsChartRef.value) return;
+  if (!requestsChart) {
+    requestsChart = echarts.init(requestsChartRef.value);
+  }
+  // 数据同源 CallAnalysis.fetchUserModelTrend；展示按设计稿为单色柱（日总量）
+  const { dates, values } = buildSeriesFromModelTrend('requests');
+  requestsChart.setOption(
+    {
+      grid: { left: 8, right: 8, top: 28, bottom: 8, containLabel: true },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderColor: '#e5e7eb',
+        borderWidth: 1,
+        textStyle: { color: '#333', fontSize: 12 },
+      },
+      xAxis: {
+        type: 'category',
+        data: dates,
+        axisLabel: { fontSize: 12, color: '#aeaeae' },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        name: '次',
+        nameGap: 8,
+        nameTextStyle: { fontSize: 12, color: '#777', align: 'left', padding: [0, 0, 0, 0] },
+        axisLabel: { fontSize: 12, color: '#aeaeae', formatter: formatAxisValue },
+        splitLine: { lineStyle: { color: '#f0f0f0' } },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: values,
+          barWidth: 16,
+          itemStyle: { color: '#2070f3', borderRadius: [2, 2, 0, 0] },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function renderTokensChart() {
+  if (!tokensChartRef.value) return;
+  if (!tokensChart) {
+    tokensChart = echarts.init(tokensChartRef.value);
+  }
+  const { dates, values } = buildSeriesFromModelTrend('tokens');
+  tokensChart.setOption(
+    {
+      grid: { left: 8, right: 12, top: 28, bottom: 8, containLabel: true },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(255,255,255,0.96)',
+        borderColor: '#e5e7eb',
+        borderWidth: 1,
+        textStyle: { color: '#333', fontSize: 12 },
+        valueFormatter: (v: unknown) => formatTokens(Number(v ?? 0)),
+      },
+      xAxis: {
+        type: 'category',
+        data: dates,
+        boundaryGap: false,
+        axisLabel: { fontSize: 12, color: '#aeaeae' },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        name: 'Token数',
+        nameGap: 8,
+        nameTextStyle: { fontSize: 12, color: '#777', align: 'left', padding: [0, 0, 0, 0] },
+        axisLabel: {
+          fontSize: 12,
+          color: '#aeaeae',
+          // 与 CallAnalysis「模型调用量」Token 曲线纵坐标一致（k / w）
+          formatter: formatAxisValue,
+        },
+        splitLine: { lineStyle: { color: '#f0f0f0' } },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+      series: [
+        {
+          type: 'line',
+          data: values,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          showSymbol: false,
+          lineStyle: { color: '#2070f3', width: 2 },
+          itemStyle: { color: '#2070f3' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(32, 112, 243, 0.28)' },
+              { offset: 1, color: 'rgba(32, 112, 243, 0.02)' },
+            ]),
+          },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function setRequestsChartEl(
+  el: Element | { $el?: unknown } | null,
+  _refs?: Record<string, unknown>,
+) {
+  void _refs;
+  requestsChartRef.value = el instanceof HTMLElement ? el : null;
+  tryRenderUserCharts();
+}
+
+function setTokensChartEl(
+  el: Element | { $el?: unknown } | null,
+  _refs?: Record<string, unknown>,
+) {
+  void _refs;
+  tokensChartRef.value = el instanceof HTMLElement ? el : null;
+  tryRenderUserCharts();
+}
+
+function tryRenderUserCharts() {
+  if (isAdmin.value) return;
+  if (!requestsChartRef.value || !tokensChartRef.value) return;
+  renderRequestsChart();
+  renderTokensChart();
+}
+
+function renderUserCharts() {
+  nextTick(() => {
+    tryRenderUserCharts();
+  });
+}
+
+function disposeUserCharts() {
+  requestsChart?.dispose();
+  tokensChart?.dispose();
+  requestsChart = null;
+  tokensChart = null;
+}
+
+function resizeUserCharts() {
+  requestsChart?.resize();
+  tokensChart?.resize();
+}
+
+function goCallAnalysis() {
+  router.push({ name: 'inference-model-call-analysis' });
+}
+
+async function loadGatewayConfig() {
+  try {
+    const data = await fetchGatewayConfig();
+    gatewayUrl.value = data?.gateway_url ?? '';
+  } catch (e) {
+    console.error('获取 Gateway 配置失败:', e);
+  }
+}
 
 async function loadOverviewData() {
   overviewError.value = '';
+  overviewLoading.value = true;
+  disposeUserCharts();
   try {
     if (isAdmin.value) {
-      // 管理员：使用 /overview 接口获取所有用户数据
+      userModelTrendData.value = null;
+      disposeUserCharts();
       const [todayRes, weekRes, totalRes] = await Promise.all([
         fetchUsageOverview(getDateRange(0)),
         fetchUsageOverview(getDateRange(7)),
@@ -142,11 +370,13 @@ async function loadOverviewData() {
       activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
       successRate.value = weekRes.success_rate ?? 0;
     } else {
-      // 普通用户：使用 /user 接口获取自己的数据
-      const [todayRes, weekRes, totalRes] = await Promise.all([
+      // 指标：/usage/user；图表：与调用分析「模型调用量」相同 /usage/user-model-trend
+      const chartRange = getDateRange(7);
+      const [todayRes, weekRes, totalRes, trendRes] = await Promise.all([
         fetchUserUsage(getDateRange(0)),
         fetchUserUsage(getDateRange(7)),
         fetchUserUsage({ start_date: USAGE_ALL_TIME_START, end_date: getDateRange(0).end_date }),
+        fetchUserModelTrend(chartRange),
       ]);
 
       overviewData.value = {
@@ -156,10 +386,22 @@ async function loadOverviewData() {
       };
       activeUsersCount.value = 0;
       successRate.value = weekRes.success_rate ?? 0;
+      userModelTrendData.value = trendRes
+        ? {
+            ...trendRes,
+            start_date: trendRes.start_date || chartRange.start_date,
+            end_date: trendRes.end_date || chartRange.end_date,
+          }
+        : { start_date: chartRange.start_date, end_date: chartRange.end_date, items: [] };
     }
   } catch (e) {
     console.error('加载调用概览数据失败:', e);
     overviewError.value = e instanceof Error ? e.message : '加载调用概览数据失败';
+  } finally {
+    overviewLoading.value = false;
+    if (!isAdmin.value) {
+      renderUserCharts();
+    }
   }
 }
 
@@ -316,57 +558,117 @@ async function handleAddModel(formData: {
   }
 }
 
-async function loadGatewayConfig() {
-  try {
-    const data = await fetchGatewayConfig();
-    gatewayUrl.value = data?.gateway_url ?? '';
-  } catch (e) {
-    console.error('获取 Gateway 配置失败:', e);
-  }
-}
+watch(isAdmin, () => {
+  void loadOverviewData();
+});
+
+watch(
+  [requestsChartRef, tokensChartRef, userModelTrendData],
+  () => {
+    if (!isAdmin.value && userModelTrendData.value) {
+      renderUserCharts();
+    }
+  },
+  { flush: 'post' },
+);
 
 onMounted(() => {
   loadModels();
   loadOverviewData();
   loadGatewayConfig();
+  window.addEventListener('resize', resizeUserCharts);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('resize', resizeUserCharts);
+  disposeUserCharts();
 });
 </script>
 
 <template>
   <section class="page inference-dashboard">
-    <h1 class="page-title">推理模型</h1>
+    <h1 class="title-l1">推理模型监控</h1>
 
-    <!-- 今日调用分析 -->
+    <!-- 今日调用分析：查看详情与下方模型列表加载状态无关，始终可跳转 -->
     <section class="analysis-section">
-      <div class="analysis-section__header">
-        <h2 class="analysis-section__title">今日调用分析</h2>
-        <ElButton
-          class="analysis-section__detail"
-          link
-          type="primary"
-          @click="router.push({ name: 'inference-model-call-analysis' })"
-        >
+      <div v-if="isAdmin" class="analysis-section__header">
+        <h2 class="title-l2">今日调用分析</h2>
+        <ElButton class="analysis-section__detail" link type="primary" @click="goCallAnalysis">
           查看详情
         </ElButton>
       </div>
-      <ElAlert v-if="overviewError" :title="`加载失败: ${overviewError}`" type="error" show-icon :closable="false" />
-      <div v-else class="analysis-grid" :class="{ 'analysis-grid--three': !isAdmin }">
-        <OverviewStatCard
-          v-for="card in overviewCards"
-          :key="card.key"
-          variant="hero"
-          :title="card.title"
-          :value="card.value"
-          :desc="card.desc"
-          :icon="card.icon"
+
+      <template v-if="isAdmin">
+        <ElAlert
+          v-if="overviewError"
+          :title="`加载失败: ${overviewError}`"
+          type="error"
+          show-icon
+          :closable="false"
         />
-      </div>
+        <div v-else-if="overviewLoading" class="analysis-grid">
+          <ElSkeleton v-for="i in 4" :key="i" animated class="analysis-hero-skeleton">
+            <template #template>
+              <ElSkeletonItem variant="rect" class="analysis-hero-skeleton__block" />
+            </template>
+          </ElSkeleton>
+        </div>
+        <div v-else class="analysis-grid">
+          <OverviewStatCard
+            v-for="card in adminOverviewCards"
+            :key="card.key"
+            variant="hero"
+            :title="card.title"
+            :value="card.value"
+            :desc="card.desc"
+            :icon="card.icon"
+          />
+        </div>
+      </template>
+
+      <template v-else>
+        <ElAlert
+          v-if="overviewError"
+          :title="`加载失败: ${overviewError}`"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+        <div v-else class="analysis-grid analysis-grid--user">
+          <OverviewStatCard
+            variant="trend"
+            :title="userTrendCards[0].title"
+            :icon="userTrendCards[0].icon"
+            :metrics="userTrendCards[0].metrics"
+          >
+            <ElSkeleton v-if="overviewLoading" animated class="analysis-trend-skeleton">
+              <template #template>
+                <ElSkeletonItem variant="rect" class="analysis-trend-skeleton__block" />
+              </template>
+            </ElSkeleton>
+            <div v-else :ref="setRequestsChartEl" class="analysis-trend-chart" />
+          </OverviewStatCard>
+          <OverviewStatCard
+            variant="trend"
+            :title="userTrendCards[1].title"
+            :icon="userTrendCards[1].icon"
+            :metrics="userTrendCards[1].metrics"
+          >
+            <ElSkeleton v-if="overviewLoading" animated class="analysis-trend-skeleton">
+              <template #template>
+                <ElSkeletonItem variant="rect" class="analysis-trend-skeleton__block" />
+              </template>
+            </ElSkeleton>
+            <div v-else :ref="setTokensChartEl" class="analysis-trend-chart" />
+          </OverviewStatCard>
+        </div>
+      </template>
     </section>
 
     <!-- 可用推理模型 -->
     <section class="model-section">
       <div class="model-section__header">
-        <h2 class="model-section__title">可用推理模型</h2>
+        <h2 class="title-l2">可用推理模型</h2>
         <div class="model-section__actions">
           <ElButton v-if="isAdmin" type="primary" @click="showAddModal = true">添加模型</ElButton>
         </div>
@@ -419,42 +721,44 @@ onMounted(() => {
   flex-direction: column;
   flex: 1 0 auto;
   box-sizing: border-box;
-  gap: 40px;
 }
 
-.inference-dashboard .page-title {
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 26px;
-  color: var(--text-primary);
+.analysis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 24px;
 }
 
-.analysis-section,
 .model-section {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  margin-top: 40px;
 }
 
-.analysis-section__header,
-.model-section__header {
+.inference-dashboard > :deep(.usage-guide-section) {
+  margin-top: 40px;
+}
+
+.analysis-section__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+  height: 26px;
 }
 
-.analysis-section__title,
-.model-section__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: rgba(0, 0, 0, 0.9);
+.model-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 32px;
 }
 
 .analysis-section__detail {
-  height: auto;
+  height: 26px;
   padding: 0;
   font-size: 14px;
   font-weight: 400;
@@ -467,18 +771,41 @@ onMounted(() => {
   gap: 24px;
 }
 
-.analysis-grid--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.analysis-grid--user {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analysis-hero-skeleton {
+  width: 100%;
+  min-height: 120px;
+}
+
+.analysis-hero-skeleton__block {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-2xl);
+}
+
+.analysis-trend-chart {
+  width: 100%;
+  height: 140px;
+}
+
+.analysis-trend-skeleton {
+  width: 100%;
+  height: 140px;
+}
+
+.analysis-trend-skeleton__block {
+  width: 100%;
+  height: 140px;
+  border-radius: 8px;
 }
 
 .model-section__actions {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.model-section__tabs {
-  margin-top: -8px;
 }
 
 .model-section__tabs :deep(.el-tabs__header) {
@@ -530,7 +857,7 @@ onMounted(() => {
 }
 
 @media (max-width: 1400px) {
-  .analysis-grid {
+  .analysis-grid:not(.analysis-grid--user) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

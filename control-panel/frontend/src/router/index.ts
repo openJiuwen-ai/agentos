@@ -3,11 +3,13 @@ import {
   appRouteTree,
   buildRouterRoutes,
   findAdminOnlyRouteNames,
+  findUserOnlyRouteNames,
   findDefaultLandingRouteName,
   overviewEnabled,
 } from './menu';
 
 const adminOnlyNames = new Set(findAdminOnlyRouteNames(appRouteTree));
+const userOnlyNames = new Set(findUserOnlyRouteNames(appRouteTree));
 
 const router = createRouter({
   history: createWebHistory(),
@@ -62,13 +64,18 @@ router.beforeEach((to) => {
     return { name: 'login' };
   }
 
-  // admin-only routes (by route name): redirect to 403 (based on real role, not workspace)
-  if (to.name && adminOnlyNames.has(to.name as string) && isLoggedIn && !isAdmin) {
+  // admin-only routes: require management workspace (admin role + not personal workspace)
+  if (to.name && adminOnlyNames.has(to.name as string) && isLoggedIn && !effectiveIsAdmin) {
     return { name: 'forbidden' };
   }
 
-  // admin-only routes (by meta): redirect to 403 (based on real role, not workspace)
-  if (to.meta.admin && isLoggedIn && !isAdmin) {
+  // personal-workspace-only routes: redirect when in admin workspace
+  if (to.name && userOnlyNames.has(to.name as string) && isLoggedIn && effectiveIsAdmin) {
+    return { name: 'forbidden' };
+  }
+
+  // admin-only routes (by meta): require management workspace
+  if (to.meta.admin && isLoggedIn && !effectiveIsAdmin) {
     return { name: 'forbidden' };
   }
 });

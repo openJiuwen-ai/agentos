@@ -17,7 +17,16 @@ const { effectiveIsAdmin } = useAuth();
 
 const visibleMenus = computed(() => {
   if (effectiveIsAdmin.value) {
-    return props.menus;
+    return props.menus
+      .filter((m) => !m.userOnly)
+      .map((m) => {
+        const children = m.children?.filter((c) => !c.userOnly);
+        return {
+          ...m,
+          children: children?.length ? children : undefined,
+        };
+      })
+      .filter((m) => m.routeName || m.externalUrl || m.children?.length);
   }
 
   return props.menus
@@ -29,7 +38,7 @@ const visibleMenus = computed(() => {
         children: children?.length ? children : undefined,
       };
     })
-    .filter((m) => m.routeName || m.children?.length);
+    .filter((m) => m.routeName || m.externalUrl || m.children?.length);
 });
 
 const openedKeys = ref<string[]>([]);

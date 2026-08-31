@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
-import { ElAlert, ElDatePicker, ElEmpty, ElMessageBox, ElSegmented, ElSelect, ElOption, ElSkeleton, ElTable, ElTableColumn } from 'element-plus';
-import { useAuth } from '@/composables/useAuth';
-import { fetchUsageOverview, fetchUsageByUser, fetchUserUsage, fetchUsageTrend, fetchModelTrend, fetchUserModelTrend } from '@/api/inference';
-import type { UserUsageRankResponse, UserUsageDetailResponse, TrendResponse, ModelTrendResponse } from '@/api/inference';
+import {
+  ElAlert,
+  ElDatePicker,
+  ElEmpty,
+  ElMessageBox,
+  ElSegmented,
+  ElSelect,
+  ElOption,
+  ElSkeleton,
+  ElTable,
+  ElTableColumn,
+} from 'element-plus';
+import { fetchUsageOverview, fetchUsageByUser, fetchModelTrend } from '@/api/inference';
+import type { UserUsageRankResponse, ModelTrendResponse } from '@/api/inference';
 import {
   calculateOverviewTotals,
-  calculateUserTotals,
   formatDate,
   formatTokens,
   generateDateSeriesFromRange,
@@ -19,7 +28,6 @@ import tokenIcon from '@/assets/images/token.svg';
 import personIcon from '@/assets/images/person.svg';
 import dataStatisticsIcon from '@/assets/images/data_statistics.svg';
 
-const { effectiveIsAdmin: isAdmin } = useAuth();
 const loading = ref(false);
 const error = ref('');
 
@@ -37,29 +45,20 @@ const trendPresetOptions = [
 
 // ECharts 实例
 const adminChartRef = ref<HTMLElement | null>(null);
-const userChartRef = ref<HTMLElement | null>(null);
 const activeUsersChartRef = ref<HTMLElement | null>(null);
 let adminChart: echarts.ECharts | null = null;
-let userChart: echarts.ECharts | null = null;
 let activeUsersChart: echarts.ECharts | null = null;
 let adminChartLineTimer: number | null = null;
 
 function resizeCharts() {
   adminChart?.resize();
-  userChart?.resize();
   activeUsersChart?.resize();
 }
 
 // 管理员数据
 const userRankData = ref<UserUsageRankResponse | null>(null);
 const userRankTop = ref(10);
-const trendData = ref<TrendResponse | null>(null);
 const activeUserTrendData = ref<Array<{ date: string; count: number }>>([]);
-
-// 普通用户数据
-const userDetailData = ref<UserUsageDetailResponse | null>(null);
-const userTrendData = ref<TrendResponse | null>(null);
-const userModelTrendData = ref<ModelTrendResponse | null>(null);
 const modelUsageData = ref<ModelTrendResponse | null>(null);
 
 // 调用概览数据（今日/本周/累计）
@@ -112,17 +111,15 @@ const overviewCards = computed(() => {
     ],
   });
 
-  if (isAdmin.value) {
-    cards.splice(2, 0, {
-      key: 'users',
-      title: '用户',
-      icon: personIcon,
-      metrics: [
-        { value: String(activeUsersCount.value), label: '近一周活跃用户数', hero: true },
-        { value: String(totalUsersCount.value), label: '总用户数' },
-      ],
-    });
-  }
+  cards.splice(2, 0, {
+    key: 'users',
+    title: '用户',
+    icon: personIcon,
+    metrics: [
+      { value: String(activeUsersCount.value), label: '近一周活跃用户数', hero: true },
+      { value: String(totalUsersCount.value), label: '总用户数' },
+    ],
+  });
 
   return cards;
 });
@@ -137,20 +134,6 @@ const userRankRows = computed(() =>
       requestsText: user.requests.toLocaleString(),
     })),
 );
-const userDetailRows = computed(() =>
-  (userDetailData.value?.daily_activity ?? []).map((day) => ({
-    ...day,
-    tokensText: formatTokens(day.tokens),
-    requestsText: day.requests.toLocaleString(),
-  })),
-);
-const userDetailSummary = computed(() => {
-  const rows = userDetailData.value?.daily_activity ?? [];
-  return {
-    tokensText: formatTokens(rows.reduce((sum, day) => sum + day.tokens, 0)),
-    requestsText: rows.reduce((sum, day) => sum + day.requests, 0).toLocaleString(),
-  };
-});
 
 type DateRange = { start_date: string; end_date: string };
 
@@ -176,130 +159,6 @@ function getCurrentTrendRange(): DateRange {
     return getPresetRange(trendPreset.value);
   }
   return getDateRange(7);
-}
-
-// 将API数据转换为ECharts格式
-function prepareTrendChartData(data: TrendResponse | null, range: DateRange) {
-  const dateSeries = generateDateSeriesFromRange(range.start_date, range.end_date);
-  const dataMap = new Map<string, { requests: number; tokens: number }>();
-
-  if (data?.items) {
-    for (const item of data.items) {
-      const dateKey = item.time.slice(0, 10);
-      dataMap.set(dateKey, { requests: item.requests, tokens: item.tokens });
-    }
-  }
-
-  return {
-    dates: dateSeries.map((d) => d.slice(5)),
-    requests: dateSeries.map((d) => dataMap.get(d)?.requests ?? 0),
-    tokens: dateSeries.map((d) => dataMap.get(d)?.tokens ?? 0),
-  };
-}
-
-// 渲染趋势图
-function renderTrendChart(chart: echarts.ECharts | null, data: TrendResponse | null, range: DateRange) {
-  if (!chart) return;
-
-  const { dates, requests, tokens } = prepareTrendChartData(data, range);
-
-  chart.setOption({
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-    },
-    legend: {
-      bottom: 0,
-      data: ['调用次数', 'Token数'],
-    },
-    grid: {
-      left: '3%',
-      right: '4%',
-      bottom: 40,
-      top: '10%',
-      containLabel: true,
-    },
-    xAxis: {
-      type: 'category',
-      data: dates,
-      axisLabel: {
-        fontSize: 11,
-        color: '#999',
-      },
-      axisLine: {
-        lineStyle: {
-          color: '#e5e7eb',
-        },
-      },
-      axisTick: {
-        show: false,
-      },
-    },
-    yAxis: [
-      {
-        type: 'value',
-        name: '调用次数',
-        axisLabel: {
-          fontSize: 11,
-          color: '#999',
-          formatter: (value: number) => {
-            if (value >= 10000) return (value / 10000).toFixed(1) + 'w';
-            if (value >= 1000) return (value / 1000).toFixed(1) + 'k';
-            return value.toString();
-          },
-        },
-        splitLine: { lineStyle: { color: '#f3f4f6' } },
-        axisLine: { show: false },
-        axisTick: { show: false },
-      },
-      {
-        type: 'value',
-        name: 'Token数',
-        axisLabel: {
-          fontSize: 11,
-          color: '#999',
-          formatter: (value: number) => formatTokens(value),
-        },
-        splitLine: { show: false },
-        axisLine: { show: false },
-        axisTick: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: '调用次数',
-        type: 'line',
-        data: requests,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#2563eb', width: 2 },
-        itemStyle: { color: '#2563eb' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(37, 99, 235, 0.18)' },
-            { offset: 1, color: 'rgba(37, 99, 235, 0)' },
-          ]),
-        },
-      },
-      {
-        name: 'Token数',
-        type: 'bar',
-        yAxisIndex: 1,
-        data: tokens,
-        itemStyle: {
-          color: '#bfdbfe',
-          borderRadius: [2, 2, 0, 0],
-        },
-        emphasis: {
-          itemStyle: {
-            color: '#93c5fd',
-          },
-        },
-        barWidth: '60%',
-      },
-    ],
-  });
 }
 
 function renderActiveUsersChart() {
@@ -349,19 +208,6 @@ function renderActiveUsersChart() {
       },
     ],
   });
-}
-
-async function loadTrend(range: DateRange) {
-  const params = { ...range, granularity: 'day' as const };
-  try {
-    if (isAdmin.value) {
-      trendData.value = await fetchUsageTrend(params);
-    } else {
-      userTrendData.value = await fetchUsageTrend(params);
-    }
-  } catch (e) {
-    console.warn('加载趋势数据失败:', e);
-  }
 }
 
 async function loadUserRank(range: DateRange) {
@@ -420,29 +266,7 @@ async function loadActiveUserTrend(range: DateRange) {
 }
 
 async function reloadFilteredPanels(range: DateRange) {
-  if (isAdmin.value) {
-    await Promise.all([loadTrend(range), loadActiveUserTrend(range), loadUserRank(range), loadModelUsage(range)]);
-    return;
-  }
-
-  await Promise.all([loadTrend(range), loadUserModelTrend(range), loadUserDetail(range)]);
-}
-
-async function loadUserDetail(range: DateRange) {
-  try {
-    userDetailData.value = await fetchUserUsage(range);
-    successRate.value = userDetailData.value?.success_rate ?? 0;
-  } catch (e) {
-    console.warn('加载用户调用明细失败:', e);
-  }
-}
-
-async function loadUserModelTrend(range: DateRange) {
-  try {
-    userModelTrendData.value = await fetchUserModelTrend(range);
-  } catch (e) {
-    console.warn('加载用户模型趋势失败:', e);
-  }
+  await Promise.all([loadActiveUserTrend(range), loadUserRank(range), loadModelUsage(range)]);
 }
 
 function handleTrendPresetChange(value: string | number | boolean) {
@@ -465,7 +289,7 @@ function handleCustomDateChange(value: [Date, Date] | null) {
 }
 
 // 初始化ECharts（确保DOM已渲染）
-function initChart(type: 'admin' | 'user' | 'activeUsers') {
+function initChart(type: 'admin' | 'activeUsers') {
   nextTick(() => {
     if (type === 'admin' && adminChartRef.value) {
       if (adminChart) {
@@ -473,13 +297,6 @@ function initChart(type: 'admin' | 'user' | 'activeUsers') {
       }
       adminChart = echarts.init(adminChartRef.value);
       renderModelChart(adminChart, modelUsageData.value);
-    }
-    if (type === 'user' && userChartRef.value) {
-      if (userChart) {
-        userChart.dispose();
-      }
-      userChart = echarts.init(userChartRef.value);
-      renderModelChart(userChart, userModelTrendData.value);
     }
     if (type === 'activeUsers' && activeUsersChartRef.value) {
       if (activeUsersChart) {
@@ -502,7 +319,6 @@ const modelChartMetricOptions = [
 function handleModelChartMetricChange(value: string | number | boolean) {
   modelChartMetric.value = String(value) as ModelChartMetric;
   if (adminChart) renderModelChart(adminChart, modelUsageData.value);
-  if (userChart) renderModelChart(userChart, userModelTrendData.value);
 }
 
 // 模型调用量堆叠柱状图：按日期堆叠各模型调用量（趋势+模型分布）
@@ -530,7 +346,9 @@ function renderModelChart(chart: echarts.ECharts | null, data: ModelTrendRespons
     }
     modelTotals.set(item.model, (modelTotals.get(item.model) || 0) + item[metricKey]);
   }
-  const models = Array.from(modelTotals.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m);
+  const models = Array.from(modelTotals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([m]) => m);
   // 渐变配色：每色系最多5个模型，明度从浅到深；超限换色系，色相-8°平滑过渡
   function autoPalette(n: number): string[] {
     const PER_GROUP = 5;
@@ -642,10 +460,13 @@ function renderModelChart(chart: echarts.ECharts | null, data: ModelTrendRespons
   // 延迟后叠加总量折线
   if (adminChartLineTimer) clearTimeout(adminChartLineTimer);
   adminChartLineTimer = setTimeout(() => {
-    chart.setOption({
-      ...sharedOption,
-      series: [...barSeries, totalLine],
-    }, true);
+    chart.setOption(
+      {
+        ...sharedOption,
+        series: [...barSeries, totalLine],
+      },
+      true,
+    );
   }, 600);
 }
 
@@ -658,20 +479,6 @@ watch(
         initChart('admin');
       } else {
         renderModelChart(adminChart, modelUsageData.value);
-      }
-    }
-  },
-  { flush: 'post' },
-);
-
-watch(
-  [userChartRef, userModelTrendData],
-  () => {
-    if (userChartRef.value && userModelTrendData.value) {
-      if (!userChart) {
-        initChart('user');
-      } else {
-        renderModelChart(userChart, userModelTrendData.value);
       }
     }
   },
@@ -692,49 +499,24 @@ async function loadData() {
   loading.value = true;
   error.value = '';
   try {
+    const [todayRes, weekRes, totalRes] = await Promise.all([
+      fetchUsageOverview(getDateRange(0)),
+      fetchUsageOverview(getDateRange(7)),
+      fetchUsageOverview(getDateRange(365 * 10)),
+    ]);
+    overviewStats.value = {
+      today: calculateOverviewTotals(todayRes),
+      week: calculateOverviewTotals(weekRes),
+      total: calculateOverviewTotals(totalRes),
+    };
+    activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
+    totalUsersCount.value = weekRes.users?.length || 0;
+    successRate.value = weekRes.success_rate ?? 0;
 
-    if (isAdmin.value) {
-      // 管理员：加载概览统计（固定周期，不受趋势筛选影响）
-      const [todayRes, weekRes, totalRes] = await Promise.all([
-        fetchUsageOverview(getDateRange(0)),
-        fetchUsageOverview(getDateRange(7)),
-        fetchUsageOverview(getDateRange(365 * 10)),
-      ]);
-      overviewStats.value = {
-        today: calculateOverviewTotals(todayRes),
-        week: calculateOverviewTotals(weekRes),
-        total: calculateOverviewTotals(totalRes),
-      };
-      activeUsersCount.value = weekRes.users?.filter((u) => u.total_requests > 0).length || 0;
-      totalUsersCount.value = weekRes.users?.length || 0;
-      successRate.value = weekRes.success_rate ?? 0;
-
-      // 趋势区三个面板按当前筛选范围加载
-      try {
-        await reloadFilteredPanels(getPresetRange('12h'));
-      } catch (e) {
-        console.warn('加载趋势数据失败:', e);
-      }
-    } else {
-      // 普通用户
-      const [todayRes, weekRes, totalRes] = await Promise.all([
-        fetchUserUsage(getDateRange(0)),
-        fetchUserUsage(getDateRange(7)),
-        fetchUserUsage(getDateRange(365 * 10)),
-      ]);
-
-      overviewStats.value = {
-        today: calculateUserTotals(todayRes),
-        week: calculateUserTotals(weekRes),
-        total: calculateUserTotals(totalRes),
-      };
-
-      // 趋势图按当前筛选范围加载
-      try {
-        await reloadFilteredPanels(getPresetRange('12h'));
-      } catch (e) {
-        console.warn('加载趋势数据失败:', e);
-      }
+    try {
+      await reloadFilteredPanels(getPresetRange('12h'));
+    } catch (e) {
+      console.warn('加载趋势数据失败:', e);
     }
   } catch (e) {
     console.error('加载调用分析数据失败:', e);
@@ -749,25 +531,9 @@ onMounted(() => {
   loadData();
 });
 
-// 工作台切换时重新加载（管理员切到个人工作台 → effectiveIsAdmin 变 false → 加载个人数据）
-watch(
-  () => isAdmin.value,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      // 切换视图时先清空数据，避免旧图表闪烁
-      adminChart?.dispose(); adminChart = null;
-      userChart?.dispose(); userChart = null;
-      activeUsersChart?.dispose(); activeUsersChart = null;
-      userModelTrendData.value = null;
-      loadData();
-    }
-  },
-);
-
 onUnmounted(() => {
   window.removeEventListener('resize', resizeCharts);
   adminChart?.dispose();
-  userChart?.dispose();
   activeUsersChart?.dispose();
 });
 </script>
@@ -779,7 +545,7 @@ onUnmounted(() => {
 
     <template v-else>
       <!-- 概览指标卡 -->
-      <div class="call-analysis__overview-grid" :class="{ 'call-analysis__overview-grid--admin': isAdmin }">
+      <div class="call-analysis__overview-grid call-analysis__overview-grid--admin">
         <OverviewStatCard
           v-for="card in overviewCards"
           :key="card.key"
@@ -790,10 +556,9 @@ onUnmounted(() => {
         />
       </div>
 
-      <!-- 管理员视图 -->
-      <template v-if="isAdmin">
+      <section class="call-analysis__section">
         <div class="call-analysis__section-header">
-          <h2 class="call-analysis__section-title">调用趋势</h2>
+          <h2 class="title-l2">调用趋势</h2>
           <div class="call-analysis__filters">
             <ElSegmented :model-value="trendPreset" :options="trendPresetOptions" @change="handleTrendPresetChange" />
             <ElDatePicker
@@ -813,15 +578,19 @@ onUnmounted(() => {
           <!-- 模型调用量 -->
           <div class="call-analysis__card">
             <div class="call-analysis__card-header">
-              <h3 class="call-analysis__card-title">模型调用量</h3>
-              <ElSegmented :model-value="modelChartMetric" :options="modelChartMetricOptions" size="small" @change="handleModelChartMetricChange" />
+              <h3 class="title-l3">模型调用量</h3>
+              <ElSegmented
+                :model-value="modelChartMetric"
+                :options="modelChartMetricOptions"
+                @change="handleModelChartMetricChange"
+              />
             </div>
             <div ref="adminChartRef" class="call-analysis__chart"></div>
           </div>
 
           <!-- 活跃用户数 -->
           <div class="call-analysis__card">
-            <h3 class="call-analysis__card-title">活跃用户数</h3>
+            <h3 class="title-l3">活跃用户数</h3>
             <div ref="activeUsersChartRef" class="call-analysis__chart"></div>
           </div>
         </div>
@@ -829,19 +598,23 @@ onUnmounted(() => {
         <!-- 用户用量排名 -->
         <div class="call-analysis__card call-analysis__card--full">
           <div class="call-analysis__card-header">
-            <h3 class="call-analysis__card-title">用户用量排名</h3>
-            <ElSelect :model-value="userRankTop" size="small" style="width: 110px" @change="handleUserRankTopChange">
+            <h3 class="title-l3">用户用量排名</h3>
+            <ElSelect :model-value="userRankTop" style="width: 110px" @change="handleUserRankTopChange">
               <ElOption :value="10" label="TOP10" />
               <ElOption :value="-1" label="ALL" />
-              <ElOption v-if="userRankTop !== 10 && userRankTop !== -1" :value="userRankTop" :label="String(userRankTop)" />
+              <ElOption
+                v-if="userRankTop !== 10 && userRankTop !== -1"
+                :value="userRankTop"
+                :label="String(userRankTop)"
+              />
               <ElOption :value="-2" label="自定义" />
             </ElSelect>
           </div>
-          <ElTable :data="userRankRows" empty-text="暂无数据" class="app-table" stripe max-height="420">
+          <ElTable :data="userRankRows" empty-text="暂无数据" class="app-table" max-height="420">
             <ElTableColumn prop="rank" label="排名" width="88" />
             <ElTableColumn label="用户">
               <template #default="{ row }">
-{{ row.username || '非AgentBox用户' }}
+                {{ row.username || '非AgentBox用户' }}
               </template>
             </ElTableColumn>
             <ElTableColumn prop="tokensText" label="Token数" />
@@ -851,60 +624,7 @@ onUnmounted(() => {
             </template>
           </ElTable>
         </div>
-      </template>
-
-      <!-- 普通用户视图 -->
-      <template v-else>
-        <!-- 时间筛选器 -->
-        <div class="call-analysis__section-header">
-          <h2 class="call-analysis__section-title">我的调用趋势</h2>
-          <div class="call-analysis__filters">
-            <ElSegmented :model-value="trendPreset" :options="trendPresetOptions" @change="handleTrendPresetChange" />
-            <ElDatePicker
-              v-model="customDateRange"
-              type="daterange"
-              range-separator="-"
-              start-placeholder="请选择开始日期"
-              end-placeholder="请选择结束日期"
-              unlink-panels
-              class="call-analysis__date-picker"
-              @change="handleCustomDateChange"
-            />
-          </div>
-        </div>
-
-        <div class="call-analysis__card call-analysis__card--full">
-          <div class="call-analysis__card-header">
-            <h2 class="call-analysis__card-title">模型调用量</h2>
-            <ElSegmented :model-value="modelChartMetric" :options="modelChartMetricOptions" size="small" @change="handleModelChartMetricChange" />
-          </div>
-          <div ref="userChartRef" class="call-analysis__chart"></div>
-        </div>
-
-        <!-- 调用明细 -->
-        <div class="call-analysis__card">
-          <h2 class="call-analysis__card-title">调用明细</h2>
-          <ElTable :data="userDetailRows" empty-text="暂无数据" stripe max-height="420">
-            <ElTableColumn prop="date" label="日期" />
-            <ElTableColumn prop="tokensText" label="Token数" />
-            <ElTableColumn prop="requestsText" label="请求数" />
-            <template #empty>
-              <ElEmpty description="暂无数据" :image-size="72" />
-            </template>
-          </ElTable>
-
-          <div v-if="userDetailData?.daily_activity?.length" class="call-analysis__summary">
-            <div class="call-analysis__summary-item">
-              <span class="call-analysis__summary-label">总Token数</span>
-              <span class="call-analysis__summary-value">{{ userDetailSummary.tokensText }}</span>
-            </div>
-            <div class="call-analysis__summary-item">
-              <span class="call-analysis__summary-label">总请求数</span>
-              <span class="call-analysis__summary-value">{{ userDetailSummary.requestsText }}</span>
-            </div>
-          </div>
-        </div>
-      </template>
+      </section>
     </template>
   </div>
 </template>
@@ -913,7 +633,13 @@ onUnmounted(() => {
 .call-analysis {
   display: flex;
   flex-direction: column;
+}
+
+.call-analysis__section {
+  display: flex;
+  flex-direction: column;
   gap: 24px;
+  margin-top: 40px;
 }
 
 .call-analysis__state {
@@ -958,14 +684,6 @@ onUnmounted(() => {
   gap: 24px;
 }
 
-.call-analysis__section-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
-  color: var(--text-primary);
-}
-
 .call-analysis__filters {
   display: flex;
   align-items: center;
@@ -1001,46 +719,11 @@ onUnmounted(() => {
   justify-content: space-between;
 }
 
-.call-analysis__card-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 24px;
-}
-
 /* ECharts容器 */
 .call-analysis__chart {
   width: 100%;
   height: 300px;
   min-height: 300px;
-}
-
-/* 汇总统计 */
-.call-analysis__summary {
-  display: flex;
-  gap: 24px;
-  margin-top: 16px;
-  padding: 16px;
-  background: var(--bg-2);
-  border-radius: 8px;
-}
-
-.call-analysis__summary-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.call-analysis__summary-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.call-analysis__summary-value {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
 }
 
 .call-analysis :deep(.el-table) {

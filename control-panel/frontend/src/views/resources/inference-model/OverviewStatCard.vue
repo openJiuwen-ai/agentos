@@ -9,15 +9,15 @@ export interface OverviewMetricItem {
 
 withDefaults(
   defineProps<{
-    /** hero: 大图标横向（今日调用分析）；metrics: 小图标+多指标（调用分析页） */
-    variant?: 'hero' | 'metrics';
+    /** hero: 管理工作台今日调用分析；metrics: 调用分析页；trend: 个人工作台今日调用分析（含图表槽） */
+    variant?: 'hero' | 'metrics' | 'trend';
     title: string;
     icon: string;
     /** hero 模式主数值 */
     value?: string | number;
     /** hero 模式副文案 */
     desc?: string;
-    /** metrics 模式指标列表 */
+    /** metrics / trend 模式指标列表 */
     metrics?: OverviewMetricItem[];
   }>(),
   {
@@ -37,7 +37,7 @@ withDefaults(
           <img :src="icon" alt="" class="overview-stat-card__hero-icon" />
         </span>
         <div class="overview-stat-card__hero-content">
-          <span class="overview-stat-card__hero-title">{{ title }}</span>
+          <span class="title-l2 overview-stat-card__hero-title">{{ title }}</span>
           <div class="overview-stat-card__hero-data">
             <span class="overview-stat-card__hero-value">{{ value }}</span>
             <span v-if="desc" class="overview-stat-card__hero-desc">{{ desc }}</span>
@@ -46,11 +46,29 @@ withDefaults(
       </div>
     </template>
 
+    <template v-else-if="variant === 'trend'">
+      <div class="overview-stat-card__trend">
+        <header class="overview-stat-card__trend-header">
+          <img :src="icon" alt="" class="overview-stat-card__trend-icon" width="20" height="20" />
+          <span class="title-l2 overview-stat-card__trend-title">{{ title }}</span>
+        </header>
+        <div class="overview-stat-card__trend-metrics">
+          <div v-for="(item, index) in metrics" :key="index" class="overview-stat-card__trend-metric">
+            <span class="overview-stat-card__trend-label">{{ item.label }}</span>
+            <span class="overview-stat-card__trend-value">{{ item.value }}</span>
+          </div>
+        </div>
+        <div class="overview-stat-card__trend-chart">
+          <slot />
+        </div>
+      </div>
+    </template>
+
     <template v-else>
       <div class="overview-stat-card__metrics">
         <header class="overview-stat-card__metrics-header">
           <img :src="icon" alt="" class="overview-stat-card__metrics-icon" width="20" height="20" />
-          <span class="overview-stat-card__metrics-title">{{ title }}</span>
+          <span class="title-l2 overview-stat-card__metrics-title">{{ title }}</span>
         </header>
         <div class="overview-stat-card__metrics-row">
           <div v-for="(item, index) in metrics" :key="index" class="overview-stat-card__metric">
@@ -76,7 +94,7 @@ withDefaults(
   padding: 0;
 }
 
-/* ── hero：今日调用分析 ── */
+/* ── hero：管理工作台今日调用分析 ── */
 .overview-stat-card__hero {
   display: flex;
   align-items: center;
@@ -112,9 +130,6 @@ withDefaults(
 }
 
 .overview-stat-card__hero-title {
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
   color: var(--text-secondary);
 }
 
@@ -137,6 +152,76 @@ withDefaults(
   font-weight: 400;
   line-height: 22px;
   color: var(--text-secondary);
+}
+
+/* ── trend：个人工作台今日调用分析 ── */
+.overview-stat-card__trend {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  box-sizing: border-box;
+  min-height: 280px;
+}
+
+.overview-stat-card__trend-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.overview-stat-card__trend-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  object-fit: contain;
+  /* 与标题同色 --text-secondary (#777) */
+  filter: brightness(0) saturate(100%) invert(48%);
+}
+
+.overview-stat-card__trend-title {
+  color: var(--text-secondary);
+}
+
+.overview-stat-card__trend-metrics {
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+}
+
+.overview-stat-card__trend-metric {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.overview-stat-card__trend-label {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.overview-stat-card__trend-value {
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 36px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.overview-stat-card__trend-chart {
+  width: 100%;
+  height: 140px;
+  min-height: 140px;
+  flex-shrink: 0;
+}
+
+.overview-stat-card__trend-chart > * {
+  width: 100%;
+  height: 140px;
 }
 
 /* ── metrics：调用分析页 ── */
@@ -168,9 +253,6 @@ withDefaults(
 }
 
 .overview-stat-card__metrics-title {
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
   color: var(--text-secondary);
 }
 
@@ -202,6 +284,7 @@ withDefaults(
 
 .overview-stat-card__metric-label {
   font-size: 14px;
+  font-weight: 400;
   line-height: 22px;
   color: var(--text-secondary);
   white-space: nowrap;

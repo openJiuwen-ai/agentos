@@ -216,7 +216,7 @@ onMounted(() => {
 <template>
   <section class="page">
     <div class="page-header-row">
-      <h1 class="page-title">日志中心</h1>
+      <h1 class="title-l1">日志中心</h1>
     </div>
 
     <div class="category-row" v-loading="categoriesLoading">
@@ -233,7 +233,7 @@ onMounted(() => {
           <img :src="categoryIcons[cat.key] || controlPanelIcon" :alt="cat.label" class="category-card__icon-img" />
         </div>
         <div class="category-card__info">
-          <div class="category-card__label">{{ cat.label }}</div>
+          <div class="title-l2 category-card__label">{{ cat.label }}</div>
           <div class="category-card__count">{{ cat.count }} 个组件</div>
         </div>
       </ElCard>
@@ -338,14 +338,6 @@ onMounted(() => {
   margin-bottom: 24px;
 }
 
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 26px;
-  color: var(--text-primary);
-}
-
 .category-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -411,10 +403,7 @@ onMounted(() => {
 }
 
 .category-card__label {
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: var(--text-primary);
+  min-width: 0;
 }
 
 .category-card__count {

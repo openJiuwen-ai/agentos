@@ -23,8 +23,10 @@ export interface AppRouteNode {
   defaultChildKey?: string;
   hideInMenu?: boolean;
   hideSideMenu?: boolean;
-  /** When true, only admins see this item in menus and can access its route. */
+  /** When true, only management-workspace admins see this item in menus and can access its route. */
   adminOnly?: boolean;
+  /** When true, only personal-workspace users see this item (hidden from admin workspace). */
+  userOnly?: boolean;
   children?: AppRouteNode[];
 }
 
@@ -72,10 +74,11 @@ export const appRouteTree: AppRouteNode[] = [
           },
           {
             key: 'inference-model-api-key',
-            label: 'API Key',
+            label: 'API 接入',
             order: 2,
             path: '/resources/inference-model/api-key',
             name: 'inference-model-api-key',
+            userOnly: true,
             component: () => import('@/views/resources/inference-model/InferenceApiKeyPage.vue'),
           },
           {
@@ -85,6 +88,7 @@ export const appRouteTree: AppRouteNode[] = [
             path: '/resources/inference-model/call-analysis',
             name: 'inference-model-call-analysis',
             component: () => import('@/views/resources/inference-model/InferenceModelCallAnalysisPage.vue'),
+            adminOnly: true,
             hideInMenu: true,
             hideSideMenu: true,
           },
@@ -149,6 +153,7 @@ export const appRouteTree: AppRouteNode[] = [
         path: '/resources/alarm',
         name: 'alarm',
         icon: alarmIcon,
+        adminOnly: true,
         component: () => import('@/views/resources/AlarmPage.vue'),
       },
     ],
@@ -305,6 +310,7 @@ export interface SideMenuItem {
   routeName?: string;
   externalUrl?: string;
   adminOnly?: boolean;
+  userOnly?: boolean;
   children?: SideMenuItem[];
 }
 
@@ -329,6 +335,7 @@ function buildSideMenus(nodes: AppRouteNode[]): SideMenuItem[] {
         routeName: node.name,
         externalUrl: node.externalUrl,
         adminOnly: node.adminOnly,
+        userOnly: node.userOnly,
         children: menuChildren?.length ? buildSideMenus(menuChildren) : undefined,
       };
     });
@@ -398,6 +405,9 @@ export function findFirstAccessibleSideMenuRoute(
     if (item.adminOnly && !isAdmin) {
       continue;
     }
+    if (item.userOnly && isAdmin) {
+      continue;
+    }
     if (item.routeName) {
       return item.routeName;
     }
@@ -408,6 +418,24 @@ export function findFirstAccessibleSideMenuRoute(
   }
 
   return undefined;
+}
+
+export function findUserOnlyRouteNames(tree: AppRouteNode[]): string[] {
+  const names: string[] = [];
+
+  function walk(nodes: AppRouteNode[]) {
+    for (const node of nodes) {
+      if (node.userOnly && node.name) {
+        names.push(node.name);
+      }
+      if (node.children) {
+        walk(node.children);
+      }
+    }
+  }
+
+  walk(tree);
+  return names;
 }
 
 export function findAdminOnlyRouteNames(tree: AppRouteNode[]): string[] {

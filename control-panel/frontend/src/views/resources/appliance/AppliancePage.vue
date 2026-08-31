@@ -431,7 +431,7 @@ onUnmounted(() => {
           @visible-change="handleNodeMenuVisible"
         >
           <ElButton text native-type="button" class="appliance-page__name-btn">
-            <span class="appliance-page__device-name">{{ nodeId || '—' }}</span>
+            <span class="title-l1 appliance-page__device-name">{{ nodeId || '—' }}</span>
             <img
               :src="nodeMenuOpen ? arrowUpIcon : arrowDownIcon"
               alt=""
@@ -462,7 +462,7 @@ onUnmounted(() => {
             </ElDropdownMenu>
           </template>
         </ElDropdown>
-        <h1 v-else class="appliance-page__device-name">{{ nodeId || '一体机监控' }}</h1>
+        <h1 v-else class="title-l1 appliance-page__device-name">{{ nodeId || '一体机监控' }}</h1>
         <span v-if="nodeId" class="appliance-page__online" :class="isNodeOnline ? 'is-online' : 'is-offline'">
           <i class="appliance-page__online-dot" aria-hidden="true" />
           {{ isNodeOnline ? '在线' : '离线' }}
@@ -580,7 +580,7 @@ onUnmounted(() => {
             <span class="metric-card__icon-wrap">
               <img :src="card.icon" alt="" class="metric-card__icon" width="24" height="24" />
             </span>
-            <h3 class="metric-card__title">{{ card.title }}</h3>
+            <h3 class="title-l2 metric-card__title">{{ card.title }}</h3>
             <ElButton
               v-if="card.showDetail"
               type="primary"
@@ -623,7 +623,7 @@ onUnmounted(() => {
             <span class="metric-card__icon-wrap">
               <img :src="networkIcon" alt="" class="metric-card__icon" width="24" height="24" />
             </span>
-            <h3 class="metric-card__title">网络</h3>
+            <h3 class="title-l2 metric-card__title">网络</h3>
           </div>
           <div class="metric-card__body metric-card__body--network">
             <div class="network-stats">
@@ -835,14 +835,6 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   color: inherit;
-}
-
-.appliance-page__device-name {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 24px;
-  color: #191919;
 }
 
 .appliance-page__caret {
@@ -1175,11 +1167,6 @@ onUnmounted(() => {
 
 .metric-card__title {
   flex: 1;
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: #191919;
 }
 
 .metric-card__detail-btn {

@@ -275,7 +275,7 @@ onUnmounted(() => {
   <section class="page agent-monitor">
     <!-- 操作区 -->
     <div class="agent-monitor__header">
-      <h1 class="agent-monitor__title">智能体监控</h1>
+      <h1 class="title-l1 agent-monitor__title">智能体监控</h1>
       <div class="agent-monitor__header-right">
         <span v-if="lastUpdateTime" class="agent-monitor__update-time">更新时间：{{ lastUpdateTime }}</span>
         <ElButton
@@ -292,10 +292,10 @@ onUnmounted(() => {
     <!-- 概览行 -->
     <div class="overview-row">
       <article class="overview-card">
-        <h2 class="overview-card__title">智能体实例总览</h2>
+        <h2 class="title-l3 overview-card__title">智能体实例总览</h2>
         <div class="overview-card__body">
           <div class="overview-card__main">
-            <span class="overview-card__label">智能体实例数</span>
+            <span class="title-l4 overview-card__label">智能体实例数</span>
             <span class="overview-card__big-value">
               {{ firstLoaded ? overviewTotal : '—' }}
               <span class="overview-card__unit">个</span>
@@ -320,7 +320,7 @@ onUnmounted(() => {
 
     <!-- 表格区 -->
     <div class="table-card">
-      <h2 class="table-header__title">智能体实例</h2>
+      <h2 class="title-l3 table-header__title">智能体实例</h2>
       <ElInput
         v-model="keyword"
         class="table-header__search"
@@ -537,14 +537,6 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
-.agent-monitor__title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 28px;
-  color: var(--text-primary);
-}
-
 .agent-monitor__header-right {
   display: flex;
   align-items: center;
@@ -597,14 +589,6 @@ onUnmounted(() => {
   border-radius: 24px;
 }
 
-.overview-card__title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 21px;
-  color: var(--text-primary);
-}
-
 .overview-card__body {
   display: flex;
   align-items: stretch;
@@ -617,13 +601,6 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 52px;
   flex-shrink: 0;
-}
-
-.overview-card__label {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 19px;
-  color: var(--text-primary);
 }
 
 .overview-card__big-value {
@@ -734,10 +711,6 @@ onUnmounted(() => {
 .table-header__title {
   margin: 0 0 20px;
   flex-shrink: 0;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 24px;
-  color: var(--text-primary);
 }
 
 .table-header__search {

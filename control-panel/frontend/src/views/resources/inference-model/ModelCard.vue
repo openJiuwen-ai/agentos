@@ -41,7 +41,7 @@ function handleAction(action: string) {
         </div>
         <div class="model-card__identity">
           <div class="model-card__name-row">
-            <span class="model-card__name">{{ name }}</span>
+            <span class="title-l2 model-card__name">{{ name }}</span>
           </div>
           <div v-if="tags?.length" class="model-card__tags">
             <ElTag v-for="tag in tags" :key="tag" size="small" effect="light" class="model-card__tag">
@@ -152,10 +152,6 @@ function handleAction(action: string) {
 }
 
 .model-card__name {
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 26px;
-  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -2,9 +2,10 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMenu, ElMenuItem, ElDropdown, ElDropdownMenu, ElDropdownItem, ElButton, ElTooltip } from 'element-plus';
-import { appRouteTree, findAdminOnlyRouteNames, findDefaultLandingRouteName, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
+import { appRouteTree, findAdminOnlyRouteNames, findUserOnlyRouteNames, findDefaultLandingRouteName, findFirstAccessibleSideMenuRoute, topMenus } from '@/router/menu';
 
 const adminOnlyRouteNames = new Set(findAdminOnlyRouteNames(appRouteTree));
+const userOnlyRouteNames = new Set(findUserOnlyRouteNames(appRouteTree));
 import { useAuth } from '@/composables/useAuth';
 import personIcon from '@/assets/images/person-line.svg';
 import helpIcon from '@/assets/images/help.svg';
@@ -58,6 +59,9 @@ function handleTopMenuSelect(key: string) {
     let target = menu.defaultRouteName;
     if (!effectiveIsAdmin.value && adminOnlyRouteNames.has(target)) {
       target = findFirstAccessibleSideMenuRoute(menu.sideMenus, false) ?? target;
+    }
+    if (effectiveIsAdmin.value && userOnlyRouteNames.has(target)) {
+      target = findFirstAccessibleSideMenuRoute(menu.sideMenus, true) ?? 'inference-model-dashboard';
     }
     router.push({ name: target });
   }

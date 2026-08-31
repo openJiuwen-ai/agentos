@@ -181,7 +181,7 @@ async function handleLogout() {
       <ElTabs v-model="activeTab" class="profile-tabs">
         <ElTabPane label="个人信息" name="profile">
           <section class="profile-card">
-            <h2 class="profile-card__title">基本信息</h2>
+            <h2 class="title-l3">基本信息</h2>
             <div class="info-section">
               <div class="info-row info-row--avatar">
                 <span class="info-label">头像</span>
@@ -221,14 +221,14 @@ async function handleLogout() {
 
           <section class="profile-card profile-card--row">
             <div class="profile-card__text">
-              <h2 class="profile-card__title">重置密码</h2>
+              <h2 class="title-l3">重置密码</h2>
               <p class="profile-card__desc">上次重置：—</p>
             </div>
             <ElButton class="profile-action-btn" @click="openResetDialog">重置密码</ElButton>
           </section>
 
           <section class="profile-card profile-card--row">
-            <h2 class="profile-card__title profile-card__title--solo">退出登录</h2>
+            <h2 class="title-l3 profile-card__title--solo">退出登录</h2>
             <ElButton type="danger" plain class="profile-action-btn profile-action-btn--logout" @click="handleLogout">
               退出
             </ElButton>
@@ -466,14 +466,6 @@ async function handleLogout() {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-
-.profile-card__title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 24px;
-  color: var(--text-primary);
 }
 
 .profile-card__title--solo {

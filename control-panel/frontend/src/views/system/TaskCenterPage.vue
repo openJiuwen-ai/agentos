@@ -201,7 +201,7 @@ onUnmounted(() => stopPolling());
 <template>
   <section class="page">
     <div class="page-header-row">
-      <h1 class="page-title">任务中心</h1>
+      <h1 class="title-l1">任务中心</h1>
       <div class="page-header-row__meta">
         <span class="update-time">更新时间：{{ lastUpdateTime || "--" }}</span>
         <ElButton
@@ -332,14 +332,6 @@ onUnmounted(() => stopPolling());
   align-items: flex-start;
   justify-content: space-between;
   flex-shrink: 0;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 26px;
-  color: var(--text-primary);
 }
 
 .page-header-row__meta {
