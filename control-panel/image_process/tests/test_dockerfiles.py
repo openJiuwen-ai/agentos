@@ -19,8 +19,14 @@ class TestBaseDockerfileContract:
         assert 'CMD ["sleep", "infinity"]' in content
         assert "agentos.runtime_spec" in content
         assert "sshd_config" in content
+        assert "SANDBOX_IP" in content
+        assert "export SANDBOX_IP" in content
+        assert "SSHD_IP" not in content
         assert "openyuanrong_sdk" in content
         assert "agent_dx_executor" in content
+        # 与 build/build.sh 对齐: 只取末四位 0010/1410 的 daily build
+        assert "(0010|1410)$" in content
+        assert "sort -r" in content
 
 
 _AGENT_DOCKERFILE = _IMAGE_PROCESS_DIR / "agent.Dockerfile"

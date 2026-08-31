@@ -38,20 +38,27 @@ RUN set -eux; \
       *) echo "unsupported arch: ${py_arch}" >&2; exit 1 ;; \
     esac; \
     if [ -z "${YR_SDK_URL}" ]; then \
+      # 与 build/build.sh fetch_latest_yr_schedule_time 对齐:
+      # 只取末四位 0010/1410 的构建, 取数值最大(最新)的一个; 可通过 YR_SDK_URL 覆盖。
       html="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 60 \
         https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html)"; \
       yr_schedule="$(printf '%s\n' "${html}" \
         | sed -n '/<h2>openeuler<\/h2>/,/<hr class="os-divider">/p' \
         | sed -n 's/.*<tr><td>\([0-9][0-9]*\)<\/td>.*/\1/p' \
+        | grep -E '(0010|1410)$' \
+        | sort -r \
         | head -1)"; \
       if [ -z "${yr_schedule}" ]; then \
         yr_schedule="$(printf '%s\n' "${html}" \
           | grep -oE 'daily_build/[0-9]+/openeuler' \
-          | head -1 \
-          | sed -E 's|daily_build/([0-9]+)/openeuler|\1|')"; \
+          | sed -E 's|daily_build/([0-9]+)/openeuler|\1|' \
+          | grep -E '(0010|1410)$' \
+          | sort -r \
+          | head -1)"; \
       fi; \
       if [ -z "${yr_schedule}" ]; then \
-        echo "failed to resolve latest yuanrong daily build from OBS index" >&2; \
+        echo "failed to resolve yuanrong daily build matching 0010/1410 from OBS index" >&2; \
+        echo "  (manual triggers are skipped; set --build-arg YR_SDK_URL=... to override)" >&2; \
         exit 1; \
       fi; \
       sdk_base="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/${yr_schedule}/openeuler/${py_arch}"; \
@@ -89,11 +96,12 @@ RUN mkdir -p /opt/agent-ssh \
     && echo 'PidFile /tmp/sshd.pid' >> /opt/agent-ssh/sshd_config \
     && echo 'HostKey /opt/agent-ssh/ssh_host_rsa_key' >> /opt/agent-ssh/sshd_config
 
-# entrypoint — start sshd in background, then exec user command
+# entrypoint — resolve sandbox IP first, then start sshd, then exec user command
 RUN echo '#!/bin/sh' > /entrypoint.sh \
+    && echo 'SANDBOX_IP=$(python3 -c "import socket; print(socket.gethostbyname(socket.gethostname()))")' >> /entrypoint.sh \
+    && echo 'export SANDBOX_IP' >> /entrypoint.sh \
     && echo 'mkdir -p /home/agentos/logs' >> /entrypoint.sh \
-    && echo 'SSHD_IP=$(python3 -c "import socket; print(socket.gethostbyname(socket.gethostname()))")' >> /entrypoint.sh \
-    && echo '/usr/sbin/sshd -D -f /opt/agent-ssh/sshd_config -o "ListenAddress ${SSHD_IP}" -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
+    && echo '/usr/sbin/sshd -D -f /opt/agent-ssh/sshd_config -o "ListenAddress ${SANDBOX_IP}" -E /home/agentos/logs/sshd.log &' >> /entrypoint.sh \
     && echo 'exec "$@"' >> /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
