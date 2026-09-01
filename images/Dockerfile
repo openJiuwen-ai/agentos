@@ -48,8 +48,8 @@ COPY download_playwright_browsers.py /usr/local/bin/download_playwright_browsers
 RUN python3 /usr/local/bin/download_playwright_browsers.py && \
     rm -f /usr/local/bin/download_playwright_browsers.py
 
-# 4) Python 依赖 (直连 pypi 官方源; pip 需信任 pypi 的 SSL)
-RUN pip3 config set global.index-url https://pypi.org/simple && \
+# 4) Python 依赖 (走华为云 pypi 镜像源, 加速下载)
+RUN pip3 config set global.index-url https://mirrors.huaweicloud.com/repository/pypi/simple/ && \
     pip3 install \
         python-pptx requests pypdf pdfplumber pymupdf \
         playwright markitdown markdown-it-py Pillow fake-useragent \
