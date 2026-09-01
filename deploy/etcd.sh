@@ -91,7 +91,7 @@ _yr_generate_etcd_unit() {
     advertise_ip=$(_yr_cfg etcd-advertise-ip) \
         || error "Failed to derive etcd advertise IP"
 
-：    # 有 member/ 子目录说明已有 etcd 数据，用 existing 状态恢复；否则用 new 全新启动
+    # 有 member/ 子目录说明已有 etcd 数据，用 existing 状态恢复；否则用 new 全新启动
     if [ -d "${YR_ETCD_DATA_DIR}/member" ]; then
         cluster_state="existing"
         info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}, state=existing (data preserved)"
