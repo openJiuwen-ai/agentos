@@ -13,6 +13,7 @@ import pytest
 
 from app.config import settings
 from app.schemas.user import ListUsersParams
+from app.services.local_users.backend import UserCreateError
 
 
 # ── 管理员初始化 ─────────────────────────────────────────────────────
@@ -159,10 +160,11 @@ async def test_create_user_with_password(backend, test_data):
 
 @pytest.mark.asyncio
 async def test_create_user_duplicate(backend):
-    """创建重复用户名 → 抛出 USERNAME_ALREADY_EXISTS。"""
+    """创建重复用户名 → 抛出 UserCreateError（code=USERNAME_EXISTS）。"""
     await backend.create_user("dave")
-    with pytest.raises(ValueError, match="USERNAME_ALREADY_EXISTS"):
+    with pytest.raises(UserCreateError) as exc:
         await backend.create_user("dave")
+    assert exc.value.code == "USERNAME_EXISTS"
 
 
 @pytest.mark.asyncio

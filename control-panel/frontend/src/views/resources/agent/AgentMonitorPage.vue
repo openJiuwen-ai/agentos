@@ -484,19 +484,6 @@ onUnmounted(() => {
             <span>{{ formatDateTime(row.created_at) }}</span>
           </template>
         </ElTableColumn>
-
-        <ElTableColumn
-          prop="last_active_at"
-          label="最近活跃"
-          min-width="203"
-          show-overflow-tooltip
-          sortable="custom"
-          :sort-orders="['ascending', 'descending']"
-        >
-          <template #default="{ row }">
-            <span>{{ formatDateTime(row.last_active_at) }}</span>
-          </template>
-        </ElTableColumn>
       </ElTable>
 
       <div class="pagination-row">

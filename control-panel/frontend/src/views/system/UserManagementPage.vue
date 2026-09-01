@@ -116,6 +116,8 @@ async function handleCreateUser() {
         user_id: ok.user_id ?? '',
         new_password: ok.password ?? '',
       };
+      // 创建成功后立即刷新用户列表，避免手动刷新
+      loadUsers();
     } else {
       createError.value = friendlyCreateError(results[0]?.error) ?? '创建失败';
     }

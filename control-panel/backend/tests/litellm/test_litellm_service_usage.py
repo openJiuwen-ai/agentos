@@ -261,13 +261,13 @@ class TestLitellmServiceUsage:
     # [预期] 排行按 Token 用量降序（用量），alice 排第一，且 tokens 列单调递减
     async def test_get_usage_by_user_orders_by_tokens(self, svc, db_session):
         await self._setup_table(db_session, [
-            ("r1", "alice", "deepseek", 1000, 0.01, "2026-07-01 10:00:00"),
-            ("r2", "bob", "gpt-4", 500, 0.05, "2026-07-01 11:00:00"),
-            ("r3", "charlie", "qwen", 200, 0.02, "2026-07-01 12:00:00"),
+            self._row("r1", "alice", "deepseek", tokens=1000, spend=0.01, ts="2026-07-01 10:00:00"),
+            self._row("r2", "bob", "gpt-4", tokens=500, spend=0.05, ts="2026-07-01 11:00:00"),
+            self._row("r3", "charlie", "qwen", tokens=200, spend=0.02, ts="2026-07-01 12:00:00"),
         ])
 
         result = await svc.get_usage_by_user(
-            db_session, start_date="2026-07-01", end_date="2026-07-02", top=3,
+            start_date=date(2026, 7, 1), end_date=date(2026, 7, 2), top=3,
         )
         assert [item["user_id"] for item in result["items"]] == ["alice", "bob", "charlie"]
         tokens = [item["tokens"] for item in result["items"]]

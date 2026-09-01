@@ -1,10 +1,12 @@
 """LocalUsersBackend — implements AbstractUserBackend with pure SQLAlchemy."""
 
+import functools
 import logging
 import os
 import re
 import shutil
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -29,6 +31,17 @@ from app.services.local_users.password import (
 from app.services.local_users.models import User
 
 logger = logging.getLogger(__name__)
+
+
+# ── 统一错误码（用户创建相关） ─────────────────────────────────────────
+
+
+class UserCreateError(Exception):
+    """创建用户失败。code 为机器可读错误码，message 为用户可见描述。"""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -137,6 +150,15 @@ def _remove_home(username: str) -> None:
     path = _home_path(username)
     if path.is_dir():
         shutil.rmtree(path, ignore_errors=True)
+
+
+def _remove_config_file(config_path: Path) -> None:
+    """SAGA 回滚：删除补建的 config.yaml 文件（仅文件，不误删已有家目录）。"""
+    try:
+        if config_path.is_file():
+            config_path.unlink()
+    except OSError:
+        logger.warning("回滚时删除 config.yaml 失败: %s", config_path)
 
 
 def _derive_api_base() -> str:
@@ -460,6 +482,9 @@ class LocalUsersBackend(AbstractUserBackend):
             # ① 查 DB 有没有 admin
             admin_username = _validate_username(settings.AGENTOS_ADMIN_USERNAME)
             admin = await _get_user_by_username(session, admin_username)
+
+            # SAGA 回滚栈：仅登记本次真正产生的副作用
+            rollbacks: list[Callable[[], Awaitable[None]]] = []
             if not admin:
                 admin_user = User(
                     username=admin_username,
@@ -471,6 +496,7 @@ class LocalUsersBackend(AbstractUserBackend):
                 await session.commit()
                 await session.refresh(admin_user)
                 admin = admin_user
+                rollbacks.append(functools.partial(self._delete_user_record, str(admin.id)))
 
             uid = str(admin.id)
             username = admin.username
@@ -488,6 +514,7 @@ class LocalUsersBackend(AbstractUserBackend):
             try:
                 await svc.create_user(uid=uid)
                 logger.info("管理员已同步到 LiteLLM")
+                rollbacks.append(functools.partial(self._delete_litellm_user, uid))
             except LitellmUpstreamError as e:
                 if e.status_code in USER_ALREADY_EXISTS_STATUS_CODES:
                     logger.info("管理员在 LiteLLM 已存在，跳过")
@@ -502,11 +529,15 @@ class LocalUsersBackend(AbstractUserBackend):
                 return
 
             # ③ Key + 目录 + config（复用 _setup_user_key_and_config）
-            # admin 也用 rollback_on_failure=True：管理员也是九问用户，Key/config 失败时回滚删用户
+            # 失败时由回滚栈统一撤销本次产生的副作用（仅新建的 admin / LiteLLM 用户 / Key / 家目录）
             # 不 catch：异常穿透 lifespan 阻断启动（没有管理员管理面无法运行）
-            await self._setup_user_key_and_config(
-                session, svc, uid, username, rollback_on_failure=True
-            )
+            try:
+                await self._setup_user_key_and_config(
+                    session, svc, uid, username, rollbacks=rollbacks,
+                )
+            except Exception:
+                await self._run_rollbacks(rollbacks, username)
+                raise
 
     # ── Authentication ──────────────────────────────────────────────
 
@@ -576,7 +607,7 @@ class LocalUsersBackend(AbstractUserBackend):
             # Step 1. 查重
             existing = await _get_user_by_username(session, username)
             if existing:
-                raise ValueError("USERNAME_ALREADY_EXISTS")
+                raise UserCreateError("USERNAME_EXISTS", "用户名已存在")
 
             # Step 2. 入库 commit
             generated = None
@@ -588,9 +619,13 @@ class LocalUsersBackend(AbstractUserBackend):
             await session.commit()
             await session.refresh(user)
             record = self._to_record(user)
+            uid = str(user.id)
+
+            # SAGA 回滚栈：每成功一步副作用，登记对应撤销动作
+            rollbacks: list[Callable[[], Awaitable[None]]] = []
+            rollbacks.append(functools.partial(self._delete_user_record, uid))
 
             # Step 3. 创建 LiteLLM 用户（400/409=已存在跳过，其他失败回滚用户）
-            uid = str(user.id)
             svc = None
             try:
                 from app.services import get_litellm_svc
@@ -602,14 +637,15 @@ class LocalUsersBackend(AbstractUserBackend):
                 svc = get_litellm_svc()
                 if svc is not None:
                     await svc.create_user(uid=uid)
+                    rollbacks.append(functools.partial(self._delete_litellm_user, uid))
             except LitellmUpstreamError as e:
                 if e.status_code in USER_ALREADY_EXISTS_STATUS_CODES:
-                    pass  # 已存在，继续
+                    pass  # 已存在，不登记删除
                 else:
-                    await self._rollback_user(session, uid, username)
+                    await self._run_rollbacks(rollbacks, username)
                     raise ValueError(f"创建 LiteLLM 用户失败: {e.detail}") from e
             except Exception as e:
-                await self._rollback_user(session, uid, username)
+                await self._run_rollbacks(rollbacks, username)
                 raise ValueError(f"创建 LiteLLM 用户失败") from e
 
             # Step 4. 若家目录已存在（旧用户残留），先删除再从模板重建，避免旧数据污染
@@ -619,18 +655,20 @@ class LocalUsersBackend(AbstractUserBackend):
                 _remove_home(username)
                 if home.is_dir():
                     logger.error("用户 %s 家目录删除失败，中止创建", username)
-                    await self._rollback_user(session, uid, username)
+                    await self._run_rollbacks(rollbacks, username)
                     raise ValueError(f"用户 {username} 家目录删除失败")
 
-            # Step 5. 申请 Key + 写 config（失败回滚用户）
-            await self._setup_user_key_and_config(
-                session, svc, uid, username, rollback_on_failure=True
-            )
+            # Step 5. 申请 Key + 写 config（失败由回滚栈统一撤销）
+            try:
+                await self._setup_user_key_and_config(session, svc, uid, username, rollbacks=rollbacks)
+            except Exception:
+                await self._run_rollbacks(rollbacks, username)
+                raise
 
             return record, generated
 
     async def _setup_user_key_and_config(
-        self, session, svc, uid: str, username: str, *, rollback_on_failure: bool = True
+        self, session, svc, uid: str, username: str, *, rollbacks: list | None = None,
     ) -> dict:
         """为用户申请 Key 并写入九问 config.yaml。
 
@@ -638,79 +676,79 @@ class LocalUsersBackend(AbstractUserBackend):
 
         幂等：已有 Key 跳过申请；目录已存在跳过模板复制；config.yaml 缺失只补 config.yaml。
 
-        Args:
-            session: 数据库会话
-            svc: LiteLLM 服务实例
-            uid: 用户 ID
-            username: 用户名
-            rollback_on_failure: 失败时是否回滚用户（普通用户和管理员都 True）
-
-        Returns:
-            成功返回 {"key": 明文key}，失败时 _rollback_user + raise
+        失败不自行回滚：仅在成功产生副作用时向 ``rollbacks`` 栈登记撤销动作，
+        由调用方统一执行回滚。
         """
         from app.models.litellm_model_params import LitellmModelParams
         from app.models.litellm_user_key import LitellmUserKey
         from app.models.user_default_key import UserDefaultKey
         from app.services.litellm_service import decrypt_key
 
-        try:
-            # ① 查已有 Key
+        stack = rollbacks if rollbacks is not None else []
+
+        # ① 查已有 Key — 先查 UserDefaultKey 表精准定位默认 Key
+        default_row = await UserDefaultKey.get_by_uid(session, uid)
+        if default_row and default_row.key_id:
+            result = await session.execute(
+                select(LitellmUserKey).where(LitellmUserKey.id == default_row.key_id)
+            )
+            key_record = result.scalars().first()
+            if key_record:
+                api_key_plain = decrypt_key(key_record.key)
+                logger.info("用户 %s 已有默认 Key（alias=%s），跳过申请", username, key_record.key_alias)
+            else:
+                api_key_plain = None
+        else:
+            api_key_plain = None
+
+        if not api_key_plain:
             existing_keys = await LitellmUserKey.list_by_uid(session, uid)
             if existing_keys:
                 key_record = existing_keys[0]
                 api_key_plain = decrypt_key(key_record.key)
-                logger.info("用户 %s 已有 Key（alias=%s），跳过申请", username, key_record.key_alias)
-                # 已有 Key 时不补默认标记，默认 Key 只在创建用户时申请的 Key 才标记
+                logger.info("用户 %s 无默认 Key 标记，复用最新 Key（alias=%s）", username, key_record.key_alias)
+                await UserDefaultKey.set_default(session, uid, key_record.id)
+                await session.commit()
+                stack.append(functools.partial(self._delete_user_default_key, uid))
             else:
-                # 无 Key，申请
                 key_info = await self._apply_key(svc, session, uid, username)
                 key_id = key_info.get("key_id")
                 if key_id:
                     await UserDefaultKey.set_default(session, uid, key_id)
                 await session.commit()
                 api_key_plain = key_info.get("key", "")
+                stack.append(functools.partial(self._delete_user_default_key, uid))
 
-            # ② 检查家目录 + config.yaml（不影响 ③，只管模板复制）
-            home = _home_path(username)
-            config_path = home / ".jiuwenswarm" / "config" / "config.yaml"
-            if not home.is_dir():
-                try:
-                    _ensure_home(username)
-                    _ensure_workspace(username)
-                    _create_jwswarm_config(username)
-                    _preset_skills(username)
-                except Exception:
-                    logger.warning("用户 %s 建家目录 / 复制模板 / 拷贝预装skill 失败", username, exc_info=True)
-            elif not config_path.is_file():
-                try:
-                    src = Path(settings.AGENTOS_SWARM_TEMPLATE_DIR) / "config" / "config.yaml"
-                    config_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(str(src), str(config_path))
-                except Exception:
-                    logger.warning("用户 %s 补建 config.yaml 失败", username, exc_info=True)
+        # ② 检查家目录 + config.yaml（失败向上抛，触发调用方回滚栈删除已入库用户）
+        home = _home_path(username)
+        config_path = home / ".jiuwenswarm" / "config" / "config.yaml"
+        if not home.is_dir():
+            _ensure_home(username)
+            stack.append(functools.partial(_remove_home, username))
+            _ensure_workspace(username)
+            _create_jwswarm_config(username)
+            _preset_skills(username)
+        elif not config_path.is_file():
+            src = Path(settings.AGENTOS_SWARM_TEMPLATE_DIR) / "config" / "config.yaml"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(config_path))
+            stack.append(functools.partial(_remove_config_file, config_path))
 
-            # ③ 写 agentos（有 Key 才写，无模型时写空列表）
-            if api_key_plain:
-                models = await LitellmModelParams.list_all_models_with_context(session)
-                api_base = _derive_api_base()
-                _append_agentos_entries(username, api_base, api_key_plain, models)
+        # ③ 写 agentos（有 Key 才写，无模型时写空列表）
+        if api_key_plain:
+            models = await LitellmModelParams.list_all_models_with_context(session)
+            api_base = _derive_api_base()
+            _append_agentos_entries(username, api_base, api_key_plain, models)
 
-            # ④ chown
-            _chown_home(username)
+        # ④ chown
+        _chown_home(username)
 
-            return {"key": api_key_plain}
-        except Exception as e:
-            if rollback_on_failure:
-                await self._rollback_user(session, uid, username)
-                raise
-            else:
-                logger.warning("用户 %s 申请 Key / 写 config 失败", username, exc_info=True)
-                return {}
+        return {"key": api_key_plain}
 
     async def _apply_key(
         self, svc, session, uid: str, username: str
     ) -> dict:
-        """申请 Key，model=None，失败回滚用户。"""
+        """申请 Key，model=None。失败仅上抛，回滚由调用方统一处理。"""
         if svc is None:
             raise RuntimeError(
                 f"LiteLLM 服务不可用，无法为用户 {username} 申请 Key"
@@ -721,51 +759,53 @@ class LocalUsersBackend(AbstractUserBackend):
                 session, uid=uid, model=None, key_name="default-key"
             )
         except Exception as exc:
-            await self._rollback_user(session, uid, username)
             raise RuntimeError(f"无法为用户 {username} 申请KEY") from exc
 
-    async def _rollback_user(
-        self, session: AsyncSession, uid: str, username: str
-    ) -> None:
-        """回滚用户创建：删家目录 + 删 LiteLLM 用户 + 删本地记录。每步 best-effort。"""
-        try:
-            await session.rollback()
-        except Exception:
-            logger.warning("回滚 session 失败", exc_info=True)
-
-        try:
-            _remove_home(username)
-        except Exception as e:
-            logger.warning("回滚时删除家目录失败: %s", e)
-
-        try:
-            from app.services import get_litellm_svc
-
-            svc = get_litellm_svc()
-            if svc is not None:
-                async with self._session_maker() as rb_session:
-                    await svc.delete_user(rb_session, uid=uid)
-                    await rb_session.commit()
-        except Exception:
-            logger.warning("回滚时删除 LiteLLM 用户失败", exc_info=True)
-
-        try:
-            from app.models.user_default_key import UserDefaultKey
-
-            async with self._session_maker() as rb_session:
-                await UserDefaultKey.delete_by_uid(rb_session, uid)
+    async def _delete_user_record(self, uid: str) -> None:
+        """SAGA 回滚：删除本地用户记录（独立事务）。"""
+        async with self._session_maker() as rb_session:
+            user_obj = await _get_user_by_id(rb_session, uuid.UUID(uid))
+            if user_obj:
+                await rb_session.delete(user_obj)
                 await rb_session.commit()
-        except Exception:
-            logger.warning("回滚时删除默认 Key 标记失败", exc_info=True)
 
-        try:
+    async def _delete_litellm_user(self, uid: str) -> None:
+        """SAGA 回滚：删除 LiteLLM 上游用户（独立事务）。"""
+        from app.services import get_litellm_svc
+
+        svc = get_litellm_svc()
+        if svc is not None:
             async with self._session_maker() as rb_session:
-                user_obj = await _get_user_by_id(rb_session, uuid.UUID(uid))
-                if user_obj:
-                    await rb_session.delete(user_obj)
-                    await rb_session.commit()
-        except Exception:
-            logger.warning("回滚时删除用户记录失败", exc_info=True)
+                await svc.delete_user(rb_session, uid=uid)
+                await rb_session.commit()
+
+    async def _delete_user_default_key(self, uid: str) -> None:
+        """SAGA 回滚：删除默认 Key 标记（独立事务）。"""
+        from app.models.user_default_key import UserDefaultKey
+
+        async with self._session_maker() as rb_session:
+            await UserDefaultKey.delete_by_uid(rb_session, uid)
+            await rb_session.commit()
+
+    async def _run_rollbacks(
+        self, rollbacks: list[Callable[[], Awaitable[None]]], username: str
+    ) -> None:
+        """逆序执行回滚栈，收集所有失败。
+
+        任一删除失败都上报（用户可能残留），避免清理失败被静默吞掉。
+        """
+        failures: list[Exception] = []
+        for rb in reversed(rollbacks):
+            try:
+                await rb()
+            except Exception as e:
+                logger.error("回滚用户 %s 失败: %s", username, e, exc_info=True)
+                failures.append(e)
+        if failures:
+            raise RuntimeError(
+                f"用户 {username} 创建失败后回滚失败（{len(failures)} 项未删除），"
+                f"用户可能残留，请人工处理"
+            ) from failures[0]
 
     async def update_user(
         self, user_id: uuid.UUID, update_dict: dict[str, Any]

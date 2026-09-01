@@ -96,7 +96,8 @@ async def batch_create(
                     "error": None,
                 }
             )
-        except ValueError as e:
+        except Exception as e:
+            # 捕获所有异常逐条上报，避免单个用户失败导致整批 500 / 中止
             results.append(
                 {
                     "username": username.strip().lower(),
