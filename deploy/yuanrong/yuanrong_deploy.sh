@@ -666,6 +666,27 @@ _yr_cfg() {
     "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
 }
 
+# ===== 清理 yuanrong 在 etcd 中残留的业务数据 =====
+# yr stop --force 是强制停止，不会优雅退出清理 etcd 数据。
+# 委托 deploy/etcd.sh clean-yr-data 按前缀删除，避免重复维护 etcdctl 定位逻辑。
+_yr_clean_etcd_data() {
+    local host="$1"
+    local etcd_sh="${SCRIPT_DIR}/../etcd.sh"
+
+    if [ ! -f "${etcd_sh}" ]; then
+        warning "etcd.sh not found at ${etcd_sh}, skipping etcd data cleanup"
+        return 0
+    fi
+
+    info "Cleaning yuanrong etcd data on ${host}..."
+    if is_local_host "${host}"; then
+        bash "${etcd_sh}" clean-yr-data || warning "etcd clean-yr-data failed on ${host}"
+    else
+        exec_on_host "${host}" "bash '${etcd_sh}' clean-yr-data" \
+            || warning "etcd clean-yr-data failed on ${host}"
+    fi
+}
+
 # ===== 定位 yr 入口脚本绝对路径 =====
 # systemd 默认 PATH 仅 /usr/bin:/usr/sbin；pip 装的 yr 入口点可能落在
 # /usr/bin（系统 Python）、/usr/local/bin（源码 Python）或 ~/.local/bin
@@ -810,10 +831,14 @@ deploy_yr_up_systemd() {
 
 # ===== systemd down: 只停服务，不删 unit 文件（删文件留给 uninstall） =====
 # etcd 停止已拆到 deploy/etcd.sh down，此处不再触碰 etcd
+# yr stop --force 不会清理 etcd 业务数据，down 后按前缀清理残留 key
 deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
     systemctl stop "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+
+    # 清理 yuanrong 在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
+    _yr_clean_etcd_data "$(get_local_ip)"
 
     success "yuanrong executor stopped"
 }
