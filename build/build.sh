@@ -479,6 +479,49 @@ build_agent_gateway() {
   download_file "${whl_url}" "${DOWNLOAD_DIR}/agent-gateway/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
 }
 
+build_credential_router() {
+  echo "==> build_credential_router (arch=${ARCH})"
+
+  local src_dir="${PROJECT_ROOT}/credential_router"
+  if [[ ! -d "${src_dir}" ]]; then
+    echo "error: credential_router source not found: ${src_dir} (submodule not initialized?)" >&2
+    return 1
+  fi
+
+  if ! command -v go >/dev/null 2>&1; then
+    echo "error: go toolchain not found (required to build credential-router)" >&2
+    return 1
+  fi
+
+  # ARCH mapping: x86_64|amd64 -> x86_64, aarch64|arm64 -> arm64
+  # (module.sh::_cr_arch_label 用同套约定定位 binary，命名必须一致)
+  local cr_arch="${ARCH}"
+  case "${ARCH}" in
+    x86_64|amd64) cr_arch="x86_64" ;;
+    aarch64|arm64) cr_arch="arm64" ;;
+  esac
+
+  local dist_dir="${DOWNLOAD_DIR}/credential_router"
+  mkdir -p "${dist_dir}"
+
+  # Inject version so admin /v1/health build_info shows the release tag.
+  local cr_version="${VERSION:-$(git -C "${PROJECT_ROOT}" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+
+  # CGO_ENABLED=1 is required (submodule Makefile uses CGO for SM4/AES bindings).
+  # trimpath: reproducible builds; -s -w: strip debug info.
+  ( cd "${src_dir}" && \
+      CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${cr_version}" \
+        -o "${dist_dir}/credential-router_linux_${cr_arch}" \
+        ./cmd/credential-router )
+
+  if [[ ! -x "${dist_dir}/credential-router_linux_${cr_arch}" ]]; then
+    echo "error: credential-router binary not produced" >&2
+    return 1
+  fi
+
+  echo "  built: credential-router_linux_${cr_arch}"
+}
+
 build_conch() {
   echo "==> build_conch (${ARCH})"
   mkdir -p "${DOWNLOAD_DIR}/conch"
@@ -583,6 +626,10 @@ pack() {
 
   cp "${DOWNLOAD_DIR}/agent-gateway/"*.whl "${server_staging}/"
 
+  if [[ -d "${DOWNLOAD_DIR}/credential_router" ]]; then
+    cp "${DOWNLOAD_DIR}/credential_router"/credential-router_linux_* "${server_staging}/"
+  fi
+
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
@@ -625,6 +672,7 @@ main() {
   build_jiuwenswarm
   build_tui_launcher
   build_agent_gateway
+  build_credential_router
   pack
   echo "done"
 }

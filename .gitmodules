@@ -11,3 +11,7 @@
 	path = agent-protocol
 	url = https://gitcode.com/openJiuwen/agent-protocol.git
 	branch = feature/Agentregistry-dev
+[submodule "credential_router"]
+	path = credential_router
+	url = https://gitcode.com/gcw_wZ6Lfs1I/credential_router.git
+	branch = feature_credential_vault
