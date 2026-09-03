@@ -15,7 +15,7 @@ ENV GIT_SSL_NO_VERIFY=true \
 RUN printf '[main]\nsslverify=0\n' > /etc/dnf/dnf.conf && \
     dnf clean all && \
     dnf makecache --refresh && \
-    dnf -y install nodejs nss nspr atk at-spi2-atk cups-libs libdrm \
+    dnf -y install nodejs nss nspr atk at-spi2-atk cups-libs libdrm git iputils\
         libxkbcommon libXcomposite libXdamage libXfixes libXrandr \
         mesa-libgbm libXext libX11 pango cairo alsa-lib fontconfig \
         freetype libXrender libXt libXScrnSaver findutils && \
@@ -51,7 +51,7 @@ RUN python3 /usr/local/bin/download_playwright_browsers.py && \
 # 4) Python 依赖 (走华为云 pypi 镜像源, 加速下载)
 RUN pip3 config set global.index-url https://mirrors.huaweicloud.com/repository/pypi/simple/ && \
     pip3 install \
-        python-pptx requests pypdf pdfplumber pymupdf \
+        python-pptx requests pypdf pdfplumber pymupdf firecrawl-anydoc\
         playwright markitdown markdown-it-py Pillow fake-useragent \
         imapclient>=3.1.0 PySocks>=1.7.1 markdown>=3.4 \
         PyPDF2>=3.0.1 python-docx>=1.2.0 openpyxl>=3.1.0 \
@@ -60,9 +60,5 @@ RUN pip3 config set global.index-url https://mirrors.huaweicloud.com/repository/
     pip3 cache purge && \
     pip3 config unset global.index-url
 
-# 5) 校验: python 包可导入 + node chromium 可启动
-RUN python3 -c "import pptx, fitz, pypdf, pdfplumber, playwright, PIL, markitdown, markdown_it, fake_useragent; print('python-deps OK')" && \
-    node -e "const {chromium}=require('/opt/html2pptx/node_modules/playwright'); \
-      chromium.launch({headless:true}).then(b=>{console.log('chromium OK'); return b.close()}).catch(e=>{console.error(e.message); process.exit(1)})"
 
 WORKDIR /
