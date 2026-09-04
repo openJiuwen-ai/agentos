@@ -40,6 +40,10 @@ jiuwenswarm_run_deploy() {
 # ===== install/uninstall: 本机 pip 操作 =====
 # jiuwenswarm whl 包名格式: jiuwenswarm-<version>-py3-none-any.whl，已包含 gateway
 jiuwenswarm_install() {
+    # 工具沙箱镜像检查：先于任何安装动作执行（fail-fast），不满足条件时直接中断，
+    # 避免 whl 已装到一半、后续模块未装、无 install 汇总的半安装状态
+    _jiuwenswarm_check_sandbox_image
+
     local local_host
     local_host=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "${local_host}" ] && local_host="127.0.0.1"
@@ -63,33 +67,71 @@ jiuwenswarm_install() {
         warning "No jiuwenswarm whl found at ${AGENTOS_ROOT}/jiuwenswarm-*-py3-none-any.whl, skipping jiuwenswarm install"
         warning "Please place jiuwenswarm-<version>-py3-none-any.whl in ${AGENTOS_ROOT}/ before install"
     fi
-
-    # 工具沙箱镜像提示（install 不自动拉取镜像，up 也不检测，需用户手动 docker pull）
-    _jiuwenswarm_warn_sandbox_image
 }
 
-# 提示用户手动拉取工具沙箱镜像
-# install/up 均不自动下载镜像，用户需按 README 说明手动 docker pull
-_jiuwenswarm_warn_sandbox_image() {
+# 读取 env 文件中 KEY=VALUE 的值，兼容值带双引号/单引号/不带引号三种写法
+# 注意：不能用 cut -d'"' -f2 —— 值不带引号时会返回整行 "KEY=value"，导致检查被静默跳过
+_jwsw_env_value() {
+    local file="$1" key="$2" line
+    line=$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -n 1 || true)
+    line="${line#*=}"
+    line="${line#\"}"
+    line="${line%\"}"
+    line="${line#\'}"
+    line="${line%\'}"
+    printf '%s' "${line}"
+}
+
+# 检查工具沙箱镜像是否已存在于本机 docker images 中
+# 当 TOOL_SANDBOX_ENABLE=true 时，install 会检测本地是否已有沙箱镜像
+# docker 命令缺失、守护进程不可达或镜像不存在时，均直接中断安装，要求用户处理后重新执行 install
+_jiuwenswarm_check_sandbox_image() {
     local env_file="${JIUWENSWARM_DEPLOY_DIR}/.env.custom"
     local sandbox_type="" sandbox_enable="" sandbox_image=""
 
     # 从 .env.custom 读取工具沙箱配置
     if [ -f "${env_file}" ]; then
-        sandbox_type=$(grep -E '^TOOL_SANDBOX_TYPE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
-        sandbox_enable=$(grep -E '^TOOL_SANDBOX_ENABLE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
-        sandbox_image=$(grep -E '^TOOL_SANDBOX_IMAGE=' "${env_file}" 2>/dev/null | cut -d'"' -f2 || true)
+        sandbox_type=$(_jwsw_env_value "${env_file}" 'TOOL_SANDBOX_TYPE')
+        sandbox_enable=$(_jwsw_env_value "${env_file}" 'TOOL_SANDBOX_ENABLE')
+        sandbox_image=$(_jwsw_env_value "${env_file}" 'TOOL_SANDBOX_IMAGE')
     fi
 
-    # 仅当工具沙箱启用时提示
+    # 仅当工具沙箱启用时检查
     if [ "${sandbox_enable}" = "true" ] && [ -n "${sandbox_image}" ]; then
-        echo ""
-        warning "Tool sandbox is enabled (TOOL_SANDBOX_ENABLE=true) but the sandbox image is NOT auto-pulled during install/up."
-        warning "You MUST manually pull the image before using tool sandbox, otherwise jiuwen agent tool sandbox will not work:"
-        echo ""
-        echo "    docker pull ${sandbox_image}"
-        echo ""
-        warning "See deploy/README.md (Tool Sandbox Image section) for details."
+        # docker 命令不存在：提示后中断（error 会 exit 1，提示需全部先输出）
+        if ! command -v docker >/dev/null 2>&1; then
+            echo ""
+            warning "Tool sandbox is enabled (TOOL_SANDBOX_ENABLE=true) but docker is not available on this host."
+            warning "Please install docker first, then pull the sandbox image:"
+            echo ""
+            echo "    docker pull ${sandbox_image}"
+            echo ""
+            error "Install aborted: docker is required when TOOL_SANDBOX_ENABLE=true."
+        fi
+
+        # docker 守护进程不可达（未运行或当前用户无权限），需与"镜像不存在"区分开，避免误导用户去 pull
+        if ! docker info >/dev/null 2>&1; then
+            echo ""
+            warning "Tool sandbox is enabled (TOOL_SANDBOX_ENABLE=true) but the docker daemon is not reachable."
+            warning "Please make sure docker is running and the current user has permission to access it:"
+            echo ""
+            echo "    systemctl status docker"
+            echo ""
+            error "Install aborted: docker daemon is not reachable."
+        fi
+
+        # 精确检查镜像是否存在（docker image inspect 支持带 tag / digest 的完整引用，避免 grep 子串误判）
+        if ! docker image inspect "${sandbox_image}" >/dev/null 2>&1; then
+            echo ""
+            warning "Tool sandbox is enabled (TOOL_SANDBOX_ENABLE=true) but sandbox image not found in docker images."
+            warning "You MUST manually pull the image before install can proceed:"
+            echo ""
+            echo "    docker pull ${sandbox_image}"
+            echo ""
+            error "Install aborted. After pulling the image, re-run install. See deploy/README.md (Tool Sandbox Image section) for details."
+        fi
+
+        success "Tool sandbox image found: ${sandbox_image}"
         if [ -n "${sandbox_type}" ]; then
             info "Current TOOL_SANDBOX_TYPE: ${sandbox_type}"
         fi
