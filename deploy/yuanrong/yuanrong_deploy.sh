@@ -47,6 +47,18 @@ AGENTOS_SSH_BACKEND_PUBLIC_DIR="${AGENTOS_SSH_BACKEND_PUBLIC_DIR:-/root/.ssh/age
 # 必须用同一个前缀，否则 agent 加入时读不到 master 信息。两边共用此变量保证一致。
 YR_LOG_DIR_PREFIX="${YR_LOG_DIR_PREFIX:-/var/log/agentos/yr_sessions}"
 
+# ===== runtime 日志轮转与全局 LRU 淘汰 =====
+# runtime_log_rotate_enable：单文件超限后由 logrotate copytruncate 轮转，保留 max_files 份归档
+# log_expiration_enable：全局 LRU 淘汰（按 mtime 从旧到新删，受 log_expiration_max_file_count 预算约束）
+# log_expiration_max_file_count：全局日志文件数预算，超限后按 mtime 从旧到新淘汰（默认 512，5MB 上限时最坏约 2.5G）
+# log_expiration_cleanup_interval：日志扫描节拍（秒），同时驱动轮转与淘汰；默认 600s，调小可压低超限峰值
+RUNTIME_LOG_ROTATE_ENABLE="${RUNTIME_LOG_ROTATE_ENABLE:-true}"
+RUNTIME_LOG_ROTATE_MAX_SIZE_MB="${RUNTIME_LOG_ROTATE_MAX_SIZE_MB:-5}"
+RUNTIME_LOG_ROTATE_MAX_FILES="${RUNTIME_LOG_ROTATE_MAX_FILES:-4}"
+LOG_EXPIRATION_ENABLE="${LOG_EXPIRATION_ENABLE:-true}"
+LOG_EXPIRATION_MAX_FILE_COUNT="${LOG_EXPIRATION_MAX_FILE_COUNT:-512}"
+LOG_EXPIRATION_CLEANUP_INTERVAL="${LOG_EXPIRATION_CLEANUP_INTERVAL:-15}"
+
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # ===== 日志函数 =====
@@ -564,6 +576,12 @@ yr_start_master() {
         -s 'mode.master.frontend=true' \
         --function-proxy-merge-process-enable \
         -s 'frontend.args.enableEvent=true' \
+        -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \
+        -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \
+        -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \
+        -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \
         ${ssh_opts}" 2>&1 | tee "${startup_log}"
 
     if grep -q "All components are healthy" "${startup_log}" 2>/dev/null || \
@@ -614,7 +632,23 @@ yr_start_agent() {
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
     # --log-dir-prefix 与 master 端保持一致，会话/日志均落在 ${YR_LOG_DIR_PREFIX}
     # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程
-    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --log-dir-prefix '${YR_LOG_DIR_PREFIX}' -s 'values.host_ip=\"${agent_host}\"' --function-proxy-merge-process-enable ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
+    # SSH 直连参数与 master 端相同（简便模式混用同一套密钥）
+    local ssh_opts="-s 'values.frontend.ssh_enable=true' \
+        -s 'values.frontend.ssh_host_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_backend_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_authorized_keys=\"${AGENTOS_SSH_KEY}.pub\"' \
+        -s 'values.frontend.ssh_backend_public_key_dir=\"${AGENTOS_SSH_BACKEND_PUBLIC_DIR}\"'"
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start \
+        --log-dir-prefix '${YR_LOG_DIR_PREFIX}' \
+        -s 'values.host_ip=\"${agent_host}\"' \
+        --function-proxy-merge-process-enable \
+        -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \
+        -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \
+        -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \
+        -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \
+        ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
@@ -742,6 +776,12 @@ ExecStart=${yr_bin} start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'mode.master.frontend=true' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
+    -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \\
+    -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \\
+    -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \\
+    -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
@@ -780,6 +820,12 @@ ExecStart=${yr_bin} start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'mode.agent.frontend=true' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
+    -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \\
+    -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \\
+    -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \\
+    -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
