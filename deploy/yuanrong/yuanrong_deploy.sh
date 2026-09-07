@@ -47,6 +47,18 @@ AGENTOS_SSH_BACKEND_PUBLIC_DIR="${AGENTOS_SSH_BACKEND_PUBLIC_DIR:-/root/.ssh/age
 # 必须用同一个前缀，否则 agent 加入时读不到 master 信息。两边共用此变量保证一致。
 YR_LOG_DIR_PREFIX="${YR_LOG_DIR_PREFIX:-/var/log/agentos/yr_sessions}"
 
+# ===== runtime 日志轮转与全局 LRU 淘汰 =====
+# runtime_log_rotate_enable：单文件超限后由 logrotate copytruncate 轮转，保留 max_files 份归档
+# log_expiration_enable：全局 LRU 淘汰（按 mtime 从旧到新删，受 log_expiration_max_file_count 预算约束）
+# log_expiration_max_file_count：全局日志文件数预算，超限后按 mtime 从旧到新淘汰（默认 512，5MB 上限时最坏约 2.5G）
+# log_expiration_cleanup_interval：日志扫描节拍（秒），同时驱动轮转与淘汰；默认 600s，调小可压低超限峰值
+RUNTIME_LOG_ROTATE_ENABLE="${RUNTIME_LOG_ROTATE_ENABLE:-true}"
+RUNTIME_LOG_ROTATE_MAX_SIZE_MB="${RUNTIME_LOG_ROTATE_MAX_SIZE_MB:-5}"
+RUNTIME_LOG_ROTATE_MAX_FILES="${RUNTIME_LOG_ROTATE_MAX_FILES:-4}"
+LOG_EXPIRATION_ENABLE="${LOG_EXPIRATION_ENABLE:-true}"
+LOG_EXPIRATION_MAX_FILE_COUNT="${LOG_EXPIRATION_MAX_FILE_COUNT:-512}"
+LOG_EXPIRATION_CLEANUP_INTERVAL="${LOG_EXPIRATION_CLEANUP_INTERVAL:-15}"
+
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # ===== 日志函数 =====
@@ -564,6 +576,12 @@ yr_start_master() {
         -s 'mode.master.frontend=true' \
         --function-proxy-merge-process-enable \
         -s 'frontend.args.enableEvent=true' \
+        -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \
+        -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \
+        -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \
+        -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \
         ${ssh_opts}" 2>&1 | tee "${startup_log}"
 
     if grep -q "All components are healthy" "${startup_log}" 2>/dev/null || \
@@ -614,7 +632,23 @@ yr_start_agent() {
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
     # --log-dir-prefix 与 master 端保持一致，会话/日志均落在 ${YR_LOG_DIR_PREFIX}
     # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程
-    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --log-dir-prefix '${YR_LOG_DIR_PREFIX}' -s 'values.host_ip=\"${agent_host}\"' --function-proxy-merge-process-enable ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
+    # SSH 直连参数与 master 端相同（简便模式混用同一套密钥）
+    local ssh_opts="-s 'values.frontend.ssh_enable=true' \
+        -s 'values.frontend.ssh_host_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_backend_key=\"${AGENTOS_SSH_KEY}\"' \
+        -s 'values.frontend.ssh_authorized_keys=\"${AGENTOS_SSH_KEY}.pub\"' \
+        -s 'values.frontend.ssh_backend_public_key_dir=\"${AGENTOS_SSH_BACKEND_PUBLIC_DIR}\"'"
+    if exec_on_host "${agent_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start \
+        --log-dir-prefix '${YR_LOG_DIR_PREFIX}' \
+        -s 'values.host_ip=\"${agent_host}\"' \
+        --function-proxy-merge-process-enable \
+        -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \
+        -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \
+        -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \
+        -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \
+        -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \
+        ${ssh_opts} --master_address=http://${master_address}" 2>&1; then
         success "openyuanrong agent started on ${agent_host}"
     else
         error "Failed to start openyuanrong agent on ${agent_host}"
@@ -666,6 +700,27 @@ _yr_cfg() {
     "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
 }
 
+# ===== 清理 yuanrong 在 etcd 中残留的业务数据 =====
+# yr stop --force 是强制停止，不会优雅退出清理 etcd 数据。
+# 委托 deploy/etcd.sh clean-yr-data 按前缀删除，避免重复维护 etcdctl 定位逻辑。
+_yr_clean_etcd_data() {
+    local host="$1"
+    local etcd_sh="${SCRIPT_DIR}/../etcd.sh"
+
+    if [ ! -f "${etcd_sh}" ]; then
+        warning "etcd.sh not found at ${etcd_sh}, skipping etcd data cleanup"
+        return 0
+    fi
+
+    info "Cleaning yuanrong etcd data on ${host}..."
+    if is_local_host "${host}"; then
+        bash "${etcd_sh}" clean-yr-data || warning "etcd clean-yr-data failed on ${host}"
+    else
+        exec_on_host "${host}" "bash '${etcd_sh}' clean-yr-data" \
+            || warning "etcd clean-yr-data failed on ${host}"
+    fi
+}
+
 # ===== 定位 yr 入口脚本绝对路径 =====
 # systemd 默认 PATH 仅 /usr/bin:/usr/sbin；pip 装的 yr 入口点可能落在
 # /usr/bin（系统 Python）、/usr/local/bin（源码 Python）或 ~/.local/bin
@@ -691,11 +746,14 @@ _yr_resolve_yr_path() {
 # etcd unit 由 deploy/etcd.sh 独立管理，此处只生成 executor unit；
 # executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 YR_ETCD_SVC）。
 _yr_generate_executor_unit() {
-    local host_ip etcd_addr_list yr_bin py_bindir
+    local host_ip etcd_addr_list yr_bin py_bindir yr_ds_lib
     host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
     etcd_addr_list=$(_yr_cfg etcd-address-list) || error "Failed to build etcd address list"
     yr_bin=$(_yr_resolve_yr_path)
     py_bindir=$(dirname "${yr_bin}")
+    # yr 自带 datasystem/lib，解析失败兜底到 py_bindir/lib
+    yr_ds_lib=$("$(_yr_python)" -c 'import yr,os;print(os.path.join(os.path.dirname(yr.__file__),"datasystem","lib"))' 2>/dev/null | tr -d '\r')
+    [ -d "${yr_ds_lib}" ] || yr_ds_lib="${py_bindir}/lib"
 
     if _yr_cfg is-master-node; then
         info "executor unit: master variant (host_ip=${host_ip})"
@@ -718,6 +776,12 @@ ExecStart=${yr_bin} start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'mode.master.frontend=true' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
+    -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \\
+    -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \\
+    -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \\
+    -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
@@ -756,6 +820,12 @@ ExecStart=${yr_bin} start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'mode.agent.frontend=true' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
+    -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_size_mb=${RUNTIME_LOG_ROTATE_MAX_SIZE_MB}' \\
+    -s 'function_proxy.args.runtime_log_rotate_max_files=${RUNTIME_LOG_ROTATE_MAX_FILES}' \\
+    -s 'function_proxy.args.log_expiration_enable=${LOG_EXPIRATION_ENABLE}' \\
+    -s 'function_proxy.args.log_expiration_max_file_count=${LOG_EXPIRATION_MAX_FILE_COUNT}' \\
+    -s 'function_proxy.args.log_expiration_cleanup_interval=${LOG_EXPIRATION_CLEANUP_INTERVAL}' \\
     -s 'values.frontend.ssh_enable=true' \\
     -s 'values.frontend.ssh_host_key="${AGENTOS_SSH_KEY}"' \\
     -s 'values.frontend.ssh_backend_key="${AGENTOS_SSH_KEY}"' \\
@@ -775,11 +845,12 @@ EOF
     fi
 
     # drop-in: PATH/LD_LIBRARY_PATH（systemd 默认 PATH 不含 /usr/local/bin）
+    # yr_ds_lib 置最前，避免被主机 /lib64 同名库遮蔽（yr 启动器会把自带 lib 追加到末尾）
     mkdir -p "${YR_EXECUTOR_DROPIN_DIR}"
     cat > "${YR_EXECUTOR_DROPIN}" <<EOF
 [Service]
 Environment=PATH=${py_bindir}:${PATH}
-Environment=LD_LIBRARY_PATH=${py_bindir}/lib:${LD_LIBRARY_PATH:-}
+Environment=LD_LIBRARY_PATH=${yr_ds_lib}:${py_bindir}/lib:${LD_LIBRARY_PATH:-}
 EOF
 }
 
@@ -810,10 +881,14 @@ deploy_yr_up_systemd() {
 
 # ===== systemd down: 只停服务，不删 unit 文件（删文件留给 uninstall） =====
 # etcd 停止已拆到 deploy/etcd.sh down，此处不再触碰 etcd
+# yr stop --force 不会清理 etcd 业务数据，down 后按前缀清理残留 key
 deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
     systemctl stop "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+
+    # 清理 yuanrong 在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
+    _yr_clean_etcd_data "$(get_local_ip)"
 
     success "yuanrong executor stopped"
 }

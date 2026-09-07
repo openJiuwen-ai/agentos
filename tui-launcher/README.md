@@ -86,7 +86,7 @@ agentos-tui
 
 ## 4 `/switch-claude` 切换流程
 
-在 TUI 中输入 `/switch-claude` 指令，launcher 会自动建立 SSH 隧道连接到对应的 Agent 服务器。退出三方 Agent 时，输入 `exit` 或按 `Ctrl+D` 断开 SSH 连接，即可返回 TUI。
+在 TUI 中输入 `/switch-claude` 指令，launcher 会自动建立 SSH 隧道连接到对应的 Agent 服务器。退出三方 Agent 时，输入 `exit` 、按 `Ctrl+D` 或 `Ctrl+C` 断开 SSH 连接，即可返回 TUI。
 
 ---
 

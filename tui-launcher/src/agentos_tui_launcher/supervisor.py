@@ -24,6 +24,7 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -63,6 +64,16 @@ if sys.platform == "win32":
         "LPSECURITY_ATTRIBUTES",
         ctypes.c_void_p,
     )
+
+# 匹配 DEC 私有模式集/复位序列（\x1b[?数字 h 或 l），
+# 范围 1000-1099，这些是鼠标追踪相关的 VT 序列。
+# TUI 写入这些序列到 ConPTY 以启用鼠标交互，但 launcher 将
+# ConPTY 输出原样转发到真实控制台时，真实控制台也会处理这些
+# 序列并启用 ENABLE_MOUSE_INPUT，导致鼠标点击被截获为 TUI 的
+# 输入事件，而非用于 QuickEdit 文本选择。
+# 我们在转发到真实控制台前过滤掉这些序列，保留真实控制台的
+# QuickEdit 文本选中能力。
+_MOUSE_TRACKING_RE = re.compile(b"\x1b\\[\\?10\\d{2}[hl]")
 
 
 # ============================================================================
@@ -951,19 +962,21 @@ class SubprocessRunner:
                     data = output_queue.get()
                     if data is None:
                         break
-                    try:
-                        stdout_buffer.write(data)
-                        stdout_buffer.flush()
-                    except OSError:
-                        break
+                    # 过滤掉鼠标追踪 VT 序列，防止真实控制台启用
+                    # ENABLE_MOUSE_INPUT 导致 QuickEdit 文本选中失效。
+                    # TUI 在 ConPTY 内仍可正常使用鼠标交互。
+                    data = _MOUSE_TRACKING_RE.sub(b"", data)
+                    if data:
+                        try:
+                            stdout_buffer.write(data)
+                            stdout_buffer.flush()
+                        except OSError:
+                            break
             except Exception as exc:
                 _logger.debug("ConPTY console writer stopped: %s", exc)
 
         def _input_forwarder() -> None:
             """后台线程：从 stdin 读取并转发到 ConPTY 输入管道。
-
-            Windows 控制台输入编码为活动代码页（如 936/GBK），
-            而 ConPTY 中的 TUI 期望 UTF-8，需做编码转换。
 
             **关键**：
             1. 必须用 DuplicateHandle 复制 stdin 句柄再创建 fd。

@@ -75,11 +75,48 @@ _yr_etcd_bin_path() {
     return 1
 }
 
+# ===== 定位 etcdctl 二进制 =====
+# 优先 PATH 中的 etcdctl；否则从 _yr_etcd_bin_path 结果的同目录查找；回退 yr 包内 third_party。
+_yr_etcdctl_path() {
+    local etcd_bin etcdctl_path yr_pkg
+
+    if command -v etcdctl >/dev/null 2>&1; then
+        echo "etcdctl"
+        return 0
+    fi
+
+    etcd_bin=$(_yr_etcd_bin_path 2>/dev/null) || true
+    if [ -n "${etcd_bin}" ]; then
+        etcdctl_path="${etcd_bin%/*}/etcdctl"
+        if [ -x "${etcdctl_path}" ]; then
+            echo "${etcdctl_path}"
+            return 0
+        fi
+    fi
+
+    yr_pkg=$("$(_yr_python)" -c "import yr, os; print(os.path.dirname(yr.__file__))" 2>/dev/null)
+    if [ -n "${yr_pkg}" ] && [ -x "${yr_pkg}/third_party/etcd/etcdctl" ]; then
+        echo "${yr_pkg}/third_party/etcd/etcdctl"
+        return 0
+    fi
+
+    return 1
+}
+
+# ===== yuanrong 在 etcd 中写入的业务数据前缀 =====
+# yr stop --force 不会优雅退出清理 etcd 数据，down 后按前缀删除避免残留。
+# 不动 etcd 自身集群元数据（member/ 等），仅清业务层数据。
+YR_ETCD_DATA_PREFIXES=("/datasystem/" "/scheduler/" "/sn/" "/yr/")
+
 # ===== 生成 etcd unit（仅 etcd_nodes 节点调用） =====
 # advertise IP 必须用本机在 etcd_nodes 中匹配到的 config IP（通配匹配时用通配 IP 本身），
 # 不能用 get_local_ip 的真实 IP，否则 advertise 地址与 initial-cluster 不一致导致 bootstrap 失败。
+# --initial-cluster-state 动态选择：
+#   - 数据目录有 member/ 子目录 → existing（从 WAL 恢复，平滑重启）
+#   - 数据目录为空 → new（全新 bootstrap）
+# etcd 3.5 实测：有数据时即使写 new 也会自动检测并从 WAL 恢复，但写 existing 语义更明确。
 _yr_generate_etcd_unit() {
-    local etcd_bin node_name initial_cluster advertise_ip
+    local etcd_bin node_name initial_cluster advertise_ip cluster_state
     etcd_bin=$(_yr_etcd_bin_path) \
         || error "Cannot locate yr built-in etcd binary (yr config dump / third_party/etcd/etcd)"
     node_name=$(_yr_cfg etcd-name) || error "Failed to derive etcd node name"
@@ -87,7 +124,14 @@ _yr_generate_etcd_unit() {
     advertise_ip=$(_yr_cfg etcd-advertise-ip) \
         || error "Failed to derive etcd advertise IP"
 
-    info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}"
+    # 有 member/ 子目录说明已有 etcd 数据，用 existing 状态恢复；否则用 new 全新启动
+    if [ -d "${YR_ETCD_DATA_DIR}/member" ]; then
+        cluster_state="existing"
+        info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}, state=existing (data preserved)"
+    else
+        cluster_state="new"
+        info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}, state=new (clean bootstrap)"
+    fi
 
     cat > "${YR_ETCD_UNIT}" <<EOF
 [Unit]
@@ -115,7 +159,7 @@ ExecStart=${etcd_bin} \\
     --listen-peer-urls http://0.0.0.0:32380 \\
     --initial-advertise-peer-urls http://${advertise_ip}:32380 \\
     --initial-cluster ${initial_cluster} \\
-    --initial-cluster-state new \\
+    --initial-cluster-state ${cluster_state} \\
     --initial-cluster-token etcd-cluster-1
 Restart=on-failure
 RestartSec=5s
@@ -128,10 +172,9 @@ EOF
 }
 
 # ===== up: 角色推导 → 生成 unit → enable --now → 健康检查 =====
-# 历史数据问题由 down 自动清理保证（参考 yr stop 的行为）：
-#   - etcd.sh down 自动清 /var/lib/agentos/etcd 数据
-#   - agentos.sh init 在 up 前先 clean --yes
-# 因此 up 不再做配置一致性检查，避免交互打断部署流程。
+# 平滑升级：up 保留已有 etcd 数据，根据数据目录是否存在 member/ 自动选择
+# --initial-cluster-state（new/existing），实现不删数据的平滑重启。
+# 彻底清理数据需显式执行 ./etcd.sh clean。
 etcd_up() {
     [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
     _yr_has_systemd || error "systemd not available; etcd.sh requires systemd"
@@ -160,7 +203,7 @@ etcd_up() {
 
 # ===== down: disable → 删除 unit（保留 /var/lib/agentos/etcd 数据） =====
 # down 只停服务、删 unit，保留数据，便于 restart 反复使用。
-# 清数据走 init（自动 clean）或 ./etcd.sh clean（手动）。
+# 清数据仅由显式 ./etcd.sh clean 完成。
 etcd_down() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
@@ -171,21 +214,19 @@ etcd_down() {
     success "${YR_ETCD_SVC} down (data preserved at ${YR_ETCD_DATA_DIR})"
 }
 
-# ===== clean: 清理 etcd 数据（默认直接清理，无需交互确认） =====
-# 对齐 yr start 的语义：yr start 默认每次用全新 timestamped deploy_path，
-# etcd 数据目录天然是空的，所以从不需要担心历史数据。
-# agentos 用固定 /var/lib/agentos/etcd，没有时间戳隔离，故 clean 提供等价效果：
-# 清空数据目录，下次 up 即视为干净 bootstrap。
-# 默认 yes 直接清理；-y/--yes 为兼容别名（无实际作用）。
+# ===== clean: 清理 etcd 数据（显式操作，需交互确认） =====
+# 平滑升级场景下 up 保留数据，clean 仅在需要彻底重置 etcd 时显式调用。
+# 例如：etcd 拓扑变更（增减节点）、数据损坏修复、全新 bootstrap。
+# 清空数据目录后，下次 up 会以 --initial-cluster-state new 全新启动。
 etcd_clean() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            -y|--yes) shift ;;  # 兼容别名，默认就是 yes
+            -y|--yes) shift ;;  # 跳过交互确认
             -h|--help)
                 cat << EOF
 Usage: ./$(basename "$0") clean [-y|--yes]
-  默认直接清理 /var/lib/agentos/etcd 数据，无交互确认（对齐 yr start 行为）
-  -y, --yes  兼容别名，无实际作用（默认即 yes）
+  清理 /var/lib/agentos/etcd 数据，清空后下次 up 以全新 bootstrap 启动
+  -y, --yes  跳过交互确认直接清理
 EOF
                 return 0
                 ;;
@@ -198,9 +239,55 @@ EOF
         return 0
     fi
 
+    # 交互确认（-y/--yes 跳过）
+    info "WARNING: This will DELETE all etcd data at ${YR_ETCD_DATA_DIR}"
+    info "This is needed only for: topology change, data corruption, or fresh re-bootstrap."
+    info "For smooth restart, use 'down' + 'up' (data preserved)."
+    local confirm
+    read -r -p "Type 'yes' to confirm deletion: " confirm
+    if [ "${confirm}" != "yes" ]; then
+        warning "Aborted, etcd data preserved"
+        return 0
+    fi
+
     info "Cleaning etcd data directory: ${YR_ETCD_DATA_DIR}"
     rm -rf "${YR_ETCD_DATA_DIR:?}"/*
     success "etcd data cleaned: ${YR_ETCD_DATA_DIR}"
+}
+
+# ===== clean-yr-data: 清理 yuanrong 在 etcd 中残留的业务数据 =====
+# yr stop --force 是强制停止，不会优雅退出清理 etcd 业务数据。
+# 按前缀删除 /datasystem/、/scheduler/、/sn/、/yr/ 开头的 key，
+# 避免下次 up 时读到旧拓扑/旧实例路由导致路由失败。
+# 不动 etcd 自身集群元数据（member/ 等），仅清业务层数据。
+# etcd 服务必须正在运行（本命令不启停 etcd）。
+etcd_clean_yr_data() {
+    local etcdctl endpoints node prefix
+
+    etcdctl=$(_yr_etcdctl_path) \
+        || error "Cannot locate etcdctl binary (tried: PATH, yr config dump, yr third_party)"
+
+    # 从 config 读取 etcd 节点列表，构造 endpoints
+    local nodes
+    nodes=$(_yr_cfg etcd-nodes) || error "Failed to read etcd_nodes from config"
+    [ -n "${nodes}" ] || error "etcd_nodes is empty in config"
+
+    endpoints=""
+    for node in ${nodes}; do
+        if [ -n "${endpoints}" ]; then
+            endpoints="${endpoints},"
+        fi
+        endpoints="${endpoints}http://${node}:${YR_ETCD_CLIENT_PORT}"
+    done
+
+    info "Cleaning yuanrong etcd data (endpoints: ${endpoints})..."
+    for prefix in "${YR_ETCD_DATA_PREFIXES[@]}"; do
+        local deleted
+        deleted=$(ETCDCTL_API=3 "${etcdctl}" --endpoints="${endpoints}" del "${prefix}" --prefix 2>/dev/null) \
+            && info "  cleaned prefix: ${prefix} (${deleted} keys)" \
+            || warning "  failed to clean prefix: ${prefix} (may not exist)"
+    done
+    success "yuanrong etcd data cleaned"
 }
 
 # ===== check: 探测 etcd 集群是否可达（供 agentos.sh up 前置检查调用） =====
@@ -297,25 +384,32 @@ agentos-etcd 独立启停脚本，从 yuanrong/module.sh 的 etcd 逻辑中拆�
   - etcd 二进制路径从 yr config dump 探测，回退 yr 包内 third_party/etcd/etcd
 
 Commands:
-  up      生成并启动 agentos-etcd.service（非 etcd 节点跳过）
-          历史数据由 init 自动清理（clean + up），up 不做一致性检查
-  down    停止并删除 agentos-etcd.service（保留 /var/lib/agentos/etcd 数据）
-          便于 restart 反复使用；清数据走 init 或 clean
-  check   探测 etcd 集群是否可达（TCP 连通任一 etcd_node 的 client port 即通过）
-          供 agentos.sh up 前置检查调用；可达返回 0，全部不可达返回 1
-  status  查询本机 etcd 服务状态（供 agentos.sh status 委托调用）
-  clean   清理 etcd 数据目录（默认直接清理，无交互确认）
-          对齐 yr start 语义：每次 bootstrap 视为干净启动
-          适用场景：不执行 down 就地重新 bootstrap；agentos.sh init 自动调用
+  up              生成并启动 agentos-etcd.service（非 etcd 节点跳过）
+                  保留已有数据，自动选择 --initial-cluster-state（有数据用 existing，无数据用 new）
+  down            停止并删除 agentos-etcd.service（保留 /var/lib/agentos/etcd 数据）
+                  便于 restart 反复使用；清数据仅由显式 clean 完成
+  check           探测 etcd 集群是否可达（TCP 连通任一 etcd_node 的 client port 即通过）
+                  供 agentos.sh up 前置检查调用；可达返回 0，全部不可达返回 1
+  status          查询本机 etcd 服务状态（供 agentos.sh status 委托调用）
+  clean           清理 etcd 数据目录（交互确认，-y/--yes 跳过确认）
+                  适用场景：etcd 拓扑变更、数据损坏修复、全新 re-bootstrap
+                  平滑重启不需 clean，down + up 即可保留数据恢复
+  clean-yr-data   清理 yuanrong 在 etcd 中残留的业务数据（按前缀删除）
+                  删除 /datasystem/、/scheduler/、/sn/、/yr/ 开头的 key
+                  etcd 服务必须正在运行；不影响 etcd 集群元数据
 
 Environment:
   YR_PYTHON_VERSION          Python 版本（默认 3.11）
   YR_HEALTH_CHECK_RETRIES    up 健康检查重试次数（默认 30，每次 1s）
 
 Examples:
-  # 修改 config.yaml 中的 etcd_nodes 后，清理数据并重新启动
+  # 平滑重启（保留数据）
   ./etcd.sh down
-  ./etcd.sh clean
+  ./etcd.sh up
+
+  # 修改 config.yaml 中的 etcd_nodes 后，需清理数据重新 bootstrap
+  ./etcd.sh down
+  ./etcd.sh clean -y
   ./etcd.sh up
 EOF
     exit 0
@@ -329,13 +423,14 @@ main() {
     local cmd="$1"
     shift
     case "${cmd}" in
-        up)        etcd_up "$@" ;;
-        down)      etcd_down "$@" ;;
-        check)     etcd_check "$@" ;;
-        status)    etcd_status "$@" ;;
-        clean)     etcd_clean "$@" ;;
-        -h|--help) print_help ;;
-        *)         error "Unknown command: ${cmd} (use 'up', 'down', 'check', 'status', or 'clean')" ;;
+        up)            etcd_up "$@" ;;
+        down)          etcd_down "$@" ;;
+        check)         etcd_check "$@" ;;
+        status)        etcd_status "$@" ;;
+        clean)         etcd_clean "$@" ;;
+        clean-yr-data) etcd_clean_yr_data "$@" ;;
+        -h|--help)     print_help ;;
+        *)             error "Unknown command: ${cmd} (use 'up', 'down', 'check', 'status', 'clean', or 'clean-yr-data')" ;;
     esac
 }
 

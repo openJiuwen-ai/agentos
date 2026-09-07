@@ -20,7 +20,8 @@ REMOTE_STAGE="${JIUWENBOX_REMOTE_STAGE:-/tmp/agentos_jiuwenbox}"
 POLICY_TEMPLATE="${SCRIPT_DIR}/default-policy.yaml"
 
 RUN_DIR="${JIUWENBOX_RUN_DIR:-/tmp/jiuwenbox}"
-LOG_FILE="${RUN_DIR}/jiuwenbox.log"
+LOG_DIR="${JIUWENBOX_LOG_DIR:-/var/log/agentos}"
+LOG_FILE="${LOG_DIR}/jiuwenbox.log"
 DEFAULT_LISTEN="unix:///run/jiuwenbox/jiuwenbox.sock"
 LISTEN_URI="${JIUWENBOX_LISTEN:-$DEFAULT_LISTEN}"
 UDS_MODE="${JIUWENBOX_UDS_MODE:-}"
@@ -41,10 +42,12 @@ JIUWENBOX_DROPIN="${JIUWENBOX_DROPIN_DIR}/env.conf"
 JIUWENBOX_STATE_DIR="${JIUWENBOX_STATE_DIR:-/var/lib/jiuwenbox}"
 
 # ===== 日志 =====
+# warning/error 走 stderr：resolve_extensions_dir 等会在 $(...) 里调用，
+# 写 stdout 会被吃掉，表现为静默退出。
 info()    { echo -e "\033[36m=== $* ===\033[0m"; }
 success() { echo -e "\033[32m✅ $*\033[0m"; }
-warning() { echo -e "\033[33m⚠️  $*\033[0m"; }
-error()   { echo -e "\033[31m❌ $*\033[0m"; exit 1; }
+warning() { echo -e "\033[33m⚠️  $*\033[0m" >&2; }
+error()   { echo -e "\033[31m❌ $*\033[0m" >&2; exit 1; }
 
 print_help() {
   cat <<EOF
@@ -64,7 +67,7 @@ Options:
   -h, --help      显示帮助
 
 Environment:
-  JIUWENBOX_RUN_DIR / JIUWENBOX_LISTEN / JIUWENBOX_READY_TIMEOUT
+  JIUWENBOX_RUN_DIR / JIUWENBOX_LOG_DIR / JIUWENBOX_LISTEN / JIUWENBOX_READY_TIMEOUT
   JIUWENBOX_UDS_MODE / JIUWENBOX_SAVE_LOGS_DIR / JIUWENBOX_LOG_LEVEL
 
 Notes:
@@ -148,6 +151,22 @@ python_bin() {
   echo "${PYTHON_CONFIG:-python3}"
 }
 
+# 确认 --python / 默认 python3 存在且 >= 3.11。必须在任何 $(python ...) 之前调用，
+# 否则 set -e 下命令替换失败会静默退出。
+require_python() {
+  local py ver
+  py="$(python_bin)"
+  if ! command -v "$py" >/dev/null 2>&1; then
+    error "python interpreter not found: ${py} (need python >= 3.11). Pass --python PATH, e.g. --python python3.11"
+  fi
+  if ! ver="$("$py" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"; then
+    error "failed to execute python interpreter: ${py}"
+  fi
+  if ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    error "python >= 3.11 required at ${py} (got ${ver})"
+  fi
+}
+
 # ===== 本机进程 / UDS =====
 is_running_pid() {
   local pid="$1"
@@ -193,6 +212,7 @@ remove_stale_uds_socket() {
 # ===== policy / 前置检查 =====
 resolve_extensions_dir() {
   local py pip_cmd location ext_dir
+  require_python
   py="$(python_bin)"
   pip_cmd="${py} -m pip"
   location="$(${pip_cmd} show jiuwenswarm 2>/dev/null | awk '/^Location:/{print $2}')" || true
@@ -280,9 +300,8 @@ check_iptables_backend() {
 }
 
 check_prerequisites() {
-  local py missing=() cmd
-  py="$(python_bin)"
-  command -v "$py" >/dev/null 2>&1 || error "python interpreter not found: $py"
+  local missing=() cmd
+  require_python
   command -v jiuwenbox-server >/dev/null 2>&1 \
     || error "jiuwenbox-server not found in PATH; install jiuwenswarm first"
   command -v jiuwenbox >/dev/null 2>&1 \
@@ -301,9 +320,6 @@ check_prerequisites() {
   if policy_needs_iptables "${POLICY_ABS:-}"; then
     check_iptables_backend filter
     check_iptables_backend nat
-  fi
-  if ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
-    error "python >= 3.11 required at $py"
   fi
 }
 
@@ -349,11 +365,13 @@ _jiuwenbox_has_systemd() {
 
 # 生成 unit + drop-in 并 enable --now。调用方已完成 policy / 目录 / 前置检查。
 _jiuwenbox_start_systemd() {
-  local server_bin py py_bindir py_libdir log_level exec_start pid
+  local server_bin py py_path py_bindir py_libdir log_level exec_start pid
   local mkdir_bin pre_dirs systemd_ver log_lines
   server_bin="$(command -v jiuwenbox-server)" || error "jiuwenbox-server not found"
+  require_python
   py="$(python_bin)"
-  py_bindir="$(dirname "$(command -v "${py}")")"
+  py_path="$(command -v "${py}")" || error "python interpreter not found: ${py}"
+  py_bindir="$(dirname "${py_path}")"
   py_libdir="${py_bindir}/lib"
   log_level="${JIUWENBOX_LOG_LEVEL:-info}"
   exec_start="${server_bin} --log-level ${log_level}"
@@ -361,7 +379,7 @@ _jiuwenbox_start_systemd() {
 
   # 开机自启动时 /tmp、/run 已被清空，需在 ExecStart 前重建日志目录与 UDS 目录
   mkdir_bin="$(command -v mkdir)" || error "mkdir not found"
-  pre_dirs="${RUN_DIR}"
+  pre_dirs="${RUN_DIR} ${LOG_DIR}"
   if [[ "${LISTEN_MODE:-}" = "uds" && -n "${LISTEN_SOCKET_PATH:-}" ]]; then
     pre_dirs="${pre_dirs} $(dirname "${LISTEN_SOCKET_PATH}")"
   fi
@@ -496,6 +514,7 @@ start_on_this_host() {
     error "Existing jiuwenbox detected (pid ${existing_pid}). Please run 'down' first, then retry 'up'."
   fi
 
+  require_python
   ext_dir="$(resolve_extensions_dir)"
   info "jiuwenswarm extensions dir: ${ext_dir}"
   policy_file="$(generate_policy "${ext_dir}")"
@@ -514,7 +533,7 @@ start_on_this_host() {
   check_prerequisites
   parse_listen_uri "$LISTEN_URI"
   remove_stale_uds_socket
-  mkdir -p "$RUN_DIR"
+  mkdir -p "$RUN_DIR" "$LOG_DIR"
   if [[ "$LISTEN_MODE" = "uds" ]]; then
     mkdir -p "$(dirname "$LISTEN_SOCKET_PATH")"
   fi
@@ -602,7 +621,7 @@ jiuwenbox_run_on_host() {
     up|down|uninstall)
       # 对端跑公开命令；默认 CLUSTER_HOSTS=对端本机 IP，只会走本机分支
       exec_on_host "${host}" \
-        "JIUWENBOX_RUN_DIR='${RUN_DIR}' JIUWENBOX_LISTEN='${LISTEN_URI}' bash '${remote_script}' --python '${py}' ${sub}"
+        "JIUWENBOX_RUN_DIR='${RUN_DIR}' JIUWENBOX_LOG_DIR='${LOG_DIR}' JIUWENBOX_LISTEN='${LISTEN_URI}' bash '${remote_script}' --python '${py}' ${sub}"
       ;;
     *)
       error "unknown host sub: ${sub}"
@@ -655,6 +674,7 @@ deploy_jiuwenbox_up() {
   info "Deploying jiuwenbox"
   info "Hosts: ${hosts_str}"
   info "Python: $(python_bin)"
+  require_python
 
   info "Checking connectivity..."
   for host in "${JIUWENBOX_HOST_LIST[@]}"; do

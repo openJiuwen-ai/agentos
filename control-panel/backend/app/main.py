@@ -79,6 +79,12 @@ async def lifespan(fastapi_app: FastAPI):
     # 4.6 初始化管理员（建用户 + 同步 LiteLLM + 申请 Key + 建目录 + 写 config）
     await backend.seed_initial_admin()
 
+    # 4.7 启动时全量重建所有用户的 agentos config（自愈；阻塞同步，保证启动即一致）
+    # 复用模型变更后的同一套重建逻辑；无默认 Key 的用户会自动补建 Key。
+    from app.services.local_users.backend import _sync_all_users_agentos
+
+    await _sync_all_users_agentos()
+
     # 5. Hardware monitoring service
     from app.services.hardware_service import HardwareService
 

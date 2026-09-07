@@ -433,7 +433,7 @@ EOF
 * / rw,maproot=0:0
 EOF
 
-    # 7. 生成 chunkserver 配置文件
+    # 8. 生成 chunkserver 配置文件
     info "Generating mfschunkserver.cfg in ${mfs_conf_dir}..."
     cat > "${mfs_conf_dir}/mfschunkserver.cfg" <<EOF
 # MooseFS Chunkserver configuration
@@ -461,7 +461,7 @@ EOF
         chmod 0640 "${mfs_conf_dir}"/*.cfg
     fi
 
-    # 8. 初始化 metadata 目录（uninstall 清空了内容但保留目录）
+    # 9. 初始化 metadata 目录（uninstall 清空了内容但保留目录）
     local mfs_data_dir="/var/lib/mfs"
     mkdir -p "${mfs_data_dir}"
     if id mfs >/dev/null 2>&1; then
@@ -469,14 +469,14 @@ EOF
     fi
     success "MooseFS configuration files generated"
 
-    # 9. 判断角色
+    # 10. 判断角色
     local is_master=false
     if _mfs_is_master; then
         is_master=true
     fi
     info "Node role: $([ "${is_master}" = "true" ] && echo "master" || echo "agent")"
 
-    # 10. 生成 systemd unit 文件
+    # 11. 生成 systemd unit 文件
     if _mfs_should_use_systemd; then
         info "systemd detected, generating unit files..."
 
@@ -488,12 +488,22 @@ EOF
 [Unit]
 Description=MooseFS Master Server
 After=network.target
+# 配合 client 的 PartOf 实现 stop 传播、start 拉起
+Wants=moosefs-client.service
+# StartLimit* 只在 [Unit] 段生效
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=forking
-ExecStart=${MFS_BIN_MASTER} start
+# SIGKILL 后 metadata.mfs 可能来不及 rename，失败时用 -a 从 changelog 恢复
+ExecStart=/bin/bash -c '${MFS_BIN_MASTER} start || ${MFS_BIN_MASTER} -a start'
 ExecStop=${MFS_BIN_MASTER} stop
-Restart=on-failure
+# Restart=always: SIGTERM 也会导致 master 退出（status=0），
+# on-failure 不会重启正常退出的进程，用 always 确保任何异常退出都重启。
+# systemctl stop 不会触发 Restart（systemd 明确区分 stop 和 crash）。
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
@@ -519,12 +529,20 @@ EOF
 Description=MooseFS Client Mount
 After=network.target moosefs-master.service moosefs-chunkserver.service
 Requires=moosefs-master.service
+PartOf=moosefs-master.service
+# burst=999: master 长时间不就绪时持续重试挂载
+StartLimitIntervalSec=120
+StartLimitBurst=999
 
 [Service]
-Type=oneshot
-ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT}
-ExecStop=/bin/umount ${MFS_MOUNT_POINT}
-RemainAfterExit=yes
+# mfsmount -f 前台运行，systemd 直接管理进程
+Type=simple
+# 清理 SIGKILL 残留的 dead 挂载（ENOTCONN 会导致 mount 失败循环）；- 使未挂载时不报错
+ExecStartPre=-/bin/umount -l ${MFS_MOUNT_POINT}
+ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o nonempty
+ExecStop=/bin/umount -l ${MFS_MOUNT_POINT}
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -551,17 +569,49 @@ EOF
 [Unit]
 Description=MooseFS Client Mount
 After=network.target moosefs-chunkserver.service
+# burst=999: master 长时间不就绪时持续重试挂载
+StartLimitIntervalSec=120
+StartLimitBurst=999
 
 [Service]
-Type=oneshot
-ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT}
-ExecStop=/bin/umount ${MFS_MOUNT_POINT}
-RemainAfterExit=yes
+Type=simple
+# 清理 SIGKILL 残留的 dead 挂载（ENOTCONN 会导致 mount 失败循环）
+ExecStartPre=-/bin/umount -l ${MFS_MOUNT_POINT}
+ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o nonempty
+ExecStop=/bin/umount -l ${MFS_MOUNT_POINT}
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
         fi
+
+        # 健康检查 timer：mfsmount 进程可能存活但挂载 stale（FUSE 操作 hang），定期探测并自动 remount
+        cat > "${systemd_dir}/moosefs-client-health.service" <<EOF
+[Unit]
+Description=MooseFS Client Mount Health Check
+
+[Service]
+Type=oneshot
+TimeoutSec=10
+# findmnt 校验 mfs# 挂载源（防降级为本地目录时误判健康）+ stat 探测响应（stale 会 hang），
+# 任一失败则重启 client 触发 remount
+ExecStart=/bin/bash -c 'findmnt -n -o SOURCE ${MFS_MOUNT_POINT} | grep -q "^mfs#" && timeout 10 stat ${MFS_MOUNT_POINT}/. >/dev/null 2>&1 || systemctl restart moosefs-client'
+EOF
+
+        cat > "${systemd_dir}/moosefs-client-health.timer" <<EOF
+[Unit]
+Description=Periodic MooseFS Client Mount Health Check
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+Unit=moosefs-client-health.service
+
+[Install]
+WantedBy=timers.target
+EOF
 
         systemctl daemon-reload
         success "systemd unit files generated"
@@ -671,6 +721,14 @@ deploy_mfs_up() {
 
         info "Starting MooseFS via systemd (enable --now)"
 
+        # 清理可能的残留挂载（仅在未挂载时清理，避免重复 up 中断使用中的挂载）
+        if ! grep -q "[[:space:]]${MFS_MOUNT_POINT}[[:space:]]" /proc/mounts 2>/dev/null; then
+            umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
+            if [ -d "${MFS_MOUNT_POINT}" ] && [ -n "$(ls -A ${MFS_MOUNT_POINT} 2>/dev/null)" ]; then
+                warning "挂载点 ${MFS_MOUNT_POINT} 非空，可能存在残留文件。将以 -o nonempty 模式挂载。"
+            fi
+        fi
+
         local is_master=false
         if _mfs_is_master; then
             is_master=true
@@ -701,10 +759,14 @@ deploy_mfs_up() {
             systemctl enable --now moosefs-chunkserver || warning "Failed to start moosefs-chunkserver"
 
             info "Enabling and starting moosefs-client..."
-            systemctl enable --now moosefs-client 2>/dev/null || {
-                warning "moosefs-client.service failed, trying direct mfsmount..."
-                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || error "Direct mfsmount also failed"
-            }
+            # 不 fallback 到直接 mfsmount：不受 systemd 管理，health timer 无法恢复
+            if ! systemctl enable --now moosefs-client 2>/dev/null; then
+                sleep 5
+                systemctl start moosefs-client || error "Failed to start moosefs-client (run 'install' first if unit missing; check: journalctl -u moosefs-client -n 50)"
+            fi
+
+            # 启用健康检查 timer（检测 stale 挂载并自动 remount）
+            systemctl enable --now moosefs-client-health.timer 2>/dev/null || warning "Failed to enable moosefs-client-health.timer"
 
             info "Setting goal=${MFS_GOAL} on ${MFS_MOUNT_POINT}..."
             ${MFS_BIN_SETGOAL} -r ${MFS_GOAL} ${MFS_MOUNT_POINT} 2>/dev/null || warning "Failed to set goal on ${MFS_MOUNT_POINT}"
@@ -728,10 +790,14 @@ deploy_mfs_up() {
             systemctl enable --now moosefs-chunkserver || warning "Failed to start moosefs-chunkserver"
 
             info "Enabling and starting moosefs-client..."
-            systemctl enable --now moosefs-client 2>/dev/null || {
-                warning "moosefs-client.service failed, trying direct mfsmount..."
-                ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} || error "Direct mfsmount also failed"
-            }
+            # 不 fallback 到直接 mfsmount：不受 systemd 管理，health timer 无法恢复
+            if ! systemctl enable --now moosefs-client 2>/dev/null; then
+                sleep 5
+                systemctl start moosefs-client || error "Failed to start moosefs-client (run 'install' first if unit missing; check: journalctl -u moosefs-client -n 50)"
+            fi
+
+            # 启用健康检查 timer（检测 stale 挂载并自动 remount）
+            systemctl enable --now moosefs-client-health.timer 2>/dev/null || warning "Failed to enable moosefs-client-health.timer"
         fi
 
         success "MooseFS systemd up completed!"
@@ -813,8 +879,10 @@ deploy_mfs_down() {
         # SSH 到所有节点执行 umount + mfschunkserver stop
         for host in "${_hosts_arr[@]}"; do
             info "Unmounting and stopping chunkserver on ${host}..."
-            exec_on_host "${host}" "umount ${MFS_MOUNT_POINT}" 2>/dev/null || warning "Failed to umount on ${host}"
+            exec_on_host "${host}" "umount -l ${MFS_MOUNT_POINT}" 2>/dev/null || warning "Failed to umount on ${host}"
             exec_on_host "${host}" "${MFS_BIN_CHUNKSERVER} stop" 2>/dev/null || warning "Failed to stop mfschunkserver on ${host}"
+            # 清理残留 mfsmount 进程（umount -l 后守护进程可能仍存活）
+            exec_on_host "${host}" "pkill -f 'mfsmount.*${MFS_MOUNT_POINT}'" 2>/dev/null || true
         done
 
         # SSH 到 master 节点执行 mfsmaster stop
@@ -830,17 +898,16 @@ deploy_mfs_down() {
         [ -z "${master_host}" ] && master_host="$(get_local_ip)"
         info "Stopping MooseFS via systemd (stop)"
 
-        # 先 lazy umount（防止 master 已停止时 FUSE 挂载点 stale 导致 hang）
-        umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
-
         local is_master=false
         if _mfs_is_master; then
             is_master=true
         fi
 
-        # 停止顺序：client → chunkserver → master
-        # 先停 client（FUSE 挂载），再停 chunkserver，最后停 master
-        # 避免 master 先停导致 client 无法正常 unount 而被 systemd 记为 failed
+        # 先停 health timer 再 lazy umount（避免 timer 在 umount 后触发 client restart 竞态）
+        systemctl stop moosefs-client-health.timer 2>/dev/null || true
+        umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
+
+        # 停止顺序 client → chunkserver → master（master 先停会导致 client umount 失败）
         if [ "${is_master}" = "true" ]; then
             systemctl stop moosefs-client 2>/dev/null || true
             systemctl stop moosefs-chunkserver 2>/dev/null || true
@@ -850,7 +917,7 @@ deploy_mfs_down() {
             systemctl stop moosefs-chunkserver 2>/dev/null || true
         fi
 
-        # 清理残留 mfsmount 进程（在 reset-failed 之前，避免 kill 后 systemd 重新标记 failed）
+        # 清理残留 mfsmount 进程（须在 reset-failed 之前）
         local mfs_mount_pid
         mfs_mount_pid=$(pgrep -f "mfsmount.*${MFS_MOUNT_POINT}" 2>/dev/null || true)
         if [ -n "${mfs_mount_pid}" ]; then
@@ -860,16 +927,14 @@ deploy_mfs_down() {
             kill -9 ${mfs_mount_pid} 2>/dev/null || true
         fi
 
-        # 清理可能残留的锁文件（stop 异常/SIGKILL 时进程来不及清理）
-        # 仅清锁文件，保留 chunkserverid.mfs / .metaid / .chunkdb 等身份和索引文件
+        # 清理残留锁文件（保留 chunkserverid.mfs 等身份/索引文件）
         find "${MFS_CHUNK_DIR}" -name '.lock' -delete 2>/dev/null || true
         find /var/lib/mfs \( -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
 
-        # reset-failed 放在进程清理之后，确保 kill 不会导致 systemd 重新标记 failed
         if [ "${is_master}" = "true" ]; then
-            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client moosefs-client-health.service 2>/dev/null || true
         else
-            systemctl reset-failed moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl reset-failed moosefs-chunkserver moosefs-client moosefs-client-health.service 2>/dev/null || true
         fi
 
         success "MooseFS systemd down completed!"
@@ -878,7 +943,6 @@ deploy_mfs_down() {
 
     # 非 systemd 的 SSH 单机部署
     info "Stopping MooseFS in single-node mode (non-systemd)"
-    umount ${MFS_MOUNT_POINT} 2>/dev/null || true
     umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
     ${MFS_BIN_CHUNKSERVER} stop 2>/dev/null || warning "Failed to stop mfschunkserver"
     ${MFS_BIN_MASTER} stop 2>/dev/null || warning "Failed to stop mfsmaster"
@@ -893,8 +957,7 @@ deploy_mfs_down() {
         kill -9 ${mfs_mount_pid} 2>/dev/null || true
     fi
 
-    # 清理可能残留的锁文件（stop 异常/SIGKILL 时进程来不及清理）
-    # 仅清锁文件，保留 chunkserverid.mfs / .metaid / .chunkdb 等身份和索引文件
+    # 清理残留锁文件（保留 chunkserverid.mfs 等身份/索引文件）
     find "${MFS_CHUNK_DIR}" -name '.lock' -delete 2>/dev/null || true
     find /var/lib/mfs \( -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
 
@@ -916,26 +979,32 @@ deploy_mfs_uninstall() {
         is_master=true
     fi
 
-    # 先 lazy umount（防止 master 已停止时 FUSE 挂载点 stale 导致后续操作 hang）
+    # 先停 health timer，避免清理挂载点时探针失败触发 client restart
+    systemctl stop moosefs-client-health.timer 2>/dev/null || true
+    # lazy umount（stale 挂载点上的操作会 hang）
     umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
 
     # 如果 systemd 已注册：停止服务 + 删除 unit 文件
     if _mfs_should_use_systemd; then
         info "Stopping services and removing systemd unit files..."
         if [ "${is_master}" = "true" ]; then
-            # Master：disable + 删除三个 unit
-            systemctl disable --now moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+            # Master：disable + 删除 unit
+            systemctl disable --now moosefs-master moosefs-chunkserver moosefs-client moosefs-client-health.timer 2>/dev/null || true
             rm -f /etc/systemd/system/moosefs-master.service
             rm -f /etc/systemd/system/moosefs-chunkserver.service
             rm -f /etc/systemd/system/moosefs-client.service
+            rm -f /etc/systemd/system/moosefs-client-health.service
+            rm -f /etc/systemd/system/moosefs-client-health.timer
             # reset-failed 清除 systemd 残留 failed 状态，避免 status 误报
-            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client 2>/dev/null || true
+            systemctl reset-failed moosefs-master moosefs-chunkserver moosefs-client moosefs-client-health.service 2>/dev/null || true
         else
-            # Agent：disable + 删除两个 unit
-            systemctl disable --now moosefs-chunkserver moosefs-client 2>/dev/null || true
+            # Agent：disable + 删除 unit
+            systemctl disable --now moosefs-chunkserver moosefs-client moosefs-client-health.timer 2>/dev/null || true
             rm -f /etc/systemd/system/moosefs-chunkserver.service
             rm -f /etc/systemd/system/moosefs-client.service
-            systemctl reset-failed moosefs-chunkserver moosefs-client 2>/dev/null || true
+            rm -f /etc/systemd/system/moosefs-client-health.service
+            rm -f /etc/systemd/system/moosefs-client-health.timer
+            systemctl reset-failed moosefs-chunkserver moosefs-client moosefs-client-health.service 2>/dev/null || true
         fi
         systemctl daemon-reload
         success "systemd services stopped and unit files removed"
@@ -972,8 +1041,7 @@ deploy_mfs_uninstall() {
         success "All data purged"
     else
         info "MOOSEFS_PURGE_DATA=no, preserving data for reinstall recovery"
-        # 删除 chunkserver 运行时状态文件，避免重新注册时 ID/索引/锁冲突
-        # chunkserver 启动时会重新从 master 获取 ID 并扫描已有 chunk 数据上报
+        # 删除运行时状态文件（chunkserver 重启后会重新注册并扫描上报已有 chunk）
         find "${MFS_CHUNK_DIR}" \( -name '.metaid' -o -name '.chunkdb' -o -name '.lock' \) -delete 2>/dev/null || true
         # 清理 /var/lib/mfs 下的运行时状态文件（保留 master metadata 和 chunk 数据）
         find /var/lib/mfs \( -name 'chunkserverid.mfs' -o -name '.mfschunkserver.lock' -o -name '.mfsmaster.lock' -o -name '.bgwriter.lock' \) -delete 2>/dev/null || true
@@ -1038,17 +1106,18 @@ deploy_mfs_status() {
         # ----- systemd 模式 -----
         local units=()
         if [ "${is_master}" = "true" ]; then
-            units=(moosefs-master moosefs-chunkserver moosefs-client)
+            units=(moosefs-master moosefs-chunkserver moosefs-client moosefs-client-health.timer)
         else
-            units=(moosefs-chunkserver moosefs-client)
+            units=(moosefs-chunkserver moosefs-client moosefs-client-health.timer)
         fi
 
         for unit in "${units[@]}"; do
             local state="stopped"
             local detail="inactive"
-            # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
-            # 此时应判为 stopped（服务确实未运行），而非 failed
-            if [ ! -f "/etc/systemd/system/${unit}.service" ]; then
+            # unit 文件已删除时（uninstall 后）判为 stopped；unit 名无后缀时补 .service
+            local unit_file="/etc/systemd/system/${unit}"
+            [[ "${unit}" != *.* ]] && unit_file="${unit_file}.service"
+            if [ ! -f "${unit_file}" ]; then
                 state="stopped"
                 detail="unit not found"
             elif systemctl is-failed "${unit}" >/dev/null 2>&1; then
@@ -1150,8 +1219,8 @@ Commands (Required):
   up        启动 MooseFS 集群（systemd 模式下执行 systemctl enable --now）
   down      停止 MooseFS 集群（systemd 模式下执行 systemctl stop）
   restart   重启 MooseFS 集群
-  install   验证 RPM 已安装 + 生成配置 + systemd 模式下生成 unit（不启动，由 up 启动）
-  uninstall 停止服务 + 清理配置、数据和 systemd unit（不卸载 RPM，可重新 install 还原）
+  install   验证软件包已安装（RPM/DEB） + 生成配置 + systemd 模式下生成 unit（不启动，由 up 启动）
+  uninstall 停止服务 + 清理配置、数据和 systemd unit（不卸载软件包，可重新 install 还原）
 
 Options:
   --hosts HOSTS      目标主机IP列表，逗号分隔。第一个IP为master节点，其余为agent节点
@@ -1204,7 +1273,7 @@ Examples:
 注意:
   - 部署机器到所有目标主机需配置SSH免密登录（仅 SSH 多机模式）
   - install 需要在每台目标主机上执行（每台主机都需配置）
-  - MooseFS RPM 包需由上游预装（见 deploy/moosefs/README.md）
+  - MooseFS 软件包（RPM/DEB）需由上游预装（见 deploy/moosefs/README.md）
   - master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
 EOF
     exit 0

@@ -140,6 +140,7 @@ pdfminer.six==20260107
 pdfplumber==0.11.10
 pgvector==0.5.0
 pillow==12.3.0
+pip==26.1.2
 pipdeptree==4.2.0
 platformdirs==4.11.0
 portalocker==3.2.0
@@ -191,6 +192,7 @@ rpds-py==2026.6.3
 ruamel.yaml==0.19.1
 safetensors==0.8.0
 SecretStorage==3.5.0
+setuptools==83.0.0
 shellingham==1.5.4
 six==1.17.0
 skillnet-ai==0.0.16

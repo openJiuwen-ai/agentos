@@ -361,7 +361,7 @@ whl 包来源：`install` 时从 agentos 根目录匹配 `a2x_registry-*-py3-non
 | `WEB_STATIC_PORT` | web 前端静态资源服务端口 |
 | `SANDBOX_TYPE` / `TOOL_SANDBOX_*` | 沙箱类型与工具沙箱配置 |
 
-> **工具沙箱镜像需手动拉取**：`install` 和 `up` 均**不会**自动拉取 `TOOL_SANDBOX_IMAGE` 指定的镜像。当 `TOOL_SANDBOX_ENABLE=true` 时，`install` 会打印提示，但用户需自行在目标主机上执行 `docker pull` 拉取镜像，否则 jiuwen agent 工具沙箱功能不可用。
+> **工具沙箱镜像必须预先拉取**：`install` 和 `up` 均**不会**自动拉取 `TOOL_SANDBOX_IMAGE` 指定的镜像。当 `TOOL_SANDBOX_ENABLE=true` 时，`install` 会检查本机 `docker` 是否可用（命令存在且守护进程可达）、以及 `docker images` 中是否已存在沙箱镜像，任一条件不满足则**直接中断安装**。用户需自行在目标主机上执行 `docker pull` 拉取镜像后重新运行 `install`。
 
 ```bash
 # 拉取工具沙箱镜像（镜像地址对应 .env.custom 中的 TOOL_SANDBOX_IMAGE）
