@@ -18,7 +18,7 @@ RUN printf '[main]\nsslverify=0\n' > /etc/dnf/dnf.conf && \
     dnf -y install nodejs nss nspr atk at-spi2-atk cups-libs libdrm git iputils\
         libxkbcommon libXcomposite libXdamage libXfixes libXrandr \
         mesa-libgbm libXext libX11 pango cairo alsa-lib fontconfig \
-        freetype libXrender libXt libXScrnSaver findutils && \
+        freetype libXrender libXt libXScrnSaver findutils graphviz && \
     dnf clean all
 
 # 1.5) 中文字体 (Noto Sans CJK SC) —— 解决 WPS/PPT 中文渲染缺字
@@ -36,11 +36,12 @@ RUN fc-list 2>/dev/null | grep -ciE 'Noto Sans CJK SC|WenQuanYi|UKai' \
 
 # 2) npm 引擎依赖: npm ci 按 lock 精确安装 (走华为云 npm 镜像)
 WORKDIR /opt/html2pptx
+ENV NODE_PATH=/opt/html2pptx/node_modules
 COPY package.json ./
 COPY package-lock.json ./
 RUN npm config set strict-ssl false && \
     npm ci --registry=https://mirrors.huaweicloud.com/repository/npm/ && \
-    npm install katex@0.18.4 --no-save --registry=https://mirrors.huaweicloud.com/repository/npm/ && \
+    npm install katex@0.18.4 docx@9.7.1 --no-save --registry=https://mirrors.huaweicloud.com/repository/npm/ && \
     npm cache clean --force
 
 # 3) Playwright Chromium (rev 1234): 用 python 脚本直连 npmmirror 下载
