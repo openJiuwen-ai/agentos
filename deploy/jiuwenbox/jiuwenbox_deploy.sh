@@ -366,7 +366,10 @@ _jiuwenbox_has_systemd() {
 # 生成 unit + drop-in 并 enable --now。调用方已完成 policy / 目录 / 前置检查。
 _jiuwenbox_start_systemd() {
   local server_bin py py_path py_bindir py_libdir log_level exec_start pid
-  local mkdir_bin pre_dirs systemd_ver log_lines
+  local mkdir_bin systemd_ver sock_dir
+  local logs_directory="" runtime_directory="" state_directory=""
+  local dir_lines="" exec_start_pre="" log_lines=""
+  local -a extra_mkdirs=()
   server_bin="$(command -v jiuwenbox-server)" || error "jiuwenbox-server not found"
   require_python
   py="$(python_bin)"
@@ -377,21 +380,48 @@ _jiuwenbox_start_systemd() {
   exec_start="${server_bin} --log-level ${log_level}"
   [[ -n "${SAVE_LOGS_DIR:-}" ]] && exec_start="${exec_start} --save-logs ${SAVE_LOGS_DIR}"
 
-  # 开机自启动时 /tmp、/run 已被清空，需在 ExecStart 前重建日志目录与 UDS 目录
-  mkdir_bin="$(command -v mkdir)" || error "mkdir not found"
-  pre_dirs="${RUN_DIR} ${LOG_DIR}"
-  if [[ "${LISTEN_MODE:-}" = "uds" && -n "${LISTEN_SOCKET_PATH:-}" ]]; then
-    pre_dirs="${pre_dirs} $(dirname "${LISTEN_SOCKET_PATH}")"
-  fi
-  [[ -n "${SAVE_LOGS_DIR:-}" ]] && pre_dirs="${pre_dirs} ${SAVE_LOGS_DIR}"
+  # StandardOutput=append 会套在 ExecStartPre 上，且早于 mkdir。日志父目录
+  # 不存在时 ExecStartPre 会以 209/STDOUT 失败。LogsDirectory 在打开 stdout
+  # 之前创建 /var/log/<name>，避免这个鸡生蛋问题。
+  mkdir -p "${LOG_DIR}"
+  : >> "${LOG_FILE}" || error "cannot create log file: ${LOG_FILE}"
 
-  # StandardOutput=append: 需 systemd >= 240；更老的版本只落 journal
+  if [[ "${LOG_DIR}" == /var/log/* && "${LOG_DIR}" != /var/log ]]; then
+    logs_directory="${LOG_DIR#/var/log/}"
+  fi
+  extra_mkdirs+=("${RUN_DIR}")
+  if [[ "${LISTEN_MODE:-}" = "uds" && -n "${LISTEN_SOCKET_PATH:-}" ]]; then
+    sock_dir="$(dirname "${LISTEN_SOCKET_PATH}")"
+    if [[ "${sock_dir}" == /run/* && "${sock_dir}" != /run ]]; then
+      runtime_directory="${sock_dir#/run/}"
+    else
+      extra_mkdirs+=("${sock_dir}")
+    fi
+  fi
+  if [[ "${JIUWENBOX_STATE_DIR}" == /var/lib/* && "${JIUWENBOX_STATE_DIR}" != /var/lib ]]; then
+    state_directory="${JIUWENBOX_STATE_DIR#/var/lib/}"
+  fi
+  [[ -n "${SAVE_LOGS_DIR:-}" ]] && extra_mkdirs+=("${SAVE_LOGS_DIR}")
+
+  [[ -n "${logs_directory}" ]] && dir_lines+="LogsDirectory=${logs_directory}"$'\n'
+  if [[ -n "${runtime_directory}" ]]; then
+    dir_lines+="RuntimeDirectory=${runtime_directory}"$'\n'
+    dir_lines+="RuntimeDirectoryMode=0755"$'\n'
+  fi
+  [[ -n "${state_directory}" ]] && dir_lines+="StateDirectory=${state_directory}"$'\n'
+
+  if ((${#extra_mkdirs[@]} > 0)); then
+    mkdir_bin="$(command -v mkdir)" || error "mkdir not found"
+    exec_start_pre="ExecStartPre=${mkdir_bin} -p ${extra_mkdirs[*]}"$'\n'
+  fi
+
+  # StandardOutput=append: 需 systemd >= 240，且日志目录由 LogsDirectory 托管
   systemd_ver="$(systemctl --version 2>/dev/null | awk 'NR==1{print $2}')"
-  if [[ "${systemd_ver}" =~ ^[0-9]+$ ]] && (( systemd_ver >= 240 )); then
+  if [[ "${systemd_ver}" =~ ^[0-9]+$ ]] && (( systemd_ver >= 240 )) && [[ -n "${logs_directory}" ]]; then
     log_lines="StandardOutput=append:${LOG_FILE}"$'\n'"StandardError=append:${LOG_FILE}"
   else
     log_lines="StandardOutput=journal"$'\n'"StandardError=journal"
-    info "systemd ${systemd_ver:-unknown} < 240, logs go to journal (journalctl -u ${JIUWENBOX_SVC})"
+    info "systemd ${systemd_ver:-unknown} logs go to journal (journalctl -u ${JIUWENBOX_SVC})"
   fi
 
   info "systemd detected, generating unit ${JIUWENBOX_SVC}..."
@@ -403,8 +433,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
-ExecStartPre=${mkdir_bin} -p ${pre_dirs}
-ExecStart=${exec_start}
+${dir_lines}${exec_start_pre}ExecStart=${exec_start}
 Restart=on-failure
 RestartSec=3
 KillMode=mixed
@@ -534,6 +563,7 @@ start_on_this_host() {
   parse_listen_uri "$LISTEN_URI"
   remove_stale_uds_socket
   mkdir -p "$RUN_DIR" "$LOG_DIR"
+  : >> "$LOG_FILE" || error "cannot create log file: ${LOG_FILE}"
   if [[ "$LISTEN_MODE" = "uds" ]]; then
     mkdir -p "$(dirname "$LISTEN_SOCKET_PATH")"
   fi
