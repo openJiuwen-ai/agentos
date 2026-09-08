@@ -746,14 +746,11 @@ _yr_resolve_yr_path() {
 # etcd unit 由 deploy/etcd.sh 独立管理，此处只生成 executor unit；
 # executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 YR_ETCD_SVC）。
 _yr_generate_executor_unit() {
-    local host_ip etcd_addr_list yr_bin py_bindir yr_ds_lib
+    local host_ip etcd_addr_list yr_bin py_bindir
     host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
     etcd_addr_list=$(_yr_cfg etcd-address-list) || error "Failed to build etcd address list"
     yr_bin=$(_yr_resolve_yr_path)
     py_bindir=$(dirname "${yr_bin}")
-    # yr 自带 datasystem/lib，解析失败兜底到 py_bindir/lib
-    yr_ds_lib=$("$(_yr_python)" -c 'import yr,os;print(os.path.join(os.path.dirname(yr.__file__),"datasystem","lib"))' 2>/dev/null | tr -d '\r')
-    [ -d "${yr_ds_lib}" ] || yr_ds_lib="${py_bindir}/lib"
 
     if _yr_cfg is-master-node; then
         info "executor unit: master variant (host_ip=${host_ip})"
@@ -845,12 +842,11 @@ EOF
     fi
 
     # drop-in: PATH/LD_LIBRARY_PATH（systemd 默认 PATH 不含 /usr/local/bin）
-    # yr_ds_lib 置最前，避免被主机 /lib64 同名库遮蔽（yr 启动器会把自带 lib 追加到末尾）
     mkdir -p "${YR_EXECUTOR_DROPIN_DIR}"
     cat > "${YR_EXECUTOR_DROPIN}" <<EOF
 [Service]
 Environment=PATH=${py_bindir}:${PATH}
-Environment=LD_LIBRARY_PATH=${yr_ds_lib}:${py_bindir}/lib:${LD_LIBRARY_PATH:-}
+Environment=LD_LIBRARY_PATH=${py_bindir}/lib:${LD_LIBRARY_PATH:-}
 EOF
 }
 
