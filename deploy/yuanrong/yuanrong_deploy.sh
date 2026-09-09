@@ -28,6 +28,9 @@ YR_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${YR_EXECUTOR_SVC}.service.d"
 YR_EXECUTOR_DROPIN="${YR_EXECUTOR_DROPIN_DIR}/env.conf"
 YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
+# uninstall 失败包清单（pkg(原因) 格式），供结尾真实汇总，避免失败仍报"全部卸载成功"
+YR_UNINSTALL_FAILED_PKGS=()
+
 # ===== agent SSH 直连密钥路径（默认 /root/.ssh 下，用户自行生成，部署脚本不生成）=====
 # 简便模式：host / backend / client 三处用途混用同一套密钥（私钥 + 公钥）。
 #   AGENTOS_SSH_KEY            私钥，同时用作 frontend host key、backend key、外部 client key
@@ -66,6 +69,8 @@ info() { echo -e "\033[36m=== $@ ===\033[0m"; }
 success() { echo -e "\033[32m✅ $@\033[0m"; }
 warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error() { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
+# error 不退出：用于 yr_uninstall_packages 逐包卸载时记录单包失败，最后由 error 汇总中断
+error_noexit() { echo -e "\033[31m❌ $@\033[0m"; }
 
 # ===== SSH 工具函数 =====
 # 取本机所有 IPv4 地址。hostname -I 不可用时回退到 /etc/hosts 和 ifconfig。
@@ -456,23 +461,48 @@ yr_uninstall_packages() {
         "agent_dx_executor"
     )
 
+    # 卸载解释器：与 install 严格一致，只认 python${python_version}。缺失时不回退其他解释器，
+    # 所有包按 ❌ 失败记录并继续，由 deploy_yr_uninstall 结尾统一 error 汇总中断。
+    local py_bin=""
+    if exec_on_host "${host}" "command -v python${python_version}" >/dev/null 2>&1; then
+        py_bin="python${python_version}"
+    else
+        error_noexit "python${python_version} not found on ${host}: whls were installed under it, refusing to uninstall with other interpreters"
+    fi
+
+    YR_UNINSTALL_FAILED_PKGS=()
+
     info "Uninstalling openyuanrong packages on ${host}..."
+    local pkg
     for pkg in "${pkg_names[@]}"; do
         info "Uninstalling on ${host}: ${pkg}"
-        if exec_on_host "${host}" "python${python_version} -m pip uninstall -y ${pkg} 2>/dev/null"; then
+        if [ -z "${py_bin}" ]; then
+            error_noexit "Uninstall failed (python${python_version} not found) on ${host}: ${pkg}"
+            YR_UNINSTALL_FAILED_PKGS+=("${pkg}(python${python_version}-not-found)")
+            continue
+        fi
+        if ! exec_on_host "${host}" "${py_bin} -m pip show '${pkg}' >/dev/null 2>&1"; then
+            info "Package not installed on ${host}, skipping: ${pkg}"
+            continue
+        fi
+        # 保留 pip stderr 输出，失败原因可直接从日志定位
+        if exec_on_host "${host}" "${py_bin} -m pip uninstall -y '${pkg}'"; then
             success "Uninstalled on ${host}: ${pkg}"
         else
-            warning "Package not installed or failed to uninstall on ${host}: ${pkg}"
+            error_noexit "Failed to uninstall on ${host}: ${pkg} (see pip output above)"
+            YR_UNINSTALL_FAILED_PKGS+=("${pkg}(pip-uninstall-failed)")
         fi
     done
 
     # pip uninstall 只清 ADX 自身在 purelib 的注册;co-location 时手动 cp 进 SDK 的 platlib yr 目录
     # 的 agentexecutor 子目录不会被 pip 清。需显式删除,否则下次 install 的 colocate 检测会误判已就位。
-    local yr_dir
-    yr_dir=$(exec_on_host "${host}" "python${python_version} -c 'import yr,os;print(os.path.dirname(yr.__file__))'" 2>/dev/null | tr -d '\r' || true)
-    if [ -n "${yr_dir}" ] && exec_on_host "${host}" "test -d '${yr_dir}/agentexecutor'" 2>/dev/null; then
-        info "Removing co-located yr.agentexecutor from ${yr_dir} on ${host}"
-        exec_on_host "${host}" "rm -rf '${yr_dir}/agentexecutor'" 2>/dev/null || true
+    if [ -n "${py_bin}" ]; then
+        local yr_dir
+        yr_dir=$(exec_on_host "${host}" "${py_bin} -c 'import yr,os;print(os.path.dirname(yr.__file__))'" 2>/dev/null | tr -d '\r' || true)
+        if [ -n "${yr_dir}" ] && exec_on_host "${host}" "test -d '${yr_dir}/agentexecutor'" 2>/dev/null; then
+            info "Removing co-located yr.agentexecutor from ${yr_dir} on ${host}"
+            exec_on_host "${host}" "rm -rf '${yr_dir}/agentexecutor'" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -1121,7 +1151,15 @@ deploy_yr_uninstall() {
     info "Uninstalling openyuanrong packages on local machine"
     info "Python version: ${YR_PYTHON_VERSION}"
 
+    # python${YR_PYTHON_VERSION} 缺失时 yr_uninstall_packages 内部逐包 ❌ 记录并继续（不回退其他解释器），
+    # 此处结尾统一 error 汇总中断。
     yr_uninstall_packages "${local_host}"
+
+    # 存在失败包（含 python3.11 缺失导致的整批失败）时 error 汇总中断，不报成功
+    if [ "${#YR_UNINSTALL_FAILED_PKGS[@]}" -gt 0 ]; then
+        error "openyuanrong packages uninstall FAILED (${#YR_UNINSTALL_FAILED_PKGS[@]} packages): ${YR_UNINSTALL_FAILED_PKGS[*]}"
+        error "卸载与 install 严格使用同一解释器 python${YR_PYTHON_VERSION}；请恢复环境（如 export PATH=/opt/buildtools/python3.11/bin:\$PATH）后重新执行 uninstall"
+    fi
 
     success "openyuanrong packages uninstall completed!"
 }
@@ -1190,6 +1228,10 @@ Commands (Required):
             输出格式：yuanrong|<service>|<state>|<detail>，state 小写
   install   仅在本机安装 openyuanrong whl 包（不启动服务，不需要 --hosts）
   uninstall 仅在本机卸载 openyuanrong whl 包（不需要 --hosts）
+            卸载与 install 严格使用同一解释器（python3.11，YR_PYTHON_VERSION 可覆盖）：
+            whl 包装在该解释器的 site-packages 下，卸载前请确保 python3.11
+            可用（在 PATH 中）；缺失时直接判卸载失败并在结尾汇总告警
+            （退出码非 0），不回退其他解释器、不误报全部成功
 
 Options:
   --no-systemd       进程模式部署（SSH fanout 多机）。不指定时默认 systemd 模式：
@@ -1242,6 +1284,10 @@ Examples:
   - 部署机器到所有目标主机需配置SSH免密登录
   - 目标主机需预装指定版本的Python
   - up/restart 不再安装whl包，请先在各目标主机执行 install（多机时每台主机都需安装）
+  - 卸载前需确保 python${YR_PYTHON_VERSION}（默认 python3.11）可用且在 PATH 中
+    （与 install 时同一环境，如 export PATH=/opt/buildtools/python3.11/bin:$PATH）；
+    该解释器缺失时不回退其他解释器，所有 whl 卸载直接判失败，
+    结尾汇总告警并以非零码退出，不会中断流程、不会误报成功
 EOF
     exit 0
 }

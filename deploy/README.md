@@ -168,6 +168,8 @@ bash agentos.sh deinit
 bash agentos.sh uninstall
 ```
 
+> **注意**：卸载与 install 严格使用同一 Python 环境（默认 python3.11，需在 PATH 中）。若卸载时 python3.11 已不可用，脚本不回退其他解释器。正确做法是先执行 `export PATH=/opt/buildtools/python3.11/bin:$PATH`（按实际安装路径）恢复环境后再卸载。
+
 #### 多机部署
 
 单机与多机部署的流程完全一致，区别仅在于 `config.yaml` 的拓扑配置不同。多机部署时，**需在各个节点上分别执行** `agentos.sh`，建议先在 master 节点执行，再在 agent 节点执行。
@@ -199,6 +201,8 @@ bash agentos.sh deinit
 bash agentos.sh uninstall
 ```
 
+> **注意**：同单机部署，卸载前先在各节点恢复 python3.11 环境（`export PATH=/opt/buildtools/python3.11/bin:$PATH`，按实际安装路径）。
+
 #### etcd 数据清理（独立操作）
 
 ```bash
@@ -216,7 +220,7 @@ bash etcd.sh clean
 | `down` | 逆序停止全部应用组件（不动 etcd） |
 | `status` | 一键查询各组件运行状态（只读探测，输出状态表 + 汇总计数；退出码：0=全 running/stopped，1=有 failed） |
 | `deinit` | 停 etcd + 删 unit（委托 `etcd.sh down`，保留数据） |
-| `uninstall` | 在本机卸载全部组件的 whl 包 |
+| `uninstall` | 在本机卸载全部组件的 whl 包。**与 install 严格使用同一 Python 环境（默认 python3.11，需在 PATH 中）**：whl 包装在该解释器的 site-packages 下，卸载前请先恢复该环境（如 `export PATH=/opt/buildtools/python3.11/bin:$PATH`）；缺失时不回退其他解释器，所有卸载直接判失败并在结尾汇总告警（不中断、不误报全部成功） |
 | `restart` | 重启全部应用组件（先 down 再 up；不含 init/deinit） |
 | `-h, --help` | 显示帮助信息 |
 

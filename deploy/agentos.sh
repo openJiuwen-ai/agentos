@@ -47,6 +47,8 @@ info()    { echo -e "\033[36m=== $@ ===\033[0m"; }
 success() { echo -e "\033[32m✅ $@\033[0m"; }
 warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error()   { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
+# error 不退出：用于 yr_uninstall_packages 逐包卸载时记录单包失败，最后由 error 汇总中断
+error_noexit() { echo -e "\033[31m❌ $@\033[0m"; }
 
 # ===== 加载所有模块 =====
 load_modules() {
@@ -73,6 +75,10 @@ reverse_modules() {
 }
 
 # ===== 调度引擎：遍历模块，调用对应钩子 =====
+# uninstall 时单模块失败不中断：❌ error 记录后继续执行其余模块，
+# 失败模块记入 HOOK_FAILED_MODULES，结尾 _print_summary 统一 ❌ error 汇总并退出非 0。
+HOOK_FAILED_MODULES=()
+
 run_hooks() {
     local hook="$1"  # up / down / install / uninstall
 
@@ -86,6 +92,9 @@ run_hooks() {
 
     local total=${#MODULES[@]}
     local idx=0
+    if [ "${hook}" = "uninstall" ]; then
+        HOOK_FAILED_MODULES=()
+    fi
     for mod in ${module_list}; do
         idx=$((idx+1))
         local fn="${mod}_${hook}"
@@ -95,8 +104,17 @@ run_hooks() {
         fi
         echo ""
         info "[${idx}/${total}] ${mod} ${hook}"
-        "${fn}" "${EXTRA_ARGS[@]}"
-        success "${mod} ${hook} finished"
+        if [ "${hook}" = "uninstall" ]; then
+            if "${fn}" "${EXTRA_ARGS[@]}"; then
+                success "${mod} ${hook} finished"
+            else
+                error_noexit "${mod} ${hook} FAILED, continuing remaining modules"
+                HOOK_FAILED_MODULES+=("${mod}")
+            fi
+        else
+            "${fn}" "${EXTRA_ARGS[@]}"
+            success "${mod} ${hook} finished"
+        fi
     done
 }
 
@@ -345,7 +363,11 @@ _print_status_table() {
 _print_summary() {
     local cmd="$1"
     echo ""
-    success "Full ${cmd} completed!"
+    if [ "${cmd}" = "uninstall" ] && [ "${#HOOK_FAILED_MODULES[@]}" -gt 0 ]; then
+        error "Full ${cmd} FAILED (modules: ${HOOK_FAILED_MODULES[*]:-})"
+    else
+        success "Full ${cmd} completed!"
+    fi
     echo "=========================================="
     if [ "${cmd}" = "up" ] || [ "${cmd}" = "down" ] || [ "${cmd}" = "restart" ]; then
         if [ "${cmd}" = "down" ]; then
@@ -381,6 +403,9 @@ Commands (Required):
   down        逆序停止全部应用组件（不动 etcd）
   deinit      停 etcd + 删 unit（委托 etcd.sh down，保留数据）
   uninstall   在本机卸载全部组件的 whl 包
+              与 install 严格使用同一 python 环境（默认 python3.11，需在 PATH 中）；
+              缺失时模块卸载失败会被记录并在结尾汇总告警（不中断、不误报全部成功），
+              卸载前建议先 export PATH=<python3.11 的 bin 目录>:$PATH
   status      查询全部组件运行状态（只读探测，不启停服务；含 etcd + MODULES）
   restart     重启全部应用组件（先 down 再 up；不含 init/deinit）
 
