@@ -21,6 +21,7 @@ DOWNLOAD_JOBS=3
 REGISTRY_RELEASE_TAG="agentos-registry-prerelease-v0.2.1"
 REGISTRY_WHL_VERSION="0.3.3"
 RQLITE_VERSION="10.2.7"
+AGENT_INFER_RELEASE_VERSION="0.1.0"
 CONCH_RPM_VERSION="0.1.0-6.oe2403sp4"
 # Conch Python wheel 内置于 Conch RPM，不单独下载。
 STRATOVIRT_RPM_VERSION="2.4.0-12.oe2403sp4"
@@ -39,6 +40,10 @@ MANAGER_PACKAGES=()
 OPENYUANRONG_VERSION=""
 OPENYUANRONG_BASE=""
 OPENYUANRONG_PACKAGES=()
+
+AGENT_INFER_VERSION=""
+AGENT_INFER_BASE=""
+AGENT_INFER_PACKAGES=()
 
 CLIENT_TUI_PACKAGES=()
 SERVER_PACKAGES=()
@@ -63,6 +68,7 @@ Options:
   --yuanrong-release-version VER      Yuanrong release version (default: 0.9.0) for release mode
   --jiuwenswarm-release-version VER   JiuwenSwarm release version (default: 0.2.2) for release mode
   --jiuwenswarm-release-git-tag TAG   JiuwenSwarm git release tag (default: JiuwenSwarm0.2.2) for release mode
+  --agent-infer-release-version VER   Agent Infer release version (default: 0.1.0) for release mode
   --yuanrong-daily-version VER        Yuanrong daily package version (default: 9.9.9) for daily mode
   --yr-schedule-time TIME             Yuanrong daily build schedule time (default: latest openeuler from index) for daily mode
   --yr-release-download-base URL      Yuanrong release download base URL (default: OBS release path from version/arch) for release mode
@@ -77,6 +83,7 @@ Examples:
   $(basename "$0") daily --download-jobs 1
   $(basename "$0") release --cp-tag cp311
   $(basename "$0") release --yuanrong-release-version 0.9.0 --jiuwenswarm-release-version 0.2.3 --jiuwenswarm-release-git-tag release_0.2.3
+  $(basename "$0") release --agent-infer-release-version 0.1.0
   $(basename "$0") release --yr-release-download-base https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/0.9.0/openeuler/aarch64
 EOF
 }
@@ -126,6 +133,14 @@ parse_args() {
         ;;
       --jiuwenswarm-release-git-tag=*)
         JIUWENSWARM_RELEASE_GIT_TAG="${1#*=}"
+        shift
+        ;;
+      --agent-infer-release-version)
+        AGENT_INFER_RELEASE_VERSION="$2"
+        shift 2
+        ;;
+      --agent-infer-release-version=*)
+        AGENT_INFER_RELEASE_VERSION="${1#*=}"
         shift
         ;;
       --yr-schedule-time)
@@ -277,6 +292,10 @@ configure_daily() {
     "${OPENYUANRONG_PACKAGES[@]}"
   )
 
+  AGENT_INFER_VERSION=""
+  AGENT_INFER_BASE="https://gitcode.com/openJiuwen/agent-infer.git"
+  AGENT_INFER_PACKAGES=()
+
   JIUWENSWARM_GIT_TAG="agent_os"
 }
 
@@ -330,6 +349,12 @@ configure_release() {
   SERVER_PACKAGES=(
     "jiuwenswarm-${JIUWENSWARM_VERSION}-py3-none-any.whl"
     "${OPENYUANRONG_PACKAGES[@]}"
+  )
+
+  AGENT_INFER_VERSION="${AGENT_INFER_RELEASE_VERSION}"
+  AGENT_INFER_BASE="https://gitcode.com/openJiuwen/agent-infer/releases/download/${AGENT_INFER_VERSION}"
+  AGENT_INFER_PACKAGES=(
+    "agentinfer-${AGENT_INFER_VERSION}-py3-none-any.whl"
   )
 
   JIUWENSWARM_GIT_TAG="${JIUWENSWARM_RELEASE_GIT_TAG}"
@@ -479,6 +504,24 @@ build_agent_gateway() {
   download_file "${whl_url}" "${DOWNLOAD_DIR}/agent-gateway/a2x_registry-${REGISTRY_WHL_VERSION}-py3-none-any.whl"
 }
 
+build_agent_infer() {
+  echo "==> build_agent_infer (${BUILD_MODE})"
+  local dist_dir="${DOWNLOAD_DIR}/agent-infer"
+  mkdir -p "${dist_dir}"
+
+  if [[ "${BUILD_MODE}" == "daily" ]]; then
+    local source_dir="${DOWNLOAD_DIR}/agent-infer_src"
+    git clone "${AGENT_INFER_BASE}" "${source_dir}"
+    (cd "${source_dir}" && python -m build --wheel)
+    cp "${source_dir}/dist/"*.whl "${dist_dir}/"
+  else
+    download_packages \
+      "${AGENT_INFER_BASE}" \
+      "${dist_dir}" \
+      "${AGENT_INFER_PACKAGES[@]}"
+  fi
+}
+
 build_conch() {
   echo "==> build_conch (${ARCH})"
   mkdir -p "${DOWNLOAD_DIR}/conch"
@@ -583,6 +626,10 @@ pack() {
 
   cp "${DOWNLOAD_DIR}/agent-gateway/"*.whl "${server_staging}/"
 
+  for pkg in "${AGENT_INFER_PACKAGES[@]}"; do
+    cp "${DOWNLOAD_DIR}/agent-infer/${pkg}" "${server_staging}/"
+  done
+
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
@@ -625,6 +672,7 @@ main() {
   build_jiuwenswarm
   build_tui_launcher
   build_agent_gateway
+  build_agent_infer
   pack
   echo "done"
 }
