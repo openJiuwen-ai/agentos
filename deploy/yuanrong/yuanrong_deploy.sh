@@ -1016,35 +1016,42 @@ deploy_yr_down() {
 }
 
 # ===== 状态探测：只读检测，不启停服务 =====
-# 输出格式：yuanrong|<service>|<state>|<detail>（state 小写）
+# 输出格式：yuanrong|<service>|<state>|<detail>|<version>（state 小写）
 deploy_yr_status() {
+    # 探测 yuanrong 版本号：importlib.metadata 比 pip show 快约 30 倍
+    local yr_ver="-"
+    local pkg_ver
+    pkg_ver=$(python${YR_PYTHON_VERSION} -c "from importlib.metadata import version; print(version('openyuanrong'))" 2>/dev/null || true)
+    [ -n "${pkg_ver}" ] && yr_ver="${pkg_ver}"
+
     # 模式判定：NO_SYSTEMD=1 直接走进程模式
     # 否则需确认 systemd 可用且 unit 文件存在——用户可能以 --no-systemd 部署但 status 未传该参数，
     # 此时 NO_SYSTEMD=0 但实际无 unit，应回退进程检测避免误报 stopped
     if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd && [ -f "${YR_EXECUTOR_UNIT}" ]; then
-        _deploy_yr_status_systemd
+        _deploy_yr_status_systemd "${yr_ver}"
         return $?
     fi
-    _deploy_yr_status_process
+    _deploy_yr_status_process "${yr_ver}"
     return $?
 }
 
 # ----- systemd 模式：检测 agentos-executor.service -----
 _deploy_yr_status_systemd() {
+    local yr_ver="${1:-}"
     local svc="${YR_EXECUTOR_SVC}"
     local is_active is_failed role
 
     # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
     # 此时应判为 stopped（服务确实未运行），而非 failed
     if [ ! -f "${YR_EXECUTOR_UNIT}" ]; then
-        echo "yuanrong|${svc}.service|stopped|unit not found"
+        echo "yuanrong|${svc}.service|stopped|unit not found|${yr_ver}"
         return 0
     fi
 
     # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
     is_failed=$(systemctl is-failed "${svc}" 2>/dev/null | tr -d '\r' || true)
     if [ "${is_failed}" = "failed" ]; then
-        echo "yuanrong|${svc}.service|failed|unit failed"
+        echo "yuanrong|${svc}.service|failed|unit failed|${yr_ver}"
         return 1
     fi
 
@@ -1056,17 +1063,18 @@ _deploy_yr_status_systemd() {
         else
             role="agent"
         fi
-        echo "yuanrong|${svc}.service|running|${role} variant"
+        echo "yuanrong|${svc}.service|running|${role} variant|${yr_ver}"
         return 0
     fi
 
     # 既非 active 也非 failed：视为 stopped
-    echo "yuanrong|${svc}.service|stopped|unit inactive"
+    echo "yuanrong|${svc}.service|stopped|unit inactive|${yr_ver}"
     return 0
 }
 
 # ----- 进程模式：检测 yr start 阻塞进程 + /yr/ 运行时进程 -----
 _deploy_yr_status_process() {
+    local yr_ver="${1:-}"
     local start_pids yr_pids role
 
     # 检测 "yr start" 阻塞进程：优先 pgrep，回退 ps -ef | grep
@@ -1088,15 +1096,15 @@ _deploy_yr_status_process() {
         else
             role="agent"
         fi
-        echo "yuanrong|yr-start|running|${role}"
+        echo "yuanrong|yr-start|running|${role}|${yr_ver}"
         return 0
     elif [ -n "${start_pids}" ] && [ -z "${yr_pids}" ]; then
         # 只有 yr start 没有 /yr/：failed
-        echo "yuanrong|yr-start|failed|yr start alive, runtime not found"
+        echo "yuanrong|yr-start|failed|yr start alive, runtime not found|${yr_ver}"
         return 1
     else
         # 都没有：stopped
-        echo "yuanrong|yr-start|stopped|no process"
+        echo "yuanrong|yr-start|stopped|no process|${yr_ver}"
         return 0
     fi
 }

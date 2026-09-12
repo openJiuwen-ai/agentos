@@ -180,9 +180,15 @@ jiuwenswarm_uninstall() {
 
 # 只读探测本机 jiuwenswarm 运行状态
 # 检测 jiuwenswarm-gateway 和 jiuwenswarm-web 两个服务
-# 输出格式: jiuwenswarm|<service>|<state>|<detail>
+# 输出格式: jiuwenswarm|<service>|<state>|<detail>|<version>
 jiuwenswarm_status() {
     local rc=0
+
+    # 探测 jiuwenswarm 版本号：importlib.metadata 比 pip show 快约 30 倍
+    local jwsw_ver="-"
+    local pkg_ver
+    pkg_ver=$(python${YR_PYTHON_VERSION} -c "from importlib.metadata import version; print(version('jiuwenswarm'))" 2>/dev/null || true)
+    [ -n "${pkg_ver}" ] && jwsw_ver="${pkg_ver}"
 
     # systemd 模式：枚举 gateway 和 web 两类 unit
     if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -204,7 +210,7 @@ jiuwenswarm_status() {
                 state="stopped"
                 detail="inactive"
             fi
-            echo "jiuwenswarm|${svc_name}|${state}|${detail}"
+            echo "jiuwenswarm|${svc_name}|${state}|${detail}|${jwsw_ver}"
         done
         if [ "${found}" -eq 1 ]; then
             return ${rc}
@@ -230,16 +236,16 @@ jiuwenswarm_status() {
 
     # gateway 状态
     if [ "${gw_alive}" -eq 1 ]; then
-        echo "jiuwenswarm|jiuwenswarm-gateway|running|active"
+        echo "jiuwenswarm|jiuwenswarm-gateway|running|active|${jwsw_ver}"
     else
-        echo "jiuwenswarm|jiuwenswarm-gateway|stopped|no process"
+        echo "jiuwenswarm|jiuwenswarm-gateway|stopped|no process|${jwsw_ver}"
     fi
 
     # web 状态
     if [ "${web_alive}" -eq 1 ]; then
-        echo "jiuwenswarm|jiuwenswarm-web|running|active"
+        echo "jiuwenswarm|jiuwenswarm-web|running|active|${jwsw_ver}"
     else
-        echo "jiuwenswarm|jiuwenswarm-web|stopped|no process"
+        echo "jiuwenswarm|jiuwenswarm-web|stopped|no process|${jwsw_ver}"
     fi
 
     return ${rc}

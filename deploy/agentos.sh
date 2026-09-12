@@ -263,7 +263,7 @@ deploy_status() {
     _filter_status_lines() {
         while IFS= read -r line; do
             [ -n "${line}" ] || continue
-            # 必须包含 3 个 | 分隔符（4 字段）
+            # 必须包含 3 个 | 分隔符（4 字段），版本号为可选第 5 字段
             local pipes
             pipes=$(echo "${line}" | tr -cd '|' | wc -c)
             [ "${pipes}" -ge 3 ] && echo "${line}"
@@ -317,21 +317,22 @@ deploy_status() {
 _print_status_table() {
     local -a lines=("$@")
     local running=0 stopped=0 failed=0 na=0 total=0
-    local line comp svc state detail
+    local line comp svc state detail version
 
     echo ""
     info "=== AgentOS Status ==="
     echo ""
-    printf "%-16s %-42s %-10s %s\n" "Component" "Service" "State" "Detail"
-    printf "%-16s %-42s %-10s %s\n" "------------" "----------------------------------------" "--------" "------------------------------"
+    printf "%-16s %-42s %-10s %-20s %s\n" "Component" "Service" "State" "Version" "Detail"
+    printf "%-16s %-42s %-10s %-20s %s\n" "------------" "----------------------------------------" "--------" "--------------------" "------------------------------"
 
     for line in "${lines[@]}"; do
-        # 解析 `组件|服务|状态|详情` 格式
-        IFS='|' read -r comp svc state detail <<< "${line}"
+        # 解析 `组件|服务|状态|详情|版本` 格式（版本为可选第 5 字段）
+        IFS='|' read -r comp svc state detail version <<< "${line}"
         [ -z "${comp:-}" ] && comp="-"
         [ -z "${svc:-}" ] && svc="-"
         [ -z "${state:-}" ] && state="unknown"
         [ -z "${detail:-}" ] && detail="-"
+        [ -z "${version:-}" ] && version="-"
 
         total=$((total+1))
         case "${state}" in
@@ -344,16 +345,19 @@ _print_status_table() {
         esac
 
         # 颜色编码：running 绿 / stopped 黄 / failed 红 / n/a 灰
-        local colored_state
+        # 先用空格补齐到固定宽度，再套颜色码——颜色码不占显示宽度但占字符串长度，
+        # 若先套颜色再 %-10b 会导致对齐错乱
+        local colored_state pad_state
+        pad_state=$(printf "%-10s" "${state}")
         case "${state}" in
-            running)  colored_state="\033[32m${state}\033[0m"  ;;
-            stopped|disabled) colored_state="\033[33m${state}\033[0m" ;;
-            failed)   colored_state="\033[31m${state}\033[0m"  ;;
-            n/a|na)   colored_state="\033[90m${state}\033[0m"   ;;
-            *)        colored_state="\033[31m${state}\033[0m"  ;;
+            running)  colored_state="\033[32m${pad_state}\033[0m"  ;;
+            stopped|disabled) colored_state="\033[33m${pad_state}\033[0m" ;;
+            failed)   colored_state="\033[31m${pad_state}\033[0m"  ;;
+            n/a|na)   colored_state="\033[90m${pad_state}\033[0m"   ;;
+            *)        colored_state="\033[31m${pad_state}\033[0m"  ;;
         esac
 
-        printf "%-16s %-42s %-10b %s\n" "${comp}" "${svc}" "${colored_state}" "${detail}"
+        printf "%-16s %-42s %b %-20s %s\n" "${comp}" "${svc}" "${colored_state}" "${version}" "${detail}"
     done
 
     echo ""

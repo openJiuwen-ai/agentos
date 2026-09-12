@@ -1055,14 +1055,22 @@ deploy_mfs_uninstall() {
 
 # ===== status 逻辑 =====
 # 仅只读探测服务状态，不启停服务
-# 输出格式：每行 moosefs|<service>|<state>|<detail>
+# 输出格式：每行 moosefs|<service>|<state>|<detail>|<version>
 # state: running / stopped / failed / disabled
+# version: 从 mfsmaster -v 输出提取，获取失败显示 -
 deploy_mfs_status() {
     _mfs_load_config
 
+    # 探测 MooseFS 版本号：mfsmaster -v 输出 "version: 4.59.2-1 ; build: 2106"
+    local mfs_ver="-"
+    if [ -x "${MFS_BIN_MASTER}" ]; then
+        mfs_ver=$("${MFS_BIN_MASTER}" -v 2>/dev/null | head -n1 | sed -E 's/^version:[[:space:]]*//' | awk -F' ;' '{print $1}' || true)
+        [ -z "${mfs_ver}" ] && mfs_ver="-"
+    fi
+
     # 全局禁用：输出 disabled，return 0
     if _mfs_should_skip; then
-        echo "moosefs|-|disabled|MOOSEFS_ENABLED=no"
+        echo "moosefs|-|disabled|MOOSEFS_ENABLED=no|${mfs_ver}"
         return 0
     fi
 
@@ -1131,7 +1139,7 @@ deploy_mfs_status() {
                 state="stopped"
                 detail="inactive"
             fi
-            echo "moosefs|${unit}|${state}|${detail}${mount_detail}"
+            echo "moosefs|${unit}|${state}|${detail}${mount_detail}|${mfs_ver}"
         done
 
         return ${rc}
@@ -1156,7 +1164,7 @@ deploy_mfs_status() {
             state="stopped"
             detail="inactive"
         fi
-        echo "moosefs|${bin}|${state}|${detail}${mount_detail}"
+        echo "moosefs|${bin}|${state}|${detail}${mount_detail}|${mfs_ver}"
     done
 
     return ${rc}

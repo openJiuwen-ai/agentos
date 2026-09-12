@@ -314,30 +314,40 @@ etcd_check() {
 }
 
 # ===== status: 查询本机 etcd 服务状态（供 agentos.sh status 委托调用） =====
-# 输出机器可读单行：组件名|服务名|状态|详情
+# 输出机器可读单行：组件名|服务名|状态|详情|版本
 #   状态取值：running / stopped / failed / n/a
 #   - 非 etcd 节点：n/a
 #   - etcd 节点但无 systemd：stopped
 #   - unit active 且端口可达：running
 #   - unit active 但端口不可达：failed
 #   - unit 非 active：stopped
+#   版本号从 etcd 二进制 --version 输出提取，获取失败显示 -
 etcd_status() {
     [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
 
+    # 探测 etcd 版本号
+    local etcd_ver="-"
+    local etcd_bin
+    etcd_bin=$(_yr_etcd_bin_path 2>/dev/null) || true
+    if [ -n "${etcd_bin}" ] && [ -x "${etcd_bin}" ]; then
+        etcd_ver=$("${etcd_bin}" --version 2>/dev/null | head -n1 | awk '{print $3}' || true)
+        [ -z "${etcd_ver}" ] && etcd_ver="-"
+    fi
+
     if ! _yr_cfg is-etcd-node 2>/dev/null; then
-        echo "etcd|${YR_ETCD_SVC}.service|n/a|not etcd node"
+        echo "etcd|${YR_ETCD_SVC}.service|n/a|not etcd node|${etcd_ver}"
         return 0
     fi
 
     if ! _yr_has_systemd; then
-        echo "etcd|${YR_ETCD_SVC}.service|stopped|systemd required"
+        echo "etcd|${YR_ETCD_SVC}.service|stopped|systemd required|${etcd_ver}"
         return 0
     fi
 
     # unit 文件已被 down/uninstall 删除时，systemd 可能仍记忆 failed 状态
     # 此时应判为 stopped（服务确实未运行），而非 failed
     if [ ! -f "${YR_ETCD_UNIT}" ]; then
-        echo "etcd|${YR_ETCD_SVC}.service|stopped|unit not found"
+        echo "etcd|${YR_ETCD_SVC}.service|stopped|unit not found|${etcd_ver}"
         return 0
     fi
 
@@ -345,7 +355,7 @@ etcd_status() {
 
     # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
     if systemctl is-failed --quiet "${YR_ETCD_SVC}" 2>/dev/null; then
-        echo "etcd|${YR_ETCD_SVC}.service|failed|unit failed"
+        echo "etcd|${YR_ETCD_SVC}.service|failed|unit failed|${etcd_ver}"
         return 1
     fi
 
@@ -362,14 +372,14 @@ etcd_status() {
             fi
         done
         if [ -n "${reachable}" ]; then
-            echo "etcd|${YR_ETCD_SVC}.service|running|${reachable}:${YR_ETCD_CLIENT_PORT}"
+            echo "etcd|${YR_ETCD_SVC}.service|running|${reachable}:${YR_ETCD_CLIENT_PORT}|${etcd_ver}"
             return 0
         fi
-        echo "etcd|${YR_ETCD_SVC}.service|failed|unit active, port unreachable"
+        echo "etcd|${YR_ETCD_SVC}.service|failed|unit active, port unreachable|${etcd_ver}"
         return 1
     fi
 
-    echo "etcd|${YR_ETCD_SVC}.service|stopped|unit inactive"
+    echo "etcd|${YR_ETCD_SVC}.service|stopped|unit inactive|${etcd_ver}"
     return 0
 }
 

@@ -842,32 +842,39 @@ deploy_jiuwenbox_uninstall() {
 }
 
 # 只读探测本机 jiuwenbox 运行状态（不做多机 fanout）
-# 输出格式: jiuwenbox|<service>|<state>|<detail>
+# 输出格式: jiuwenbox|<service>|<state>|<detail>|<version>
 deploy_jiuwenbox_status() {
   local svc_name="${JIUWENBOX_SVC}"
   local has_cli=0
   command -v jiuwenbox >/dev/null 2>&1 && has_cli=1 || has_cli=0
 
+  # 探测 jiuwenbox 版本号：jiuwenbox-server 随 jiuwenswarm whl 安装
+  # importlib.metadata 比 pip show 快约 30 倍
+  local jwb_ver="-"
+  local pkg_ver
+  pkg_ver=$("$(python_bin)" -c "from importlib.metadata import version; print(version('jiuwenswarm'))" 2>/dev/null || true)
+  [ -n "${pkg_ver}" ] && jwb_ver="${pkg_ver}"
+
   # systemd 模式
   if _jiuwenbox_has_systemd && [ -f "${JIUWENBOX_UNIT}" ]; then
     # is-failed 优先：failed 状态下 is-active 也返回非 active，先判 failed 避免误判
     if systemctl is-failed --quiet "${svc_name}" 2>/dev/null; then
-      echo "jiuwenbox|${svc_name}.service|failed|unit failed"
+      echo "jiuwenbox|${svc_name}.service|failed|unit failed|${jwb_ver}"
       return 1
     fi
     if systemctl is-active --quiet "${svc_name}" 2>/dev/null; then
       if [ "${has_cli}" -eq 1 ] && probe_server_api "${LISTEN_URI}"; then
-        echo "jiuwenbox|${svc_name}.service|running|${LISTEN_URI}"
+        echo "jiuwenbox|${svc_name}.service|running|${LISTEN_URI}|${jwb_ver}"
         return 0
       elif [ "${has_cli}" -eq 1 ]; then
-        echo "jiuwenbox|${svc_name}.service|failed|unit active, API not ready"
+        echo "jiuwenbox|${svc_name}.service|failed|unit active, API not ready|${jwb_ver}"
         return 1
       else
-        echo "jiuwenbox|${svc_name}.service|running|process alive, API check skipped"
+        echo "jiuwenbox|${svc_name}.service|running|process alive, API check skipped|${jwb_ver}"
         return 0
       fi
     else
-      echo "jiuwenbox|${svc_name}.service|stopped|unit inactive"
+      echo "jiuwenbox|${svc_name}.service|stopped|unit inactive|${jwb_ver}"
       return 0
     fi
   fi
@@ -878,17 +885,17 @@ deploy_jiuwenbox_status() {
   if [ -n "${pids}" ]; then
     first_pid="$(echo "${pids}" | head -n 1)"
     if [ "${has_cli}" -eq 1 ] && probe_server_api "${LISTEN_URI}"; then
-      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|${LISTEN_URI}"
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|${LISTEN_URI}|${jwb_ver}"
       return 0
     elif [ "${has_cli}" -eq 1 ]; then
-      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|failed|process alive, API not ready"
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|failed|process alive, API not ready|${jwb_ver}"
       return 1
     else
-      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|process alive, API check skipped"
+      echo "jiuwenbox|jiuwenbox(pid:${first_pid})|running|process alive, API check skipped|${jwb_ver}"
       return 0
     fi
   else
-    echo "jiuwenbox|-|stopped|no process"
+    echo "jiuwenbox|-|stopped|no process|${jwb_ver}"
     return 0
   fi
 }
