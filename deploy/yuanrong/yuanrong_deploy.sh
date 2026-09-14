@@ -64,6 +64,42 @@ LOG_EXPIRATION_CLEANUP_INTERVAL="${LOG_EXPIRATION_CLEANUP_INTERVAL:-15}"
 
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
+# ===== docker 工具沙箱兜底回收 =====
+# yr stop --force 直接杀 yr 进程，docker executor 拉起的工具沙箱容器没有机会被
+# docker rm，会残留并持续重试连 FS（fs_intf_impl 3002 日志）。down/uninstall 时
+# 按镜像名回收残留容器。镜像名解析优先级见 _yr_tool_sandbox_image。
+
+# 读取 env 文件中 KEY=VALUE 的值，兼容值带双引号/单引号/不带引号三种写法
+# （与 jiuwenswarm module.sh 的 _jwsw_env_value 同一套逻辑，避免用 cut -d'"'
+# 在值不带引号时返回整行导致检查被静默跳过）
+_yr_env_value() {
+    local file="$1" key="$2" line
+    line=$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -n 1 || true)
+    line="${line#*=}"
+    line="${line#\"}"
+    line="${line%\"}"
+    line="${line#\'}"
+    line="${line%\'}"
+    printf '%s' "${line}"
+}
+
+# 解析工具沙箱镜像名，优先级：
+#   1. 环境变量 TOOL_SANDBOX_IMAGE（module.sh 或调用方传入；显式置空表示禁用回收）
+#   2. deploy/jiuwenswarm/.env.custom 的 TOOL_SANDBOX_IMAGE（与 jiuwenswarm 侧保持一致，
+#      仿照 _jiuwenswarm_check_sandbox_image 的读法）
+# 两处都没有时返回空，调用方跳过回收。
+_yr_tool_sandbox_image() {
+    if [ "${TOOL_SANDBOX_IMAGE+set}" = "set" ]; then
+        echo "${TOOL_SANDBOX_IMAGE}"
+        return 0
+    fi
+    local env_file="${SCRIPT_DIR}/../jiuwenswarm/.env.custom"
+    if [ ! -f "${env_file}" ]; then
+        return 0
+    fi
+    _yr_env_value "${env_file}" 'TOOL_SANDBOX_IMAGE'
+}
+
 # ===== 日志函数 =====
 info() { echo -e "\033[36m=== $@ ===\033[0m"; }
 success() { echo -e "\033[32m✅ $@\033[0m"; }
@@ -558,6 +594,29 @@ yr_cleanup_processes() {
     return 0
 }
 
+# ===== docker 工具沙箱容器兜底回收 =====
+# 按镜像名（docker ancestor 过滤，含已退出容器）检索工具沙箱容器并 docker rm -f。
+# docker 命令缺失或守护进程不可达时跳过——兜底逻辑，不阻塞 down/uninstall 流程。
+# 注意：docker executor 创建容器时不指定 name（docker 自动命名），无法按名字前缀
+# 过滤，只能按镜像过滤；ancestor 过滤精确匹配该镜像创建的容器，不会误伤其他负载。
+yr_cleanup_tool_sandboxes() {
+    local host="$1"
+    local sandbox_image
+    sandbox_image=$(_yr_tool_sandbox_image)
+
+    if [ -z "${sandbox_image}" ]; then
+        return 0
+    fi
+
+    # 静默回收：不打印删除的容器 id，检索与强删在远端单条命令完成，失败一并忽略（兜底逻辑）
+    exec_on_host "${host}" "command -v docker >/dev/null 2>&1 \
+        && docker info >/dev/null 2>&1 \
+        && docker ps -aq --filter 'ancestor=${sandbox_image}' \
+        | xargs -r docker rm -f >/dev/null 2>&1 || true" >/dev/null 2>&1
+
+    return 0
+}
+
 # 在 yr start 前检测节点上是否已存在 yuanrong 集群/进程。
 # 若已存在则直接报错退出，不自动清理，避免误杀原可用集群。
 # 由用户决定是否执行 down/stop 后再重新 up。
@@ -703,6 +762,8 @@ yr_stop_all() {
             warning "Failed to stop yr on ${host} (may not be running)"
         # 强制清理残留进程，避免多次 up/down 后进程堆积
         yr_cleanup_processes "${host}"
+        # 兜底回收残留的 docker 工具沙箱容器（yr stop --force 不清理 docker 实例）
+        yr_cleanup_tool_sandboxes "${host}"
     done
 
     success "openyuanrong uninstall completed!"
@@ -915,6 +976,9 @@ deploy_yr_down_systemd() {
 
     # 清理 yuanrong 在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
     _yr_clean_etcd_data "$(get_local_ip)"
+
+    # 兜底回收残留的 docker 工具沙箱容器（yr stop --force 不清理 docker 实例）
+    yr_cleanup_tool_sandboxes "$(get_local_ip)"
 
     success "yuanrong executor stopped"
 }
@@ -1269,6 +1333,11 @@ Environment Variables:
   AGENTOS_SSH_BACKEND_PUBLIC_DIR 挂进实例 /run/openyuanrong/ssh 的公钥目录
                              （默认 /root/.ssh/agent_pub），该目录下须有 authorized_keys
                              文件（即该私钥的公钥）。不能在 /etc 下（docker executor 会拒挂载）。
+  TOOL_SANDBOX_IMAGE         工具沙箱镜像名。down/uninstall 时按该镜像兜底回收残留的
+                             docker 工具沙箱容器。优先级：本环境变量 >
+                             deploy/jiuwenswarm/.env.custom 的 TOOL_SANDBOX_IMAGE；
+                             两处均未配置则跳过回收；显式置空（TOOL_SANDBOX_IMAGE=""）
+                             表示禁用回收。
 
   注：SSH 直连默认开启，不提供关闭开关（三方 agent 镜像自带 sshd，frontend→实例 sshd 段必需）。
       密钥由用户自行生成，部署脚本不生成。简便模式示例：
