@@ -12,7 +12,7 @@ AgentOS TUI 启动器，负责用户登录、登录态恢复、`/switch-claude` 
 
 管理面提供 IAM 登录认证和用户管理 API，需先部署并启动。
 
-部署参考：<https://gitcode.com/openJiuwen/agent-os/tree/main/control-panel/deploy>
+部署参考：<https://gitcode.com/Ascend/AgentBox-Manager/tree/main/deploy>
 
 部署后确认 API 可访问（示例地址 `http://<host>:8090`）。
 

@@ -34,9 +34,6 @@ JIUWENSWARM_VERSION=""
 JIUWENSWARM_BASE=""
 JIUWENSWARM_PACKAGES=()
 
-MANAGER_VERSION=""
-MANAGER_PACKAGES=()
-
 OPENYUANRONG_VERSION=""
 OPENYUANRONG_BASE=""
 OPENYUANRONG_PACKAGES=()
@@ -249,7 +246,6 @@ configure_daily() {
   echo "  yuanrong daily build: ${yr_schedule_time}, version: ${YUANRONG_DAILY_VERSION}"
 
   JIUWENSWARM_VERSION="${jiuwen_schedule_time}"
-  MANAGER_VERSION="$(date +%Y%m%d)"
   JIUWENSWARM_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm_agent_os/package/daily/dist/${jiuwen_schedule_time}"
 
   JIUWENSWARM_PACKAGES=(
@@ -302,7 +298,6 @@ configure_daily() {
 configure_release() {
   JIUWENSWARM_VERSION="${JIUWENSWARM_RELEASE_VERSION}"
   OPENYUANRONG_VERSION="${YUANRONG_RELEASE_VERSION}"
-  MANAGER_VERSION="latest"
 
   BASE_URL="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com"
   JIUWENSWARM_BASE="${BASE_URL}/jiuwenswarm/agentos_b050/package/release/last_successful_build"
@@ -580,17 +575,6 @@ build_tui_launcher() {
   done
 }
 
-build_manager_app() {
-  echo "==> build_manager_app (version=${MANAGER_VERSION})"
-
-  local cp_deployment="${PROJECT_ROOT}/control-panel/deploy"
-  if [[ ! -d "${cp_deployment}" ]]; then
-    echo "error: manager deployment directory not found: ${cp_deployment}" >&2
-    exit 1
-  fi
-  MANAGER_PACKAGES=("${cp_deployment}")
-}
-
 pack() {
   echo "==> pack"
   mkdir -p "${BUILD_DIR}"
@@ -602,10 +586,9 @@ pack() {
 
   local client_staging="${BUILD_DIR}/staging/client"
   local server_staging="${BUILD_DIR}/staging/server"
-  local manager_staging="${BUILD_DIR}/staging/manager"
 
   rm -rf "${BUILD_DIR}/staging"
-  mkdir -p "${client_staging}" "${server_staging}/deploy" "${manager_staging}"
+  mkdir -p "${client_staging}" "${server_staging}/deploy"
 
   for pkg in "${CLIENT_TUI_PACKAGES[@]}"; do
     cp "${DOWNLOAD_DIR}/jiuwenswarm/${pkg}" "${client_staging}/"
@@ -633,21 +616,14 @@ pack() {
   cp -a "${DEPLOY_DIR}/." "${server_staging}/deploy/"
   cp -a "${DOWNLOAD_DIR}/jiuwenswarm_src/deploy/yuanrong/." "${server_staging}/deploy/jiuwenswarm/"
 
-  for pkg in "${MANAGER_PACKAGES[@]}"; do
-    cp -a "${pkg}" "${manager_staging}/"
-  done
-
   local client_tgz="${BUILD_DIR}/AgentOS-Client.tgz"
   local server_tgz="${BUILD_DIR}/AgentOS-Server-${ARCH}.tgz"
-  local manager_tgz="${BUILD_DIR}/AgentOS-Manager.tgz"
 
   tar -czf "${client_tgz}" -C "${client_staging}" .
   tar -czf "${server_tgz}" -C "${server_staging}" .
-  tar -czf "${manager_tgz}" -C "${manager_staging}" .
 
   echo "  created: ${client_tgz}"
   echo "  created: ${server_tgz}"
-  echo "  created: ${manager_tgz}"
 }
 
 clean() {
@@ -665,9 +641,8 @@ main() {
     yr_version="${YUANRONG_RELEASE_VERSION}"
   fi
 
-  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, manager_version=${MANAGER_VERSION}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, yr_release_base=${YR_RELEASE_DOWNLOAD_BASE:-auto}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
+  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, yr_release_base=${YR_RELEASE_DOWNLOAD_BASE:-auto}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
   clean
-  build_manager_app
   build_openyuanrong
   build_jiuwenswarm
   build_tui_launcher

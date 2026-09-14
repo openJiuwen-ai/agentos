@@ -1,9 +1,0 @@
-[Unit]
-Description=Timer for NPU Exporter Service
-
-[Timer]
-OnBootSec=60s
-Unit=npu-exporter.service
-
-[Install]
-WantedBy=timers.target

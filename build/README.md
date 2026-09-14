@@ -65,12 +65,11 @@
 | 1 | `parse_args` | 解析命令行参数 |
 | 2 | `configure_build` | 按模式生成下载 URL 与包列表 |
 | 3 | `clean` | 清理 `build/dist/` |
-| 4 | `build_manager_app` | 打包 `control-panel/deploy/` → `AgentOS-Manager.tgz` |
-| 5 | `build_openyuanrong` | 下载 openYuanrong 包 |
-| 6 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
-| 7 | `build_agent_gateway` | 下载 agent-gateway 依赖包 |
-| 8 | `build_conch` | 下载 Conch 依赖包 |
-| 9 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server-${ARCH}.tgz` |
+| 4 | `build_openyuanrong` | 下载 openYuanrong 包 |
+| 5 | `build_jiuwenswarm` | clone jiuwenswarm 源码并下载 wheel 包 |
+| 6 | `build_agent_gateway` | 下载 agent-gateway 依赖包 |
+| 7 | `build_conch` | 下载 Conch 依赖包 |
+| 8 | `pack` | 打包 `AgentOS-Client.tgz` 与 `AgentOS-Server-${ARCH}.tgz` |
 
 任一步骤失败时，脚本会因 `set -e` 立即退出。
 
@@ -167,13 +166,6 @@ build/dist/downloads/agent-gateway/     # 注册中心 wheel、rqlite rpm
 | daily | macOS / Windows / linux aarch64 / linux x86_64 共 4 个 TUI wheel |
 | release | macOS / Windows 共 2 个 TUI wheel |
 
-### `AgentOS-Manager.tgz`
-
-管理面部署配置包，直接从 `control-panel/deploy/` 打包，与架构无关：
-
-- `docker-compose.yml` + `.env.example`
-- `grafana/`、`litellm/`、`victoriametrics/`、`postgres/` 配置
-
 ### `AgentOS-Server-${ARCH}.tgz`
 
 服务端包，文件名随构建机器架构变化，例如 `AgentOS-Server-x86_64.tgz`、`AgentOS-Server-aarch64.tgz`（`ARCH` 来自 `uname -m`）。包含：
@@ -195,7 +187,6 @@ build/
 ├── README.md
 └── dist/
     ├── AgentOS-Client.tgz
-    ├── AgentOS-Manager.tgz
     ├── AgentOS-Server-<arch>.tgz   # 如 AgentOS-Server-x86_64.tgz
     ├── downloads/
     │   ├── jiuwenswarm/        # wheel 包
@@ -203,8 +194,7 @@ build/
     │   └── openyuanrong/
     └── staging/          # 打包中间目录，可忽略
         ├── client/
-        ├── server/
-        └── manager/
+        └── server/
 ```
 
 ### `AgentOS-Server-${ARCH}.tgz` 解压后结构
