@@ -46,6 +46,7 @@ class HandoffMessage:
 
     content: str
     parsed: str
+    cmd: str
 
 
 def parse_handoff_stdout(stdout: str) -> HandoffMessage:
@@ -100,6 +101,7 @@ def _try_parse_json_line(line: str) -> Optional[HandoffMessage]:
 
     要求 action == "switch" 且 content 非空。
     parsed 缺失时从 content 中提取（去掉 "switch " 前缀）。
+    cmd 缺失时兜底使用 parsed（兼容旧格式）。
     """
     try:
         data = json.loads(line)
@@ -120,7 +122,12 @@ def _try_parse_json_line(line: str) -> Optional[HandoffMessage]:
         # parsed 缺失时从 content 提取：去掉 "switch " 前缀。
         parsed = _extract_parsed_from_content(content)
 
-    return HandoffMessage(content=content, parsed=parsed)
+    cmd = data.get("cmd")
+    if not isinstance(cmd, str) or not cmd:
+        # cmd 缺失时兜底使用 parsed（兼容旧格式）。
+        cmd = parsed
+
+    return HandoffMessage(content=content, parsed=parsed, cmd=cmd)
 
 
 def _extract_parsed_from_content(content: str) -> str:

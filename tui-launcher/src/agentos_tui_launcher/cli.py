@@ -1017,7 +1017,7 @@ class LauncherCli:
                     ssh_client.connect_and_send(
                         ssh_ip=endpoint.ssh_ip,
                         ssh_port=endpoint.ssh_port,
-                        content=switch_target,
+                        content=handoff.cmd,
                         username=ws_user_id,
                         private_key_file=private_key_file,
                     )
