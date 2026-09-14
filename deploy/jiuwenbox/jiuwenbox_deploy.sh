@@ -439,6 +439,7 @@ RestartSec=3
 KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=${STOP_TIMEOUT_SECONDS}s
+ExecStopPost=${server_bin} --cleanup-orphans
 ${log_lines}
 
 [Install]
@@ -476,11 +477,20 @@ EOF
 }
 
 # ===== 本机启停核心（仅函数，不对外暴露；由 up/down 按 host 调用） =====
+_jiuwenbox_cleanup_orphans() {
+  # SIGKILL / stop timeout 不会跑 lifespan，veth 会留在宿主机上。
+  # 新版本 jiuwenbox-server 提供 --cleanup-orphans；旧包没有该参数时忽略失败。
+  local server_bin
+  server_bin="$(command -v jiuwenbox-server 2>/dev/null)" || return 0
+  "$server_bin" --cleanup-orphans >/dev/null 2>&1 || true
+}
+
 stop_server_processes() {
   local pids pid waited=0 remaining=""
   pids="$(find_server_pids)"
   if [[ -z "$pids" ]]; then
     remove_stale_uds_socket
+    _jiuwenbox_cleanup_orphans
     echo "jiuwenbox is not running"
     return 0
   fi
@@ -503,6 +513,7 @@ stop_server_processes() {
     sleep 1
   fi
   remove_stale_uds_socket
+  _jiuwenbox_cleanup_orphans
   echo "Stopped jiuwenbox"
 }
 
@@ -607,6 +618,7 @@ stop_on_this_host() {
     else
       warning "jiuwenbox systemd unit not running"
     fi
+    _jiuwenbox_cleanup_orphans
   fi
   # 兜底清理 nohup 残留（例如此前无 systemd 拉起的进程）
   if [[ -n "$(find_server_pids)" ]]; then
