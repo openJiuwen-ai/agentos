@@ -53,11 +53,12 @@ RUN python3 /usr/local/bin/download_playwright_browsers.py && \
 RUN pip3 config set global.index-url https://mirrors.huaweicloud.com/repository/pypi/simple/ && \
     pip3 install \
         python-pptx requests pypdf pdfplumber pymupdf firecrawl-anydoc\
-        playwright markitdown markdown-it-py Pillow fake-useragent \
+        playwright==1.62.0 markitdown markdown-it-py Pillow fake-useragent \
         imapclient>=3.1.0 PySocks>=1.7.1 markdown>=3.4 \
         PyPDF2>=3.0.1 python-docx>=1.2.0 openpyxl>=3.1.0 \
         reportlab==5.0.0 matplotlib==3.11.1 pandas==3.0.5 \
-        pdfkit==1.0.0 graphviz==0.21 latex2mathml==3.81.0 && \
+        pdfkit==1.0.0 graphviz==0.21 latex2mathml==3.81.0 \
+        scrapling[rag]==0.4.15 patchright==1.62.3 && \
     pip3 cache purge && \
     pip3 config unset global.index-url
 
