@@ -87,6 +87,7 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - **系统命令**：部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
 - **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`。三个字段均须为可达的真实 IP（单机也填本机局域网 IP），`ingress_virtual_ip` 作为统一外部入口，**不要用 `127.0.0.1`**（会导致 web/gateway 只能本机访问），详见下文「集群配置」
 - **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
+- **Docker API**：运行 Docker 类型沙箱要求 Docker API 支持 `v1.45`。API 1.45 由 Docker Engine 26.0 引入，因此目标主机 Docker Engine 需 **≥ 26.0**；建议直装 **27.x ~ 28.x 稳定版**（如 27.5.1），最新 29.x 仍兼容（其最低支持 API 为 1.44），但 1.45 已处兼容窗口下沿。版本对照见 [Docker Engine API 文档](https://docs.docker.com/reference/api/engine/)
 
 ### 安装包获取
 
