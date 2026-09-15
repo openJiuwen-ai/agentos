@@ -85,7 +85,7 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - **systemd**：etcd 和 agent-gateway 强依赖 systemd（`systemctl` 可用且 `/run/systemd/system` 存在）；moosefs 和 jiuwenswarm 自动检测
 - **SSH 免密**：部署机器到所有目标主机需配置 SSH 免密登录（root 用户）
 - **系统命令**：部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
-- **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`（单机开发模式默认全为 `127.0.0.1`）
+- **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`。三个字段均须为可达的真实 IP（单机也填本机局域网 IP），`ingress_virtual_ip` 作为统一外部入口，**不要用 `127.0.0.1`**（会导致 web/gateway 只能本机访问），详见下文「集群配置」
 - **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
 
 ### 安装包获取
@@ -99,29 +99,50 @@ install  ↔  uninstall     装/卸 whl（最外层）
 
 ### 集群配置
 
-安装部署前需编辑 `deploy/config.yaml` 配置集群拓扑：
+安装部署前需编辑 `deploy/config.yaml` 配置集群拓扑。**三个字段都必须填其他节点可达的真实 IP，不能配成 `127.0.0.1` / `0.0.0.0`**：`ingress_virtual_ip` 是统一外部入口（gateway/registry/web 等对外服务的监听地址），配成回环地址会导致 web/gateway 只能本机访问、外部无法连接。
+
+**示例一：单机部署**（三字段均填本机局域网 IP，外部通过该 IP 访问 web/gateway）：
 
 ```yaml
 cluster:
-  # etcd 集群节点（奇数节点保证 raft 共识）
+  # etcd 集群节点
   etcd_nodes:
-    - "127.0.0.1"
+    - "192.168.100.1"
+
+  # master 节点
+  master_nodes:
+    - "192.168.100.1"
+
+  # 统一入口虚拟 IP（单机即本机局域网 IP）
+  ingress_virtual_ip: "192.168.100.1"
+```
+
+**示例二：双机 HA**（master 节点持有 VIP，备份节点不持 VIP（gateway/registry 跳过启动，yuanrong/jiuwenbox 照常）：
+
+```yaml
+cluster:
+  # 生产建议 3 节点（奇数，保证 raft 共识）；此处按 2 机示例
+  etcd_nodes:
+    - "192.168.100.1"
+    - "192.168.100.2"
 
   # master 节点（主备）
   master_nodes:
-    - "127.0.0.1"
+    - "192.168.100.1"
 
-  # 统一入口虚拟 IP（抢占到 VIP 的节点部署 gateway/registry/web-server）
-  ingress_virtual_ip: "127.0.0.1"
+  # 专用虚拟 IP，需先绑定到 master 网卡（如 ip addr add 192.168.100.200/24 dev eth0）
+  ingress_virtual_ip: "192.168.100.200"
 ```
 
 | 字段 | 说明 |
 | --- | --- |
-| `etcd_nodes` | etcd 集群节点 IP 列表（单机 1 节点 / 多机 HA 3 节点，奇数保证 raft 共识） |
-| `master_nodes` | master 节点列表（单机 1 节点 / 多机 HA 2 节点） |
-| `ingress_virtual_ip` | 统一入口虚拟 IP，抢占到 VIP 的节点部署 agent-gateway/registry/web-server |
+| `etcd_nodes` | etcd 集群节点 IP 列表（单机 1 节点 / 多机 HA 3 节点，奇数保证 raft 共识）。必须为节点间互通的真实 IP——etcd 的 advertise 地址取自该字段，填 `127.0.0.1` 会让其他节点无法连接 |
+| `master_nodes` | master 节点列表（单机 1 节点 / 多机 HA 2 节点）。gateway/registry 实际只在持有 VIP 的节点启动 |
+| `ingress_virtual_ip` | 统一入口虚拟 IP，gateway/registry/web 等对外服务绑定该地址。单机填本机局域网 IP；多机填专用 VIP。**填 `127.0.0.1` 会导致 web/gateway 只能本机访问** |
 
-`config.yaml` 随 `install` 持久化到 `~/.agentos/deploy/config.yaml`，角色推导（etcd 节点、master 节点、VIP 持有）由 `scripts/config.py` 解析。
+角色判定：本机是否持有 `ingress_virtual_ip`（绑定在本机网卡）决定是否为 ingress master——持有者启动 gateway/registry/web；master_nodes 内但不持 VIP 的备节点跳过这些服务（systemd `ExecStartPre` 门控，属正常待命，`status` 显示 `n/a`）。
+
+`config.yaml` 随 `install` 持久化到 `~/.agentos/deploy/config.yaml`，角色推导（etcd 节点、master 节点、VIP 持有）由 `scripts/config.py` 解析。修改持久化文件后重启对应服务即可生效（`ExecStartPre` 每次启动时重新判定）。
 
 ### agent SSH 直连密钥（yuanrong 前置）
 

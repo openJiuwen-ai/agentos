@@ -198,6 +198,18 @@ jiuwenswarm_status() {
             found=1
             local svc_name
             svc_name=$(basename "${unit_file}" .service)
+
+            # gateway 类 unit 受 ExecStartPre VIP 门控（agentos-check-ingress-master）：
+            # 本机为 master_nodes 成员但未持有 ingress VIP 时，unit 拒启进入 failed 属预期待命形态，
+            # 应与 agent-gateway_status 一致判 n/a（不计数 failed、不拉高 RC），而非误报故障。
+            if [[ "${svc_name}" == jiuwenswarm-gateway* ]]; then
+                if ! command -v /usr/local/bin/agentos-check-ingress-master >/dev/null 2>&1 \
+                    || ! /usr/local/bin/agentos-check-ingress-master >/dev/null 2>&1; then
+                    echo "jiuwenswarm|${svc_name}|n/a|not ingress master"
+                    continue
+                fi
+            fi
+
             local state detail
             if systemctl is-active --quiet "${svc_name}" 2>/dev/null; then
                 state="running"
