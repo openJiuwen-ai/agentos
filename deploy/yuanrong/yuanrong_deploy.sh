@@ -28,6 +28,11 @@ YR_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${YR_EXECUTOR_SVC}.service.d"
 YR_EXECUTOR_DROPIN="${YR_EXECUTOR_DROPIN_DIR}/env.conf"
 YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
+# ===== frontend 端口 =====
+# 使用 --port-policy FIX 固定端口：端口被占用时 yr start 直接失败，而非静默切换到其他端口。
+# 这样 gateway 配置中的 frontend_endpoint 始终可达，避免 down/up 过快时端口冲突导致 gateway 连不上 frontend。
+FRONTEND_PORT="${FRONTEND_PORT:-8888}"
+
 # uninstall 失败包清单（pkg(原因) 格式），供结尾真实汇总，避免失败仍报"全部卸载成功"
 YR_UNINSTALL_FAILED_PKGS=()
 
@@ -107,6 +112,36 @@ warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error() { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
 # error 不退出：用于 yr_uninstall_packages 逐包卸载时记录单包失败，最后由 error 汇总中断
 error_noexit() { echo -e "\033[31m❌ $@\033[0m"; }
+
+# ===== 端口释放等待 =====
+# down 后端口可能仍处于 TIME_WAIT，快速 restart 时新进程绑不上。
+# 等待指定端口不再被 LISTEN 或 TIME_WAIT 占用，超时后仅 warning 不中断。
+_wait_port_release() {
+    local port="${1:-${FRONTEND_PORT}}" max_wait="${2:-5}" i=0
+    # 优先 ss，回退 /proc/net/tcp
+    local ss_cmd="ss -tlnH"
+    if ! command -v ss >/dev/null 2>&1; then
+        ss_cmd=""
+    fi
+    while [ "$i" -lt "$max_wait" ]; do
+        local occupied=0
+        if [ -n "$ss_cmd" ]; then
+            $ss_cmd 2>/dev/null | grep -q "[:.]${port}\b" && occupied=1
+            $ss_cmd -tan 2>/dev/null | grep -q "TIME-WAIT.*[:.]${port}\b" && occupied=1
+        else
+            # /proc/net/tcp: 00000000:22B8 = 0.0.0.0:8888 (hex 22B8=8888)
+            local hex_port
+            hex_port=$(printf '%04X' "$port" 2>/dev/null || true)
+            [ -n "$hex_port" ] && grep -qi ":${hex_port} " /proc/net/tcp 2>/dev/null && occupied=1
+        fi
+        if [ "$occupied" -eq 0 ]; then
+            return 0
+        fi
+        sleep 1
+        i=$((i+1))
+    done
+    warning "Port ${port} still in use after ${max_wait}s, proceeding anyway"
+}
 
 # ===== SSH 工具函数 =====
 # 取本机所有 IPv4 地址。hostname -I 不可用时回退到 /etc/hosts 和 ifconfig。
@@ -658,11 +693,14 @@ yr_start_master() {
 
     # 设置 TORCH_DEVICE_BACKEND_AUTOLOAD=0，避免环境 pytorch 问题导致函数实例拉不起来
     # --log-dir-prefix 把会话/日志迁到 ${YR_LOG_DIR_PREFIX}，与下方读取路径保持一致
-    # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程，
+    # 共进程：--function-proxy-merge-process-enable 将 function_agent 内嵌入 function_proxy 进程
+    # --port-policy FIX 固定 frontend 端口：端口被占用时直接失败，而非静默切换到其他端口
     exec_on_host "${master_host}" "export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && yr start --master \
         --log-dir-prefix '${YR_LOG_DIR_PREFIX}' \
         -s 'values.host_ip=\"${master_host}\"' \
         -s 'mode.master.frontend=true' \
+        --port-policy FIX \
+        -s 'values.frontend.port=${FRONTEND_PORT}' \
         --function-proxy-merge-process-enable \
         -s 'frontend.args.enableEvent=true' \
         -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \
@@ -766,6 +804,20 @@ yr_stop_all() {
         yr_cleanup_tool_sandboxes "${host}"
     done
 
+    # 等待 master 节点 frontend 端口释放，避免快速 restart 时端口冲突导致 yr start 失败
+    # 进程模式仅 master 节点启 frontend，agent 节点无 frontend
+    local master_host="${YR_HOST_LIST[0]}"
+    if is_local_host "${master_host}"; then
+        _wait_port_release
+    else
+        info "Waiting for frontend port ${FRONTEND_PORT} to release on ${master_host}..."
+        exec_on_host "${master_host}" \
+            "for i in \$(seq 1 5); do \
+                ss -tlnH 2>/dev/null | grep -q '[:.]${FRONTEND_PORT}\b' || exit 0; \
+                sleep 1; \
+            done; exit 0" 2>/dev/null || true
+    fi
+
     success "openyuanrong uninstall completed!"
 }
 
@@ -862,6 +914,8 @@ ExecStart=${yr_bin} start --master --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.master.frontend=true' \\
+    --port-policy FIX \\
+    -s 'values.frontend.port=${FRONTEND_PORT}' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
     -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
@@ -906,6 +960,8 @@ ExecStart=${yr_bin} start --log-dir-prefix=${YR_LOG_DIR_PREFIX} \\
     -s 'values.etcd.address=${etcd_addr_list}' \\
     -s 'values.etcd.enable_multi_master=true' \\
     -s 'mode.agent.frontend=true' \\
+    --port-policy FIX \\
+    -s 'values.frontend.port=${FRONTEND_PORT}' \\
     -s 'frontend.args.enableEvent=true' \\
     --function-proxy-merge-process-enable \\
     -s 'function_proxy.args.runtime_log_rotate_enable=${RUNTIME_LOG_ROTATE_ENABLE}' \\
@@ -973,6 +1029,9 @@ deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
     systemctl stop "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+
+    # 等待 frontend 端口释放，避免快速 restart 时端口冲突导致 yr start 失败
+    _wait_port_release
 
     # 清理 yuanrong 在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
     _yr_clean_etcd_data "$(get_local_ip)"
