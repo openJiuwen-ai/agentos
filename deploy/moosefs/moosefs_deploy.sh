@@ -496,9 +496,16 @@ StartLimitBurst=5
 
 [Service]
 Type=forking
-# SIGKILL 后 metadata.mfs 可能来不及 rename，失败时用 -a 从 changelog 恢复
-ExecStart=/bin/bash -c '${MFS_BIN_MASTER} start || ${MFS_BIN_MASTER} -a start'
+# ExecStartPre: 清理 reboot 后可能残留的锁文件（异常掉电/被杀时来不及清理）
+ExecStartPre=-/bin/rm -f /var/lib/mfs/.mfsmaster.lock /var/lib/mfs/.bgwriter.lock
+# ExecStart: 正常启动，失败时用 -a -i 从 changelog 恢复
+# -i: 忽略 metadata 中的结构错误（如 flock_locks 引用已 closed 的文件）
+ExecStart=/bin/bash -c '${MFS_BIN_MASTER} start || ${MFS_BIN_MASTER} -a -i start'
+# ExecStop: 用 stop 优雅关闭写最终 metadata。client session 断开后 flock_locks 可能
+# 引用已 closed 的文件，启动时 -i 标志会忽略此错误，无需从 changelog 恢复。
 ExecStop=${MFS_BIN_MASTER} stop
+# KillMode=mixed: SIGTERM 只发给主进程，不杀整个 cgroup（避免误杀 data writer）
+KillMode=mixed
 # Restart=always: SIGTERM 也会导致 master 退出（status=0），
 # on-failure 不会重启正常退出的进程，用 always 确保任何异常退出都重启。
 # systemctl stop 不会触发 Restart（systemd 明确区分 stop 和 crash）。
