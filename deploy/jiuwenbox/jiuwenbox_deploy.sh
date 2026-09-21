@@ -68,6 +68,7 @@ Options:
 Environment:
   JIUWENBOX_RUN_DIR / JIUWENBOX_LOG_DIR / JIUWENBOX_LISTEN / JIUWENBOX_READY_TIMEOUT
   JIUWENBOX_UDS_MODE / JIUWENBOX_SAVE_LOGS_DIR / JIUWENBOX_LOG_LEVEL
+  JIUWENBOX_ETCD_ENDPOINTS  (empty = fill from ~/.agentos/deploy/config.yaml etcd_nodes)
 
 Notes:
   有 systemd 时生成 jiuwenbox.service（Restart=on-failure, RestartSec=3）并 enable；
@@ -373,6 +374,38 @@ _jiuwenbox_has_systemd() {
   command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
 }
 
+# Fill JIUWENBOX_ETCD_ENDPOINTS the same way jiuwenswarm check_handler fills
+# ETCD_ENDPOINTS: join cluster.etcd_nodes as http://ip:32379. An explicit
+# env value wins. Missing config / nodes -> empty (watcher stays off).
+_jiuwenbox_etcd_endpoints() {
+  if [ -n "${JIUWENBOX_ETCD_ENDPOINTS:-}" ]; then
+    printf '%s' "${JIUWENBOX_ETCD_ENDPOINTS}"
+    return 0
+  fi
+  local config_file="${HOME:-/root}/.agentos/deploy/config.yaml"
+  [ -f "${config_file}" ] || return 0
+  local py etcd_port="${YR_ETCD_CLIENT_PORT:-32379}" endpoints="" nodes="" node
+  py="$(python_bin)"
+  if command -v "${py}" >/dev/null 2>&1 && "${py}" -c 'import yaml' >/dev/null 2>&1; then
+    nodes=$("${py}" -c '
+import sys, yaml
+try:
+    with open(sys.argv[1]) as f:
+        cfg = yaml.safe_load(f)
+    nodes = (cfg or {}).get("cluster", {}).get("etcd_nodes", []) or []
+    print(" ".join(str(n).strip() for n in nodes if str(n).strip()), end="")
+except Exception:
+    print("", end="")
+' "${config_file}" 2>/dev/null) || true
+  fi
+  for node in ${nodes}; do
+    echo "${node}" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || continue
+    [ -n "${endpoints}" ] && endpoints="${endpoints},"
+    endpoints="${endpoints}http://${node}:${etcd_port}"
+  done
+  printf '%s' "${endpoints}"
+}
+
 # 生成 unit + drop-in 并 enable --now。调用方已完成 policy / 目录 / 前置检查。
 _jiuwenbox_start_systemd() {
   local server_bin py py_path py_bindir py_libdir log_level exec_start pid
@@ -470,6 +503,9 @@ EOF
   if [[ -n "${SAVE_LOGS_DIR:-}" ]]; then
     echo "Environment=JIUWENBOX_SAVE_LOGS_DIR=${SAVE_LOGS_DIR}" >> "${JIUWENBOX_DROPIN}"
   fi
+  if [[ -n "${JIUWENBOX_ETCD_ENDPOINTS:-}" ]]; then
+    echo "Environment=JIUWENBOX_ETCD_ENDPOINTS=${JIUWENBOX_ETCD_ENDPOINTS}" >> "${JIUWENBOX_DROPIN}"
+  fi
 
   systemctl daemon-reload
   systemctl reset-failed "${JIUWENBOX_SVC}" 2>/dev/null || true
@@ -562,6 +598,15 @@ start_on_this_host() {
   info "generated jiuwenbox policy: ${policy_file}"
   POLICY_ABS="${policy_file}"
 
+  local etcd_endpoints
+  etcd_endpoints="$(_jiuwenbox_etcd_endpoints)"
+  if [ -n "${etcd_endpoints}" ]; then
+    JIUWENBOX_ETCD_ENDPOINTS="${etcd_endpoints}"
+    info "JIUWENBOX_ETCD_ENDPOINTS=${JIUWENBOX_ETCD_ENDPOINTS}"
+  else
+    warning "JIUWENBOX_ETCD_ENDPOINTS unset and no etcd_nodes in config.yaml; policy sync disabled"
+  fi
+
   # systemd 托管含开机自启动，而 RUN_DIR 默认在 /tmp（重启即清空），
   # policy 留在那里会导致重启后服务起不来，故另存一份到持久目录。
   if _jiuwenbox_has_systemd; then
@@ -595,6 +640,7 @@ start_on_this_host() {
   start_env=("JIUWENBOX_LISTEN=$LISTEN_URI" "JIUWENBOX_POLICY_PATH=$POLICY_ABS")
   [[ -n "${UDS_MODE:-}" ]] && start_env+=("JIUWENBOX_UDS_MODE=$UDS_MODE")
   [[ -n "${SAVE_LOGS_DIR:-}" ]] && start_env+=("JIUWENBOX_SAVE_LOGS_DIR=$SAVE_LOGS_DIR")
+  [[ -n "${JIUWENBOX_ETCD_ENDPOINTS:-}" ]] && start_env+=("JIUWENBOX_ETCD_ENDPOINTS=$JIUWENBOX_ETCD_ENDPOINTS")
   server_args=(--log-level "$log_level")
   [[ -n "${SAVE_LOGS_DIR:-}" ]] && server_args+=(--save-logs "$SAVE_LOGS_DIR")
 
