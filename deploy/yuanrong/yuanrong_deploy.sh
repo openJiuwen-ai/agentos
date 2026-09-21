@@ -15,7 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 YR_VERSION="${YR_VERSION:-0.9.0}"
 CMD=""
-BIND_IP=""
+# 保留 agentos.sh export 传入的 BIND_IP（--ip）；仅独立调用且未传时为空
+BIND_IP="${BIND_IP:-}"
 # 部署模式：默认 systemd（本机单节点，角色推导交给 config.py）；--no-systemd 走进程模式
 NO_SYSTEMD=0
 
@@ -760,47 +761,25 @@ yr_start_agent() {
 }
 
 yr_stop_all() {
-    local local_ip master_host
+    local local_ip
 
     local_ip=$(get_local_ip)
-    YR_HOST_LIST=("${local_ip}")
-
-    # 角色判定：与 up 一致，通过 config.py 读 config.yaml
-    if _yr_cfg is-master-node >/dev/null 2>&1; then
-        master_host="${local_ip}"
-    else
-        master_host=$(_yr_cfg master-ip 2>/dev/null || echo "")
-        if [ -n "${master_host}" ]; then
-            YR_HOST_LIST+=("${master_host}")
-        fi
-    fi
 
     info "Stopping openyuanrong services..."
-
-    for host in "${YR_HOST_LIST[@]}"; do
-        info "Stopping yr on ${host} (force)..."
-        exec_on_host "${host}" "yr stop --force --log-dir-prefix '${YR_LOG_DIR_PREFIX}'" 2>/dev/null && \
-            success "yr stopped on ${host}" || \
-            warning "Failed to stop yr on ${host} (may not be running)"
-        # 强制清理残留进程，避免多次 up/down 后进程堆积
-        yr_cleanup_processes "${host}"
-        # 兜底回收残留的 docker 工具沙箱容器（yr stop --force 不清理 docker 实例）
-        yr_cleanup_tool_sandboxes "${host}"
-    done
+    info "Stopping yr on ${local_ip} (force)..."
+    exec_on_host "${local_ip}" "yr stop --force --log-dir-prefix '${YR_LOG_DIR_PREFIX}'" 2>/dev/null && \
+        success "yr stopped on ${local_ip}" || \
+        warning "Failed to stop yr on ${local_ip} (may not be running)"
+    # 强制清理残留进程，避免多次 up/down 后进程堆积
+    yr_cleanup_processes "${local_ip}"
+    # 兜底回收残留的 docker 工具沙箱容器（yr stop --force 不清理 docker 实例）
+    yr_cleanup_tool_sandboxes "${local_ip}"
 
     # 等待 master 节点 frontend 端口释放，避免快速 restart 时端口冲突导致 yr start 失败
-    # 进程模式仅 master 节点启 frontend，agent 节点无 frontend
-    if [ -n "${master_host:-}" ]; then
-        if is_local_host "${master_host}"; then
-            _wait_port_release
-        else
-            info "Waiting for frontend port ${FRONTEND_PORT} to release on ${master_host}..."
-            exec_on_host "${master_host}" \
-                "for i in \$(seq 1 5); do \
-                    ss -tlnH 2>/dev/null | grep -q '[:.]${FRONTEND_PORT}\b' || exit 0; \
-                    sleep 1; \
-                done; exit 0" 2>/dev/null || true
-        fi
+    # 进程模式仅 master 节点启 frontend，agent 节点无 frontend；
+    # 本机非 master 时不等待（SSH 已移除，无法探测远端，master 由其所在节点自行保证）
+    if _yr_cfg is-master-node >/dev/null 2>&1; then
+        _wait_port_release
     fi
 
     success "openyuanrong uninstall completed!"
@@ -1041,7 +1020,6 @@ deploy_yr_up() {
     local yr_up_phase=0
 
     local_ip=$(get_local_ip)
-    YR_HOST_LIST=("${local_ip}")
 
     # 进程模式角色判定：复用 config.py 读 config.yaml（与 systemd 模式一致）
     if _yr_cfg is-master-node >/dev/null 2>&1; then
@@ -1053,8 +1031,7 @@ deploy_yr_up() {
         if [ -z "${master_host}" ]; then
             error "Cannot determine master IP from config.yaml. Ensure master_nodes is configured."
         fi
-        # master 不在本机，加入 host list 供 down/stop 遍历
-        YR_HOST_LIST+=("${master_host}")
+        # master 不在本机：SSH 已移除，无法操作远端，master 由其所在节点自行 up/down
     fi
 
     # 失败清理 trap:
@@ -1062,10 +1039,8 @@ deploy_yr_up() {
     #   - check 阶段 (phase=0) 失败（如发现已有集群）不清理，保护原可用集群
     trap '
         if [ "${yr_up_phase:-0}" = "1" ]; then
-            warning "deploy_yr_up failed during startup phase, cleaning up residual yuanrong processes on all hosts..."
-            for _h in "${YR_HOST_LIST[@]}"; do
-                yr_cleanup_processes "${_h}"
-            done
+            warning "deploy_yr_up failed during startup phase, cleaning up residual yuanrong processes on this host..."
+            yr_cleanup_processes "'"${local_ip}"'"
         fi
     ' EXIT
 
@@ -1077,15 +1052,11 @@ deploy_yr_up() {
     info "YR version: ${YR_VERSION}"
 
     # up 不负责安装whl包，仅校验yr命令是否就绪（需先执行 install）
-    for host in "${YR_HOST_LIST[@]}"; do
-        yr_verify_install "${host}"
-    done
+    yr_verify_install "${local_ip}"
 
-    # 预检查：所有节点确认无残留 yuanrong 进程后才进入启动阶段。
+    # 预检查：确认本机无残留 yuanrong 进程后才进入启动阶段。
     # 此处失败（发现已有集群）不触发清理，保护原可用集群。
-    for host in "${YR_HOST_LIST[@]}"; do
-        yr_check_existing "${host}"
-    done
+    yr_check_existing "${local_ip}"
 
     # SSH 密钥校验（master 节点，frontend/backend key 所在节点）
     if [ "${IS_MASTER}" = "1" ]; then
