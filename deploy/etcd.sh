@@ -44,8 +44,13 @@ _yr_python() {
 }
 
 # ===== config.py 封装：角色推导 =====
+# BIND_IP 非空时传 --ip 给 config.py，使 config.py 的 local-ip 探测与本脚本一致
 _yr_cfg() {
-    "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+    if [ -n "${BIND_IP:-}" ]; then
+        "$(_yr_python)" "${YR_CONFIG_PY}" --ip "${BIND_IP}" "$@"
+    else
+        "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+    fi
 }
 
 # ===== 探测 yr 内置 etcd 二进制路径 =====

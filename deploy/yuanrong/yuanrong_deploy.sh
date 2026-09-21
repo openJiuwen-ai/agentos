@@ -5,8 +5,8 @@ set -euo >/dev/null 2>&1
 # yuanrong 分布式部署独立脚本
 # 完全自包含，不依赖任何其他文件
 # 用法:
-#   ./yuanrong_deploy.sh up --hosts 192.168.1.1,192.168.1.2
-#   ./yuanrong_deploy.sh down --hosts 192.168.1.1,192.168.1.2
+#   ./yuanrong_deploy.sh up --ip 192.168.1.1
+#   ./yuanrong_deploy.sh down --ip 192.168.1.1
 #   ./yuanrong_deploy.sh up    # 默认本机
 # ============================================================
 
@@ -14,9 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 YR_VERSION="${YR_VERSION:-0.9.0}"
-CLUSTER_HOSTS=""
 CMD=""
-# 部署模式：默认 systemd（本机单节点，角色推导交给 config.py）；--no-systemd 走进程模式（SSH fanout）
+BIND_IP=""
+# 部署模式：默认 systemd（本机单节点，角色推导交给 config.py）；--no-systemd 走进程模式
 NO_SYSTEMD=0
 
 # ===== systemd 模式常量 =====
@@ -66,8 +66,6 @@ RUNTIME_LOG_ROTATE_MAX_FILES="${RUNTIME_LOG_ROTATE_MAX_FILES:-4}"
 LOG_EXPIRATION_ENABLE="${LOG_EXPIRATION_ENABLE:-true}"
 LOG_EXPIRATION_MAX_FILE_COUNT="${LOG_EXPIRATION_MAX_FILE_COUNT:-512}"
 LOG_EXPIRATION_CLEANUP_INTERVAL="${LOG_EXPIRATION_CLEANUP_INTERVAL:-15}"
-
-SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 
 # ===== docker 工具沙箱兜底回收 =====
 # yr stop --force 直接杀 yr 进程，docker executor 拉起的工具沙箱容器没有机会被
@@ -143,8 +141,8 @@ _wait_port_release() {
     warning "Port ${port} still in use after ${max_wait}s, proceeding anyway"
 }
 
-# ===== SSH 工具函数 =====
-# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 /etc/hosts 和 ifconfig。
+# ===== 本机 IP 探测与工具函数 =====
+# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 ip addr、/etc/hosts、ifconfig。
 _get_local_ips() {
     local ips
     ips=$(hostname -I 2>/dev/null || true)
@@ -152,13 +150,18 @@ _get_local_ips() {
         echo "${ips}"
         return
     fi
-    # 回退 1：/etc/hosts 里本机 hostname 对应的 IP
+    # 回退 1：ip addr show
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+        return
+    fi
+    # 回退 2：/etc/hosts 里本机 hostname 对应的 IP
     local hname
     hname=$(cat /etc/hostname 2>/dev/null || true)
     if [ -n "${hname}" ]; then
         grep -E "^[0-9.]+[[:space:]]+.*${hname}" /etc/hosts 2>/dev/null | awk '{print $1}'
     fi
-    # 回退 2：ifconfig 的 inet 地址
+    # 回退 3：ifconfig 的 inet 地址
     if command -v ifconfig >/dev/null 2>&1; then
         ifconfig 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
     fi
@@ -168,6 +171,10 @@ is_local_host() {
     local host="$1"
     if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
         return 0
+    fi
+    # --ip 指定时只认指定 IP，避免多网卡下误判
+    if [ -n "${BIND_IP}" ]; then
+        [ "${host}" = "${BIND_IP}" ] && return 0 || return 1
     fi
     local local_ips
     local_ips=$(_get_local_ips)
@@ -180,6 +187,11 @@ is_local_host() {
 }
 
 get_local_ip() {
+    # --ip 指定时直接返回，跳过自动探测
+    if [ -n "${BIND_IP}" ]; then
+        echo "${BIND_IP}"
+        return 0
+    fi
     local local_ips
     local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
@@ -191,49 +203,32 @@ get_local_ip() {
     echo "127.0.0.1"
 }
 
+# ===== 本机执行封装（不再 SSH 到远端，所有操作在本机执行）=====
 exec_on_host() {
+    # host 参数保留兼容但忽略，始终在本机执行
     local host="$1"
     shift
-    if is_local_host "${host}"; then
-        bash -c "$*"
-    else
-        ssh ${SSH_OPTS} root@${host} "$*"
-    fi
+    bash -c "$*"
 }
 
 copy_to_host() {
+    # host 参数保留兼容但忽略，始终走本机 cp
     local host="$1"
     local src="$2"
     local dst="$3"
-    if is_local_host "${host}"; then
-        local src_real
-        src_real=$(realpath "${src}" 2>/dev/null || echo "${src}")
-        local dst_real
-        if [[ "${dst}" == */ ]]; then
-            dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
-            dst_real="${dst_real}/$(basename "${src}")"
-        else
-            dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
-        fi
-        if [ "${src_real}" = "${dst_real}" ]; then
-            return 0
-        fi
-        cp -r "${src}" "${dst}"
+    local src_real
+    src_real=$(realpath "${src}" 2>/dev/null || echo "${src}")
+    local dst_real
+    if [[ "${dst}" == */ ]]; then
+        dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
+        dst_real="${dst_real}/$(basename "${src}")"
     else
-        scp ${SSH_OPTS} -r "${src}" "root@${host}:${dst}"
+        dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
     fi
-}
-
-yr_check_ssh() {
-    local host="$1"
-    if is_local_host "${host}"; then
+    if [ "${src_real}" = "${dst_real}" ]; then
         return 0
     fi
-    if ssh ${SSH_OPTS} root@${host} "echo ok" >/dev/null 2>&1; then
-        return 0
-    else
-        return 1
-    fi
+    cp -r "${src}" "${dst}"
 }
 
 # ===== openyuanrong 安装/启动函数 =====
@@ -465,31 +460,13 @@ yr_install_packages() {
         packages+=("agent_dx_executor-${yr_version}-py3-none-any.whl")
     fi
 
-    # 本地路径且目标主机非本机时,先把whl拷贝到目标主机
-    local remote_pkg_dir=""
-    if [ "${is_local_path}" = "true" ] && ! is_local_host "${host}"; then
-        remote_pkg_dir="/tmp/yr_packages_${arch}"
-        info "Copying whl packages to ${host}:${remote_pkg_dir}..."
-        exec_on_host "${host}" "mkdir -p ${remote_pkg_dir}"
-        for package in "${packages[@]}"; do
-            local src_file="${pkg_base}/${package}"
-            if [ ! -f "${src_file}" ]; then
-                error "Package not found: ${src_file}"
-            fi
-            copy_to_host "${host}" "${src_file}" "${remote_pkg_dir}/"
-        done
-    fi
-
+    # 本地路径时直接使用本地文件路径安装
     for package in "${packages[@]}"; do
         local install_target
         if [ "${is_local_path}" = "true" ]; then
-            if is_local_host "${host}"; then
-                install_target="${pkg_base}/${package}"
-                if [ ! -f "${install_target}" ]; then
-                    error "Package not found: ${install_target}"
-                fi
-            else
-                install_target="${remote_pkg_dir}/${package}"
+            install_target="${pkg_base}/${package}"
+            if [ ! -f "${install_target}" ]; then
+                error "Package not found: ${install_target}"
             fi
         else
             install_target="${pkg_base}/${package}"
@@ -783,13 +760,20 @@ yr_start_agent() {
 }
 
 yr_stop_all() {
-    local hosts_str="${CLUSTER_HOSTS}"
+    local local_ip master_host
 
-    if [ -z "${hosts_str}" ]; then
-        error "CLUSTER_HOSTS is not set. Cannot determine which hosts to stop."
+    local_ip=$(get_local_ip)
+    YR_HOST_LIST=("${local_ip}")
+
+    # 角色判定：与 up 一致，通过 config.py 读 config.yaml
+    if _yr_cfg is-master-node >/dev/null 2>&1; then
+        master_host="${local_ip}"
+    else
+        master_host=$(_yr_cfg master-ip 2>/dev/null || echo "")
+        if [ -n "${master_host}" ]; then
+            YR_HOST_LIST+=("${master_host}")
+        fi
     fi
-
-    IFS=',' read -ra YR_HOST_LIST <<< "${hosts_str}"
 
     info "Stopping openyuanrong services..."
 
@@ -806,16 +790,17 @@ yr_stop_all() {
 
     # 等待 master 节点 frontend 端口释放，避免快速 restart 时端口冲突导致 yr start 失败
     # 进程模式仅 master 节点启 frontend，agent 节点无 frontend
-    local master_host="${YR_HOST_LIST[0]}"
-    if is_local_host "${master_host}"; then
-        _wait_port_release
-    else
-        info "Waiting for frontend port ${FRONTEND_PORT} to release on ${master_host}..."
-        exec_on_host "${master_host}" \
-            "for i in \$(seq 1 5); do \
-                ss -tlnH 2>/dev/null | grep -q '[:.]${FRONTEND_PORT}\b' || exit 0; \
-                sleep 1; \
-            done; exit 0" 2>/dev/null || true
+    if [ -n "${master_host:-}" ]; then
+        if is_local_host "${master_host}"; then
+            _wait_port_release
+        else
+            info "Waiting for frontend port ${FRONTEND_PORT} to release on ${master_host}..."
+            exec_on_host "${master_host}" \
+                "for i in \$(seq 1 5); do \
+                    ss -tlnH 2>/dev/null | grep -q '[:.]${FRONTEND_PORT}\b' || exit 0; \
+                    sleep 1; \
+                done; exit 0" 2>/dev/null || true
+        fi
     fi
 
     success "openyuanrong uninstall completed!"
@@ -839,8 +824,13 @@ _yr_python() {
 }
 
 # ===== config.py 封装：角色推导 =====
+# --ip 指定时把 BIND_IP 传给 config.py，使 config.py 的 local-ip 探测与本脚本一致
 _yr_cfg() {
-    "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+    if [ -n "${BIND_IP}" ]; then
+        "$(_yr_python)" "${YR_CONFIG_PY}" --ip "${BIND_IP}" "$@"
+    else
+        "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+    fi
 }
 
 # ===== 清理 yuanrong 在 etcd 中残留的业务数据 =====
@@ -856,12 +846,7 @@ _yr_clean_etcd_data() {
     fi
 
     info "Cleaning yuanrong etcd data on ${host}..."
-    if is_local_host "${host}"; then
-        bash "${etcd_sh}" clean-yr-data || warning "etcd clean-yr-data failed on ${host}"
-    else
-        exec_on_host "${host}" "bash '${etcd_sh}' clean-yr-data" \
-            || warning "etcd clean-yr-data failed on ${host}"
-    fi
+    bash "${etcd_sh}" clean-yr-data || warning "etcd clean-yr-data failed on ${host}"
 }
 
 # ===== 定位 yr 入口脚本绝对路径 =====
@@ -1048,16 +1033,29 @@ deploy_yr_up() {
         deploy_yr_up_systemd
         return
     fi
-    local hosts_str="${CLUSTER_HOSTS}"
-    local master_host
+    local local_ip master_host
     # yr_up_phase:
     #   0 = 检测/校验阶段（check 失败不清理，避免误杀原可用集群）
     #   1 = 启动阶段（yr start 失败时清理本次拉起产生的残留进程）
     #   2 = 全部成功完成
     local yr_up_phase=0
 
-    IFS=',' read -ra YR_HOST_LIST <<< "${hosts_str}"
-    master_host="${YR_HOST_LIST[0]}"
+    local_ip=$(get_local_ip)
+    YR_HOST_LIST=("${local_ip}")
+
+    # 进程模式角色判定：复用 config.py 读 config.yaml（与 systemd 模式一致）
+    if _yr_cfg is-master-node >/dev/null 2>&1; then
+        IS_MASTER=1
+        master_host="${local_ip}"
+    else
+        IS_MASTER=0
+        master_host=$(_yr_cfg master-ip 2>/dev/null || echo "")
+        if [ -z "${master_host}" ]; then
+            error "Cannot determine master IP from config.yaml. Ensure master_nodes is configured."
+        fi
+        # master 不在本机，加入 host list 供 down/stop 遍历
+        YR_HOST_LIST+=("${master_host}")
+    fi
 
     # 失败清理 trap:
     #   - 仅当已进入启动阶段 (phase>=1) 且未完成 (phase!=2) 时才清理本次拉起的残留进程
@@ -1072,21 +1070,11 @@ deploy_yr_up() {
     ' EXIT
 
     info "Deploying openyuanrong in process mode"
+    info "Local IP: ${local_ip}"
+    info "Role: $( [ "${IS_MASTER}" = "1" ] && echo "master" || echo "agent" )"
     info "Master host: ${master_host}"
-    info "Total hosts: ${#YR_HOST_LIST[@]}"
     info "Python version: ${YR_PYTHON_VERSION}"
     info "YR version: ${YR_VERSION}"
-
-    info "Checking connectivity to all hosts..."
-    for host in "${YR_HOST_LIST[@]}"; do
-        if is_local_host "${host}"; then
-            success "${host} is local host, skip SSH check"
-        elif yr_check_ssh "${host}"; then
-            success "SSH to ${host} OK"
-        else
-            error "SSH to ${host} failed! Please configure SSH key authentication first."
-        fi
-    done
 
     # up 不负责安装whl包，仅校验yr命令是否就绪（需先执行 install）
     for host in "${YR_HOST_LIST[@]}"; do
@@ -1100,18 +1088,19 @@ deploy_yr_up() {
     done
 
     # SSH 密钥校验（master 节点，frontend/backend key 所在节点）
-    yr_check_ssh_keys "${master_host}"
+    if [ "${IS_MASTER}" = "1" ]; then
+        yr_check_ssh_keys "${master_host}"
+    fi
 
     # 进入启动阶段：此后任何失败都将触发清理
     yr_up_phase=1
 
-    yr_start_master "${master_host}"
-
-    if [ ${#YR_HOST_LIST[@]} -gt 1 ]; then
-        info "Starting agent nodes..."
-        for ((i=1; i<${#YR_HOST_LIST[@]}; i++)); do
-            yr_start_agent "${YR_HOST_LIST[$i]}" "${master_host}"
-        done
+    if [ "${IS_MASTER}" = "1" ]; then
+        yr_start_master "${master_host}"
+    else
+        # agent 节点：先确保 master 已启动，再加入
+        info "Waiting for master ${master_host} to be ready..."
+        yr_start_agent "${local_ip}" "${master_host}"
     fi
 
     yr_up_phase=2
@@ -1120,10 +1109,9 @@ deploy_yr_up() {
     echo "=========================================="
     success "Deployment Summary"
     echo "=========================================="
+    echo "  Role: $( [ "${IS_MASTER}" = "1" ] && echo "master" || echo "agent" )"
     echo "  Master: ${master_host}"
-    if [ ${#YR_HOST_LIST[@]} -gt 1 ]; then
-        echo "  Agents: ${YR_HOST_LIST[@]:1}"
-    fi
+    echo "  Local: ${local_ip}"
     echo "=========================================="
 
     # 成功完成，清除失败清理 trap，避免影响后续命令
@@ -1306,13 +1294,13 @@ parse_args() {
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
-            --hosts)
-                CLUSTER_HOSTS="${args[$((i+1))]}"
-                i=$((i+2))
-                ;;
             --no-systemd)
                 NO_SYSTEMD=1
                 i=$((i+1))
+                ;;
+            --ip)
+                BIND_IP="${args[$((i+1))]}"
+                i=$((i+2))
                 ;;
             -h|--help)
                 print_help
@@ -1328,19 +1316,10 @@ parse_args() {
         exit 1
     fi
 
-    # 进程模式(up/down/restart)需要 CLUSTER_HOSTS；systemd 模式角色推导交给 config.py，无需 --hosts
-    # status 为只读本机探测，无需 CLUSTER_HOSTS
-    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
-        if [ -z "${CLUSTER_HOSTS:-}" ]; then
-            CLUSTER_HOSTS=$(get_local_ip)
-            warning "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
-        fi
-    fi
-
     info "Executing command: $*"
     info "CMD=${CMD}"
-    if [ "${NO_SYSTEMD}" = "1" ] && [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
-        info "CLUSTER_HOSTS=${CLUSTER_HOSTS}"
+    if [ -n "${BIND_IP}" ]; then
+        info "BIND_IP=${BIND_IP}"
     fi
 }
 
@@ -1357,23 +1336,23 @@ Commands (Required):
   restart   重启 openyuanrong 集群（不安装whl包）
   status    只读探测集群状态（systemd: agentos-executor.service；进程模式: yr start 进程）
             输出格式：yuanrong|<service>|<state>|<detail>，state 小写
-  install   仅在本机安装 openyuanrong whl 包（不启动服务，不需要 --hosts）
-  uninstall 仅在本机卸载 openyuanrong whl 包（不需要 --hosts）
+  install   仅在本机安装 openyuanrong whl 包（不启动服务）
+  uninstall 仅在本机卸载 openyuanrong whl 包
             卸载与 install 严格使用同一解释器（python3.11，YR_PYTHON_VERSION 可覆盖）：
             whl 包装在该解释器的 site-packages 下，卸载前请确保 python3.11
             可用（在 PATH 中）；缺失时直接判卸载失败并在结尾汇总告警
             （退出码非 0），不回退其他解释器、不误报全部成功
 
 Options:
-  --no-systemd       进程模式部署（SSH fanout 多机）。不指定时默认 systemd 模式：
+  --no-systemd       进程模式部署（本机直接启动 yr 进程，不走 systemd）。不指定时默认 systemd 模式：
                      本机单节点执行，角色推导交给 config.py（读 ~/.agentos/deploy/config.yaml），
                      生成 agentos-etcd / agentos-executor unit 并 enable --now。
-  --hosts HOSTS      目标主机IP列表，逗号分隔。第一个IP为master节点，其余为agent节点
-                     仅 --no-systemd 进程模式的 up/down/restart 需要；systemd 模式忽略
-                     （角色由 config.yaml 推导）。install/uninstall 忽略此参数
-                     单机: --hosts 192.168.1.1
-                     多机: --hosts 192.168.1.1,192.168.1.2,192.168.1.3
-                     不指定时默认使用本机IP
+  --ip IP            指定本机使用的 IP 地址（多网卡环境必用）。
+                     指定后 shell 与 config.py 的 local-ip 探测统一使用该 IP，避免自动探测不准。
+                     指定的 IP 必须是本机真实持有的 IP，否则报错退出。
+                     systemd 模式：影响 executor unit 中的 host_ip 和 config.py 角色推导。
+                     进程模式：影响 yr start --master 的 host_ip 以及 is_local_host 判定。
+                     不指定时自动探测（hostname -I / UDP socket）。
   -h, --help         显示帮助信息
 
 Environment Variables:
@@ -1409,17 +1388,15 @@ Examples:
   # 典型流程：先在各主机安装whl包，再启动集群
   ./$(basename "$0") install                                          # 本机安装whl包（从默认OBS下载）
   YR_PKG_BASE=/data/yr_whls ./$(basename "$0") install               # 本机安装，使用本地whl目录（版本自动匹配）
-  ./$(basename "$0") up --hosts 192.168.1.1                          # 单机启动集群
-  ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2,192.168.1.3  # 多机启动集群
+  ./$(basename "$0") up --ip 192.168.1.1                             # 指定IP启动集群（多网卡环境）
   ./$(basename "$0") up                                              # 默认本机启动集群
-  ./$(basename "$0") down --hosts 192.168.1.1                        # 停止集群
+  ./$(basename "$0") down --ip 192.168.1.1                           # 停止集群
   YR_VERSION=0.9.0 ./$(basename "$0") install                        # 从OBS安装指定版本
   ./$(basename "$0") uninstall                                        # 本机卸载whl包
 
 注意:
-  - 部署机器到所有目标主机需配置SSH免密登录
-  - 目标主机需预装指定版本的Python
-  - up/restart 不再安装whl包，请先在各目标主机执行 install（多机时每台主机都需安装）
+  - 本机需预装指定版本的Python
+  - up/restart 不再安装whl包，请先执行 install
   - 卸载前需确保 python${YR_PYTHON_VERSION}（默认 python3.11）可用且在 PATH 中
     （与 install 时同一环境，如 export PATH=/opt/buildtools/python3.11/bin:$PATH）；
     该解释器缺失时不回退其他解释器，所有 whl 卸载直接判失败，

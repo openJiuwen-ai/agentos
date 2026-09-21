@@ -37,6 +37,12 @@ MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
 
+# ===== 指定本机 IP（多网卡环境）=====
+# agentos.sh --ip 1.2.3.4 up  →  export BIND_IP 后所有子脚本都能读到
+# 子脚本各自实现 get_local_ip / is_local_host 的 BIND_IP 优先逻辑
+# --ip 校验在 agentos.sh 统一做一次，各组件脚本不再重复校验
+BIND_IP="${BIND_IP:-}"
+
 # ===== agent SSH 直连密钥路径（用户自行生成，脚本不生成；默认 /root/.ssh 下）=====
 # 简便模式：host/backend/client 三处共用同一套密钥。生产环境建议三套独立
 export AGENTOS_SSH_KEY="${AGENTOS_SSH_KEY:-/root/.ssh/agent_key}"
@@ -49,6 +55,48 @@ warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error()   { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
 # error 不退出：用于 yr_uninstall_packages 逐包卸载时记录单包失败，最后由 error 汇总中断
 error_noexit() { echo -e "\033[31m❌ $@\033[0m"; }
+
+# ===== 本机 IP 探测（--ip 校验用）=====
+# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 ip addr、/etc/hosts、ifconfig。
+_get_local_ips() {
+    local ips
+    ips=$(hostname -I 2>/dev/null || true)
+    if [ -n "${ips}" ]; then
+        echo "${ips}"
+        return
+    fi
+    # 回退 1：ip addr show
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+        return
+    fi
+    # 回退 2：/etc/hosts 里本机 hostname 对应的 IP
+    local hname
+    hname=$(cat /etc/hostname 2>/dev/null || true)
+    if [ -n "${hname}" ]; then
+        grep -E "^[0-9.]+[[:space:]]+.*${hname}" /etc/hosts 2>/dev/null | awk '{print $1}'
+    fi
+    # 回退 3：ifconfig 的 inet 地址
+    if command -v ifconfig >/dev/null 2>&1; then
+        ifconfig 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+    fi
+}
+
+# ===== --ip 校验：指定 IP 必须是本机真实持有的 IP =====
+_validate_bind_ip() {
+    [ -z "${BIND_IP}" ] && return 0
+    if [ "${BIND_IP}" = "127.0.0.1" ] || [ "${BIND_IP}" = "localhost" ]; then
+        return 0
+    fi
+    local local_ips ip
+    local_ips=$(_get_local_ips)
+    for ip in ${local_ips}; do
+        if [ "${ip}" = "${BIND_IP}" ]; then
+            return 0
+        fi
+    done
+    error "--ip ${BIND_IP} is not a local IP address. Available: $(echo ${local_ips} | tr '\n' ' ')"
+}
 
 # ===== 加载所有模块 =====
 load_modules() {
@@ -131,6 +179,15 @@ parse_args() {
             up|down|restart|install|uninstall|init|deinit|status)
                 CMD="${args[$i]}"
                 i=$((i+1))
+                ;;
+            --ip)
+                if [ $((i+1)) -ge ${#args[@]} ]; then
+                    error "--ip requires a value"
+                fi
+                BIND_IP="${args[$((i+1))]}"
+                export BIND_IP
+                _validate_bind_ip
+                i=$((i+2))
                 ;;
             -h|--help)
                 print_help
@@ -414,6 +471,10 @@ Commands (Required):
   restart     重启全部应用组件（先 down 再 up；不含 init/deinit）
 
 Options:
+  --ip IP          指定本机使用的 IP 地址（多网卡环境必用）。
+                   指定后所有子组件（yuanrong/moosefs/conch/jiuwenbox/gateway/jiuwenswarm/etcd）
+                   的 local-ip 探测统一使用该 IP，避免自动探测不准导致 down/up 的 IP 对不上。
+                   不指定时各组件各自自动探测（hostname -I / UDP socket）。
   -h, --help      显示帮助信息
 
 etcd 数据清理（独立操作，需交互确认；-y 跳过确认）:
@@ -508,6 +569,7 @@ main() {
     fi
     load_modules
     parse_args "$@"
+    [ -n "${BIND_IP}" ] && info "BIND_IP=${BIND_IP}"
     case "${CMD}" in
         install)   deploy_install ;;
         init)      deploy_init ;;

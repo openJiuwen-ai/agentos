@@ -5,8 +5,8 @@ set -euo pipefail
 # Conch 部署脚本
 # 优先使用 systemd 托管；systemd 不可用时回退直接管理 conchd。
 # 用法:
-#   ./conch_deploy.sh up --hosts 192.168.1.1,192.168.1.2
-#   ./conch_deploy.sh down --hosts 192.168.1.1
+#   ./conch_deploy.sh up --ip 192.168.1.1
+#   ./conch_deploy.sh down --ip 192.168.1.1
 #   ./conch_deploy.sh up                    # 默认本机
 # ============================================================
 
@@ -18,10 +18,8 @@ CONCH_READY_TIMEOUT="${CONCH_READY_TIMEOUT:-300}"
 CONCH_READY_POLL_INTERVAL="${CONCH_READY_POLL_INTERVAL:-0.5}"
 CONCH_STOP_TIMEOUT="${CONCH_STOP_TIMEOUT:-90}"
 CONCH_SERVICE="${CONCH_SERVICE:-conchd.service}"
-CONCH_REMOTE_STAGE="${CONCH_REMOTE_STAGE:-/tmp/agentos_conch}"
-SSH_OPTS="${CONCH_SSH_OPTS:--o StrictHostKeyChecking=accept-new -o ConnectTimeout=10}"
-CLUSTER_HOSTS=""
 CMD=""
+BIND_IP="${BIND_IP:-}"
 
 # ===== 日志 =====
 info()    { echo -e "\033[36m=== $* ===\033[0m"; }
@@ -65,14 +63,43 @@ install_conch_wheel() {
     success "Conch wheel installed"
 }
 
-# ===== SSH =====
+# ===== 本机 IP 探测 =====
+# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 ip addr、/etc/hosts、ifconfig。
+_get_local_ips() {
+    local ips
+    ips=$(hostname -I 2>/dev/null || true)
+    if [ -n "${ips}" ]; then
+        echo "${ips}"
+        return
+    fi
+    # 回退 1：ip addr show
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+        return
+    fi
+    # 回退 2：/etc/hosts 里本机 hostname 对应的 IP
+    local hname
+    hname=$(cat /etc/hostname 2>/dev/null || true)
+    if [ -n "${hname}" ]; then
+        grep -E "^[0-9.]+[[:space:]]+.*${hname}" /etc/hosts 2>/dev/null | awk '{print $1}'
+    fi
+    # 回退 3：ifconfig 的 inet 地址
+    if command -v ifconfig >/dev/null 2>&1; then
+        ifconfig 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+    fi
+}
+
 is_local_host() {
     local host="$1"
     if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
         return 0
     fi
+    # --ip 指定时只认指定 IP，避免多网卡下误判
+    if [ -n "${BIND_IP}" ]; then
+        [ "${host}" = "${BIND_IP}" ] && return 0 || return 1
+    fi
     local local_ips ip
-    local_ips=$(hostname -I 2>/dev/null || echo "")
+    local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
         [ "${host}" = "${ip}" ] && return 0
     done
@@ -80,8 +107,13 @@ is_local_host() {
 }
 
 get_local_ip() {
+    # --ip 指定时直接返回，跳过自动探测
+    if [ -n "${BIND_IP}" ]; then
+        echo "${BIND_IP}"
+        return 0
+    fi
     local local_ips ip
-    local_ips=$(hostname -I 2>/dev/null || echo "")
+    local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
         if [ "${ip}" != "127.0.0.1" ] && [ "${ip}" != "localhost" ]; then
             echo "${ip}"
@@ -94,19 +126,7 @@ get_local_ip() {
 exec_on_host() {
     local host="$1"
     shift
-    if is_local_host "${host}"; then
-        bash -c "$*"
-    else
-        # shellcheck disable=SC2086
-        ssh ${SSH_OPTS} "root@${host}" "$*"
-    fi
-}
-
-conch_check_ssh() {
-    local host="$1"
-    is_local_host "${host}" && return 0
-    # shellcheck disable=SC2086
-    ssh ${SSH_OPTS} "root@${host}" "echo ok" >/dev/null 2>&1
+    bash -c "$*"
 }
 
 require_root() {
@@ -116,16 +136,6 @@ require_root() {
         fi
         error "root privileges required; re-run with sudo"
     fi
-}
-
-sync_remote_stage() {
-    local host="$1"
-    local remote_dir="${CONCH_REMOTE_STAGE}"
-    info "Syncing Conch deployment script to ${host}:${remote_dir}"
-    exec_on_host "${host}" "mkdir -p '${remote_dir}'"
-    # shellcheck disable=SC2086
-    scp ${SSH_OPTS} "${SCRIPT_DIR}/conch_deploy.sh" \
-        "root@${host}:${remote_dir}/" >/dev/null
 }
 
 # ===== 进程清理与检测函数 =====
@@ -141,22 +151,13 @@ has_systemd() {
 
 conch_status_on_host() {
     local host="$1" pids
-    if is_local_host "${host}"; then
-        if has_systemd && systemctl is-active --quiet "${CONCH_SERVICE}"; then
-            echo "${CONCH_SERVICE} is active"
-            return 0
-        fi
-        pids="$(find_conch_pids)"
-        [ -n "${pids}" ] && { echo "conchd is running (pid(s): ${pids//$'\n'/ })"; return 0; }
-        echo "conchd is not running"
-        return 1
-    fi
-    if exec_on_host "${host}" \
-        "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] && systemctl is-active --quiet '${CONCH_SERVICE}'; then exit 0; fi; pgrep -x conchd >/dev/null 2>&1"; then
-        echo "conchd is running on ${host}"
+    if has_systemd && systemctl is-active --quiet "${CONCH_SERVICE}"; then
+        echo "${CONCH_SERVICE} is active"
         return 0
     fi
-    echo "conchd is not running on ${host}"
+    pids="$(find_conch_pids)"
+    [ -n "${pids}" ] && { echo "conchd is running (pid(s): ${pids//$'\n'/ })"; return 0; }
+    echo "conchd is not running"
     return 1
 }
 
@@ -245,20 +246,14 @@ stop_on_this_host() {
     success "Stopped conchd"
 }
 
-# ===== 多机调度 =====
+# ===== 本机调度 =====
 run_on_host() {
     local host="$1" action="$2"
-    if is_local_host "${host}"; then
-        case "${action}" in
-            up) start_on_this_host ;;
-            down) stop_on_this_host ;;
-            *) error "unknown local action: ${action}" ;;
-        esac
-        return
-    fi
-    sync_remote_stage "${host}"
-    exec_on_host "${host}" \
-        "CONCH_LOG_FILE='${CONCH_LOG_FILE}' CONCH_SOCKET='${CONCH_SOCKET}' CONCH_READY_TIMEOUT='${CONCH_READY_TIMEOUT}' CONCH_READY_POLL_INTERVAL='${CONCH_READY_POLL_INTERVAL}' CONCH_STOP_TIMEOUT='${CONCH_STOP_TIMEOUT}' CONCH_SERVICE='${CONCH_SERVICE}' bash '${CONCH_REMOTE_STAGE}/conch_deploy.sh' '${action}'"
+    case "${action}" in
+        up) start_on_this_host ;;
+        down) stop_on_this_host ;;
+        *) error "unknown action: ${action}" ;;
+    esac
 }
 
 check_existing() {
@@ -295,86 +290,38 @@ conch_install() {
     success "Conch RPM installation completed"
 }
 
-_require_root_if_local_in_hosts() {
-    local hosts_str="$1" cluster_cmd="$2" host
-    local -a host_list
-    IFS=',' read -ra host_list <<< "${hosts_str}"
-    for host in "${host_list[@]}"; do
-        host="$(echo "${host}" | tr -d '[:space:]')"
-        [ -z "${host}" ] && continue
-        if is_local_host "${host}"; then
-            require_root "$0" "${cluster_cmd}" --hosts "${hosts_str}"
-            return 0
-        fi
-    done
-}
-
 deploy_conch_up() {
-    local hosts_str="${CLUSTER_HOSTS}" host
-    local -a host_list
+    local host
     local conch_up_phase=0
-    IFS=',' read -ra host_list <<< "${hosts_str}"
+    host="$(get_local_ip)"
 
     trap '
         if [ "${conch_up_phase:-0}" = "1" ]; then
-            warning "Conch startup failed, cleaning up conchd on all hosts..."
-            for _h in "${host_list[@]}"; do
-                _h="$(echo "${_h}" | tr -d "[:space:]")"
-                [ -z "${_h}" ] && continue
-                run_on_host "${_h}" down >/dev/null 2>&1 || true
-            done
+            warning "Conch startup failed, cleaning up conchd..."
+            run_on_host "'"${host}"'" down >/dev/null 2>&1 || true
         fi
     ' EXIT
 
-    _require_root_if_local_in_hosts "${hosts_str}" up
-    info "Deploying Conch"
-    info "Hosts: ${hosts_str}"
+    require_root "$0" up
+    info "Deploying Conch on ${host}"
 
-    for host in "${host_list[@]}"; do
-        host="$(echo "${host}" | tr -d '[:space:]')"
-        [ -z "${host}" ] && continue
-        if is_local_host "${host}"; then
-            success "${host} is local host, skip SSH check"
-        elif conch_check_ssh "${host}"; then
-            success "SSH to ${host} OK"
-        else
-            error "SSH to ${host} failed! Configure SSH key authentication first."
-        fi
-    done
-
-    for host in "${host_list[@]}"; do
-        host="$(echo "${host}" | tr -d '[:space:]')"
-        [ -z "${host}" ] || check_existing "${host}"
-    done
+    check_existing "${host}"
 
     conch_up_phase=1
-    for host in "${host_list[@]}"; do
-        host="$(echo "${host}" | tr -d '[:space:]')"
-        [ -z "${host}" ] && continue
-        info "Starting Conch on ${host}..."
-        run_on_host "${host}" up
-        success "Conch started on ${host}"
-    done
+    info "Starting Conch on ${host}..."
+    run_on_host "${host}" up
+    success "Conch started on ${host}"
     conch_up_phase=2
     trap - EXIT
     success "Conch deployment completed"
 }
 
 deploy_conch_down() {
-    local hosts_str="${CLUSTER_HOSTS}" host
-    local -a host_list
-    IFS=',' read -ra host_list <<< "${hosts_str}"
-    _require_root_if_local_in_hosts "${hosts_str}" down
-    info "Stopping Conch on hosts: ${hosts_str}"
-    for host in "${host_list[@]}"; do
-        host="$(echo "${host}" | tr -d '[:space:]')"
-        [ -z "${host}" ] && continue
-        if ! is_local_host "${host}" && ! conch_check_ssh "${host}"; then
-            warning "SSH to ${host} failed, skip"
-            continue
-        fi
-        run_on_host "${host}" down || warning "Failed to stop Conch on ${host}"
-    done
+    local host
+    host="$(get_local_ip)"
+    require_root "$0" down
+    info "Stopping Conch on ${host}"
+    run_on_host "${host}" down || warning "Failed to stop Conch on ${host}"
 }
 
 deploy_conch_restart() {
@@ -453,16 +400,10 @@ parse_args() {
                 CMD="$1"
                 shift
                 ;;
-            --hosts)
-                [ $# -ge 2 ] || error "--hosts requires a value"
-                [ -n "$2" ] || error "--hosts requires a comma-separated host list"
-                CLUSTER_HOSTS="$2"
+            --ip)
+                [ $# -ge 2 ] || error "--ip requires a value"
+                BIND_IP="$2"
                 shift 2
-                ;;
-            --hosts=*)
-                CLUSTER_HOSTS="${1#--hosts=}"
-                [ -n "${CLUSTER_HOSTS}" ] || error "--hosts requires a comma-separated host list"
-                shift
                 ;;
             -h|--help|help)
                 print_help
@@ -474,7 +415,6 @@ parse_args() {
         esac
     done
     [ -n "${CMD}" ] || error "Command not specified"
-    [ -n "${CLUSTER_HOSTS}" ] || CLUSTER_HOSTS="$(get_local_ip)"
 }
 
 print_help() {
@@ -490,7 +430,7 @@ Commands:
   status    查询本机 conchd 状态
 
 Options:
-  --hosts HOSTS   逗号分隔的主机地址；不指定则本机
+  --ip IP         指定本机 IP（多网卡环境必用），必须是本机真实持有的 IP，否则报错退出
   -h, --help      显示帮助
 
 Environment Variables:
@@ -499,7 +439,6 @@ Environment Variables:
   CONCH_SOCKET / CONCH_READY_TIMEOUT / CONCH_READY_POLL_INTERVAL
   CONCH_STOP_TIMEOUT  readiness and stop timeout settings
   CONCH_SERVICE  systemd unit name (default: conchd.service)
-  CONCH_SSH_OPTS / CONCH_REMOTE_STAGE  remote execution settings
 
 RPM install order: erofs-utils -> stratovirt -> conch
 RPM uninstall order: conch -> stratovirt -> erofs-utils

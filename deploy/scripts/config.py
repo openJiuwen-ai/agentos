@@ -252,6 +252,12 @@ def main():
         default=str(DEFAULT_CONFIG_PATH),
         help=f"Config file path (default: {DEFAULT_CONFIG_PATH})",
     )
+    parser.add_argument(
+        "--ip",
+        type=str,
+        default="",
+        help="Override local IP detection (for multi-NIC environments)",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("local-ip", help="Print local IP")
     sub.add_parser("is-etcd-node", help="Exit 0 if local IP is in etcd_nodes")
@@ -267,7 +273,7 @@ def main():
 
     args = parser.parse_args()
     cluster = load_config(Path(args.config))
-    local_ip = get_local_ip()
+    local_ip = args.ip if args.ip else get_local_ip()
 
     if args.cmd == "local-ip":
         _LOGGER.info(local_ip)

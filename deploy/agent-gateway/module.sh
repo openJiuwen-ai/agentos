@@ -86,11 +86,17 @@ _agentregistry_validate_etcd() {
     fi
 }
 
-# 监听地址：优先绑定 ingress_virtual_ip（VIP），使注册中心对外可通过统一入口访问；
-# 无 VIP 配置时回退到 --hosts 首个 IP / 本机网卡 IP。
-# 注意：注册中心后端禁止 A2X_REGISTRY_BIND=0.0.0.0，故只能绑定具体 VIP。
+# 监听地址：--ip 显式指定时优先使用（用户显式意图优先，与 gateway 一致）；
+# 其次绑定 ingress_virtual_ip（VIP），使注册中心对外可通过统一入口访问；
+# 均无配置时回退本机网卡 IP。
+# 注意：注册中心后端禁止 A2X_REGISTRY_BIND=0.0.0.0，故只能绑定具体地址。
 # 触发前提：registry 部署时 yuanrong 已装完（YR python 环境内置 yaml），故用 python+yaml 解析。
 _agentregistry_bind() {
+    # --ip 指定时优先使用，避免多网卡下 hostname -I 探测不准
+    if [ -n "${BIND_IP:-}" ]; then
+        echo "${BIND_IP}"
+        return 0
+    fi
     local config_file="${HOME:-/root}/.agentos/deploy/config.yaml"
     if [ -f "${config_file}" ]; then
         local py="python${YR_PYTHON_VERSION}" vip=""
@@ -110,9 +116,8 @@ except Exception:
             return 0
         fi
     fi
-    local ip="${CLUSTER_HOSTS:-}"
-    ip="${ip%%,*}"
-    [ -z "${ip}" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    local ip
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "${ip}" ] && ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
     echo "${ip:-127.0.0.1}"
 }

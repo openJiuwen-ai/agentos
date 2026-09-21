@@ -83,8 +83,8 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - **操作系统**：基于 openEuler 22.03-LTS-SP1/SP4 或 24.03-LTS-SP1/SP4（x86_64 和 aarch64），需支持 systemd
 - **Python**：目标主机需预装指定版本的 Python（默认 3.11）
 - **systemd**：etcd 和 agent-gateway 强依赖 systemd（`systemctl` 可用且 `/run/systemd/system` 存在）；moosefs 和 jiuwenswarm 自动检测
-- **SSH 免密**：部署机器到所有目标主机需配置 SSH 免密登录（root 用户）
-- **系统命令**：部署机器需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
+- **多网卡环境**：多网卡服务器需通过 `--ip` 显式指定本机使用的 IP 地址，避免自动探测不准导致 down/up 的 IP 对不上
+- **系统命令**：目标主机需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
 - **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`。三个字段均须为可达的真实 IP（单机也填本机局域网 IP），`ingress_virtual_ip` 作为统一外部入口，**不要用 `127.0.0.1`**（会导致 web/gateway 只能本机访问），详见下文「集群配置」
 - **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
 - **Docker API**：运行 Docker 类型沙箱要求 Docker API 支持 `v1.45`。API 1.45 由 Docker Engine 26.0 引入，因此目标主机 Docker Engine 需 **≥ 26.0**；建议直装 **27.x ~ 28.x 稳定版**（如 27.5.1），最新 29.x 仍兼容（其最低支持 API 为 1.44），但 1.45 已处兼容窗口下沿。版本对照见 [Docker Engine API 文档](https://docs.docker.com/reference/api/engine/)
@@ -194,12 +194,13 @@ bash agentos.sh uninstall
 
 #### 多机部署
 
-单机与多机部署的流程完全一致，区别仅在于 `config.yaml` 的拓扑配置不同。多机部署时，**需在各个节点上分别执行** `agentos.sh`，建议先在 master 节点执行，再在 agent 节点执行。
+单机与多机部署的流程完全一致，区别仅在于 `config.yaml` 的拓扑配置不同。多机部署时，**需在各个节点上分别执行** `agentos.sh`，建议先在 master 节点执行，再在 agent 节点执行。多网卡环境需通过 `--ip` 指定本机 IP。
 
 > **注意**：多机部署时 etcd 需全集群先就绪——所有 etcd 节点完成 `init` 后，各节点才能执行 `up`（`up` 会自动检测 etcd 可达性）。
 
 ```bash
 # ---- 在每个节点上分别执行（先 master，后 agent）----
+# 多网卡环境需通过 --ip 指定本机 IP，如：bash agentos.sh up --ip 192.168.100.1
 
 # 1. 各节点安装全部 whl 包（会把 deploy 目录持久化到 ~/.agentos/）
 bash agentos.sh install
@@ -244,6 +245,7 @@ bash etcd.sh clean
 | `deinit` | 停 etcd + 删 unit（委托 `etcd.sh down`，保留数据） |
 | `uninstall` | 在本机卸载全部组件的 whl 包。**与 install 严格使用同一 Python 环境（默认 python3.11，需在 PATH 中）**：whl 包装在该解释器的 site-packages 下，卸载前请先恢复该环境（如 `export PATH=/opt/buildtools/python3.11/bin:$PATH`）；缺失时不回退其他解释器，所有卸载直接判失败并在结尾汇总告警（不中断、不误报全部成功） |
 | `restart` | 重启全部应用组件（先 down 再 up；不含 init/deinit） |
+| `--ip IP` | 指定本机使用的 IP 地址（多网卡环境必用）。指定后所有子组件的 IP 探测统一使用该 IP，并校验该 IP 必须是本机真实持有的 IP，否则报错退出。不指定时各组件各自自动探测 |
 | `-h, --help` | 显示帮助信息 |
 
 ### 配置
@@ -362,8 +364,9 @@ A2X 注册中心（a2x-registry 后端 + sqlite 存储），优先 systemd 托�
 
 监听地址（`A2X_REGISTRY_BIND`）推导优先级：
 1. `config.yaml` 的 `cluster.ingress_virtual_ip`（VIP）
-2. 本机网卡 IP（`hostname -I`）
-3. `127.0.0.1`
+2. `--ip` 指定的 IP（`BIND_IP` 环境变量）
+3. 本机网卡 IP（`hostname -I`）
+4. `127.0.0.1`
 
 > 注意：注册中心后端禁止 `A2X_REGISTRY_BIND=0.0.0.0`，故只能绑定具体 VIP。
 
@@ -377,8 +380,8 @@ whl 包来源：`install` 时从 agentos 根目录匹配 `a2x_registry-*-py3-non
 
 | 变量 | 说明 |
 | --- | --- |
-| `CLUSTER_HOSTS` | 目标主机 IP 列表 |
-| `JIUWENSWARM_PACKAGE_URL` | jiuwenswarm 安装包 URL（up 时若远程主机未安装 jiuwenswarm 则用此 URL pip 安装） |
+| `BIND_IP` | 多网卡环境指定本机 IP（命令行 `--ip` 优先级更高，不设置时自动探测） |
+| `JIUWENSWARM_PACKAGE_URL` | jiuwenswarm 安装包 URL（up 时若本机未安装 jiuwenswarm 则用此 URL pip 安装） |
 | `MODEL_PROVIDER` / `MODEL_NAME` / `API_BASE` / `API_KEY` | 大模型接口配置 |
 | `EMBED_MODEL` / `EMBED_API_BASE` / `EMBED_API_KEY` | 向量模型接口配置 |
 | `GATEWAY_HOST` / `GATEWAY_PORT` | gateway 进程监听地址/端口（host 留空时自动绑定 `config.yaml` 的 `ingress_virtual_ip`） |
@@ -497,7 +500,7 @@ MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodul
 | `AGENTOS_ROOT` | agentos 根目录（`deploy` 的同级目录）的绝对路径 |
 | `MODULES` | 已注册模块数组 |
 | `YR_PYTHON_VERSION` | Python 版本（默认 `3.11`） |
-| `CLUSTER_HOSTS` | 主机列表 |
+| `BIND_IP` | `--ip` 指定的本机 IP（多网卡环境），为空时各组件自动探测 |
 | `AGENTOS_SSH_KEY` | agent SSH 直连私钥路径（默认 `/root/.ssh/agent_key`） |
 | `AGENTOS_SSH_BACKEND_PUBLIC_DIR` | agent SSH 公钥目录（默认 `/root/.ssh/agent_pub`） |
 | `info` / `success` / `warning` / `error` | 日志函数 |

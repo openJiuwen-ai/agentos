@@ -6,17 +6,15 @@ set -euo >/dev/null 2>&1
 # 完全自包含，不依赖任何其他文件
 # 用法:
 #   ./moosefs_deploy.sh install
-#   ./moosefs_deploy.sh up --hosts 192.168.1.1,192.168.1.2
-#   ./moosefs_deploy.sh down --hosts 192.168.1.1,192.168.1.2
+#   ./moosefs_deploy.sh up --ip 192.168.1.1
+#   ./moosefs_deploy.sh down --ip 192.168.1.1
 #   ./moosefs_deploy.sh uninstall
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-CLUSTER_HOSTS=""
 CMD=""
-AGENTOS_SSH_KEY="${AGENTOS_SSH_KEY:-/root/.ssh/agent_key}"
-SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+BIND_IP="${BIND_IP:-}"
 
 # ===== 日志函数 =====
 info()    { echo -e "\033[36m=== $@ ===\033[0m"; }
@@ -24,7 +22,7 @@ success() { echo -e "\033[32m✅ $@\033[0m"; }
 warning() { echo -e "\033[33m⚠️  $@\033[0m"; }
 error()   { echo -e "\033[31m❌ $@\033[0m"; exit 1; }
 
-# ===== SSH 工具函数 =====
+# ===== 本机 IP 探测与工具函数 =====
 # 取本机所有 IPv4 地址。hostname -I 不可用时回退到 ip addr、/etc/hosts、ifconfig。
 _get_local_ips() {
     local ips
@@ -55,6 +53,10 @@ is_local_host() {
     if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
         return 0
     fi
+    # --ip 指定时只认指定 IP，避免多网卡下误判
+    if [ -n "${BIND_IP}" ]; then
+        [ "${host}" = "${BIND_IP}" ] && return 0 || return 1
+    fi
     local local_ips
     local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
@@ -66,6 +68,11 @@ is_local_host() {
 }
 
 get_local_ip() {
+    # --ip 指定时直接返回，跳过自动探测
+    if [ -n "${BIND_IP}" ]; then
+        echo "${BIND_IP}"
+        return 0
+    fi
     local local_ips
     local_ips=$(_get_local_ips)
     for ip in ${local_ips}; do
@@ -77,37 +84,30 @@ get_local_ip() {
     echo "127.0.0.1"
 }
 
+# ===== 本机执行封装（不再 SSH 到远端）=====
 exec_on_host() {
     local host="$1"
     shift
-    if is_local_host "${host}"; then
-        bash -c "$*"
-    else
-        ssh ${SSH_OPTS} root@${host} "$*"
-    fi
+    bash -c "$*"
 }
 
 copy_to_host() {
     local host="$1"
     local src="$2"
     local dst="$3"
-    if is_local_host "${host}"; then
-        local src_real
-        src_real=$(realpath "${src}" 2>/dev/null || echo "${src}")
-        local dst_real
-        if [[ "${dst}" == */ ]]; then
-            dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
-            dst_real="${dst_real}/$(basename "${src}")"
-        else
-            dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
-        fi
-        if [ "${src_real}" = "${dst_real}" ]; then
-            return 0
-        fi
-        cp -r "${src}" "${dst}"
+    local src_real
+    src_real=$(realpath "${src}" 2>/dev/null || echo "${src}")
+    local dst_real
+    if [[ "${dst}" == */ ]]; then
+        dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
+        dst_real="${dst_real}/$(basename "${src}")"
     else
-        scp ${SSH_OPTS} -r "${src}" "root@${host}:${dst}"
+        dst_real=$(realpath "${dst}" 2>/dev/null || echo "${dst}")
     fi
+    if [ "${src_real}" = "${dst_real}" ]; then
+        return 0
+    fi
+    cp -r "${src}" "${dst}"
 }
 
 # ===== 读取 deploy/config.yaml 获取 master IP =====
@@ -251,29 +251,11 @@ _mfs_should_use_systemd() {
 }
 
 # ===== 角色判断函数 =====
+# master 判定：MOOSEFS_MASTER_HOST（从 config.yaml 解析）等于本机 IP 则是 master
 _mfs_is_master() {
     local local_ip
     local_ip=$(get_local_ip)
 
-    # SSH 多机模式（CLUSTER_HOSTS 有 2+ IP）
-    local host_count=0
-    if [ -n "${CLUSTER_HOSTS:-}" ]; then
-        local IFS_OLD="${IFS}"
-        IFS=','
-        read -ra _hosts_arr <<< "${CLUSTER_HOSTS}"
-        IFS="${IFS_OLD}"
-        host_count=${#_hosts_arr[@]}
-    fi
-
-    if [ "${host_count}" -ge 2 ]; then
-        local first_ip="${_hosts_arr[0]}"
-        if [ "${local_ip}" = "${first_ip}" ] || is_local_host "${first_ip}"; then
-            return 0
-        fi
-        return 1
-    fi
-
-    # systemd 模式（无 --hosts 或仅 1 IP）
     if [ -z "${MOOSEFS_MASTER_HOST:-}" ]; then
         warning "MOOSEFS_MASTER_HOST not set, cannot determine role"
         return 1
@@ -285,29 +267,9 @@ _mfs_is_master() {
     return 1
 }
 
-# ===== MOOSEFS_MASTER_HOST 解析与优先级 =====
+# ===== MOOSEFS_MASTER_HOST 解析 =====
 _mfs_resolve_master_host() {
-    local master_host=""
-    local host_count=0
-
-    if [ -n "${CLUSTER_HOSTS:-}" ]; then
-        local IFS_OLD="${IFS}"
-        IFS=','
-        read -ra _hosts_arr <<< "${CLUSTER_HOSTS}"
-        IFS="${IFS_OLD}"
-        host_count=${#_hosts_arr[@]}
-    fi
-
-    if [ "${host_count}" -ge 2 ]; then
-        master_host="${_hosts_arr[0]}"
-        if [ -n "${MOOSEFS_MASTER_HOST:-}" ] && [ "${MOOSEFS_MASTER_HOST}" != "${master_host}" ]; then
-            warning "MOOSEFS_MASTER_HOST=${MOOSEFS_MASTER_HOST} is overridden by --hosts first IP: ${master_host}"
-        fi
-    else
-        master_host="${MOOSEFS_MASTER_HOST:-}"
-    fi
-
-    echo "${master_host}"
+    echo "${MOOSEFS_MASTER_HOST:-}"
 }
 
 # ===== 模式选择与单机跳过 =====
@@ -327,13 +289,6 @@ _mfs_should_skip() {
             error "Invalid MOOSEFS_ENABLED value: ${MOOSEFS_ENABLED} (expected: auto/yes/no)"
             ;;
     esac
-}
-
-# ===== 获取 cluster host 列表数组 =====
-_mfs_get_host_list() {
-    if [ -n "${CLUSTER_HOSTS:-}" ]; then
-        echo "${CLUSTER_HOSTS}" | tr ',' ' '
-    fi
 }
 
 # ===== 包检测函数（兼容 RPM 和 DEB）=====
@@ -663,64 +618,6 @@ deploy_mfs_up() {
     local master_host
     master_host=$(_mfs_resolve_master_host)
 
-    local host_count=0
-    if [ -n "${CLUSTER_HOSTS:-}" ]; then
-        local IFS_OLD="${IFS}"
-        IFS=','
-        read -ra _hosts_arr <<< "${CLUSTER_HOSTS}"
-        IFS="${IFS_OLD}"
-        host_count=${#_hosts_arr[@]}
-    fi
-
-    # SSH 多机模式（CLUSTER_HOSTS 有 2+ IP，且非 systemd 模式）
-    if [ "${host_count}" -ge 2 ] && ! _mfs_should_use_systemd; then
-        info "Starting MooseFS in SSH multi-node mode"
-        info "Master host: ${master_host}"
-        info "Total hosts: ${host_count}"
-
-        # 启动 master
-        info "Starting mfsmaster on ${master_host}..."
-        exec_on_host "${master_host}" "${MFS_BIN_MASTER} start" || error "Failed to start mfsmaster on ${master_host}"
-
-        # 等待 master 端口可连接
-        info "Waiting for master port ${MFS_MASTER_PORT} on ${master_host}..."
-        local retries=0
-        while [ ${retries} -lt 30 ]; do
-            if exec_on_host "${master_host}" "echo > /dev/tcp/${master_host}/${MFS_MASTER_PORT}" 2>/dev/null; then
-                success "Master port ${MFS_MASTER_PORT} is ready on ${master_host}"
-                break
-            fi
-            retries=$((retries + 1))
-            sleep 1
-        done
-        if [ ${retries} -ge 30 ]; then
-            error "Master port ${MFS_MASTER_PORT} not ready on ${master_host} after 30s"
-        fi
-
-        # 启动所有节点的 chunkserver
-        for host in "${_hosts_arr[@]}"; do
-            info "Starting mfschunkserver on ${host}..."
-            exec_on_host "${host}" "${MFS_BIN_CHUNKSERVER} start" || error "Failed to start mfschunkserver on ${host}"
-        done
-
-        # 等待 chunkserver 注册
-        info "Waiting for chunkservers to register..."
-        sleep 2
-
-        # 挂载所有节点
-        for host in "${_hosts_arr[@]}"; do
-            info "Mounting MooseFS on ${host}..."
-            exec_on_host "${host}" "${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT}" || error "Failed to mount MooseFS on ${host}"
-        done
-
-        # 设置 goal
-        info "Setting goal=${MFS_GOAL} on ${MFS_MOUNT_POINT}..."
-        exec_on_host "${master_host}" "${MFS_BIN_SETGOAL} -r ${MFS_GOAL} ${MFS_MOUNT_POINT}" 2>/dev/null || warning "Failed to set goal on ${MFS_MOUNT_POINT}"
-
-        success "MooseFS SSH multi-node deployment completed!"
-        return 0
-    fi
-
     # systemd 模式：通过 systemctl enable --now 启动服务
     if _mfs_should_use_systemd; then
         # 确保有 master_host，为空时用本机 IP
@@ -811,7 +708,7 @@ deploy_mfs_up() {
         return 0
     fi
 
-    # 非 systemd 的 SSH 单机部署（CLUSTER_HOSTS 仅 1 IP）
+    # 非 systemd 单机模式
     info "Starting MooseFS in single-node mode (non-systemd)"
     local local_ip
     local_ip=$(get_local_ip)
@@ -870,36 +767,6 @@ deploy_mfs_down() {
     local master_host
     master_host=$(_mfs_resolve_master_host)
 
-    local host_count=0
-    if [ -n "${CLUSTER_HOSTS:-}" ]; then
-        local IFS_OLD="${IFS}"
-        IFS=','
-        read -ra _hosts_arr <<< "${CLUSTER_HOSTS}"
-        IFS="${IFS_OLD}"
-        host_count=${#_hosts_arr[@]}
-    fi
-
-    # SSH 多机模式
-    if [ "${host_count}" -ge 2 ] && ! _mfs_should_use_systemd; then
-        info "Stopping MooseFS in SSH multi-node mode"
-
-        # SSH 到所有节点执行 umount + mfschunkserver stop
-        for host in "${_hosts_arr[@]}"; do
-            info "Unmounting and stopping chunkserver on ${host}..."
-            exec_on_host "${host}" "umount -l ${MFS_MOUNT_POINT}" 2>/dev/null || warning "Failed to umount on ${host}"
-            exec_on_host "${host}" "${MFS_BIN_CHUNKSERVER} stop" 2>/dev/null || warning "Failed to stop mfschunkserver on ${host}"
-            # 清理残留 mfsmount 进程（umount -l 后守护进程可能仍存活）
-            exec_on_host "${host}" "pkill -f 'mfsmount.*${MFS_MOUNT_POINT}'" 2>/dev/null || true
-        done
-
-        # SSH 到 master 节点执行 mfsmaster stop
-        info "Stopping mfsmaster on ${master_host}..."
-        exec_on_host "${master_host}" "${MFS_BIN_MASTER} stop" 2>/dev/null || warning "Failed to stop mfsmaster on ${master_host}"
-
-        success "MooseFS SSH multi-node stopped"
-        return 0
-    fi
-
     # systemd 模式：通过 systemctl stop 停止服务（不 disable，不删 unit 文件，留给 uninstall）
     if _mfs_should_use_systemd; then
         [ -z "${master_host}" ] && master_host="$(get_local_ip)"
@@ -948,7 +815,7 @@ deploy_mfs_down() {
         return 0
     fi
 
-    # 非 systemd 的 SSH 单机部署
+    # 非 systemd 单机部署
     info "Stopping MooseFS in single-node mode (non-systemd)"
     umount -l ${MFS_MOUNT_POINT} 2>/dev/null || true
     ${MFS_BIN_CHUNKSERVER} stop 2>/dev/null || warning "Failed to stop mfschunkserver"
@@ -1187,8 +1054,8 @@ parse_args() {
                 CMD="${args[$i]}"
                 i=$((i+1))
                 ;;
-            --hosts)
-                CLUSTER_HOSTS="${args[$((i+1))]}"
+            --ip)
+                BIND_IP="${args[$((i+1))]}"
                 i=$((i+2))
                 ;;
             -h|--help)
@@ -1205,20 +1072,10 @@ parse_args() {
         exit 1
     fi
 
-    # install/uninstall/status 仅在本机执行，不需要 CLUSTER_HOSTS
-    # up/down 在 systemd 模式下也不需要 CLUSTER_HOSTS（从 config.yaml 获取 master IP）
-    # 仅在非 systemd 的 up/down 时需要 CLUSTER_HOSTS
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
-        if [ -z "${CLUSTER_HOSTS:-}" ]; then
-            CLUSTER_HOSTS=$(get_local_ip)
-            info "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
-        fi
-    fi
-
     info "Executing command: $*"
     info "CMD=${CMD}"
-    if [[ "${CMD}" != "install" && "${CMD}" != "uninstall" && "${CMD}" != "status" ]]; then
-        info "CLUSTER_HOSTS=${CLUSTER_HOSTS}"
+    if [ -n "${BIND_IP}" ]; then
+        info "BIND_IP=${BIND_IP}"
     fi
 }
 
@@ -1238,16 +1095,15 @@ Commands (Required):
   uninstall 停止服务 + 清理配置、数据和 systemd unit（不卸载软件包，可重新 install 还原）
 
 Options:
-  --hosts HOSTS      目标主机IP列表，逗号分隔。第一个IP为master节点，其余为agent节点
-                     仅 up/down/restart 命令需要，install/uninstall 忽略此参数
-                     单机: --hosts 192.168.1.1
-                     多机: --hosts 192.168.1.1,192.168.1.2,192.168.1.3
-                     不指定时默认使用本机IP
+  --ip IP            指定本机使用的 IP 地址（多网卡环境必用）。
+                     指定后 get_local_ip / is_local_host 使用该 IP，避免自动探测不准。
+                     指定的 IP 必须是本机真实持有的 IP，否则报错退出。
+                     不指定时自动探测（hostname -I / ip addr / ifconfig）。
   -h, --help         显示帮助信息
 
 Environment Variables:
   MOOSEFS_MASTER_HOST    Master 节点地址（systemd 模式下区分 master/agent 角色）
-                         SSH 多机模式下自动取 --hosts 第一个 IP，此配置被覆盖
+                         默认从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
   MOOSEFS_ENABLED        是否启用 MooseFS（auto/yes/no，默认 auto）
                          auto/yes: 默认部署分布式文件系统
                          no:       关闭分布式文件系统（使用本地文件系统）
@@ -1261,15 +1117,13 @@ Environment Variables:
   MFS_CHUNK_DIR          Chunkserver 数据目录（默认 /data/mfschunks）
   MFS_MOUNT_POINT        共享挂载点路径（默认 /home/agentos/users）
   MFS_GOAL               数据副本数（多机默认 2，单机自动设为 1）
-  AGENTOS_SSH_KEY        SSH 私钥路径（默认 /root/.ssh/agent_key）
 
 Configuration File:
   ${SCRIPT_DIR}/moosefs.conf  MooseFS 配置文件，可通过环境变量覆盖
 
 Deployment Modes:
-  1. SSH 多机模式: --hosts 指定 2+ IP，Master 取第一个 IP（非 systemd，install+up/down+uninstall）
-  2. systemd 模式: 无 --hosts，默认部署（install=配置+unit生成，up=enable--now，down=stop，uninstall=停止+清理）
-  3. 关闭: MOOSEFS_ENABLED=no，不部署 MooseFS（使用本地文件系统）
+  1. systemd 模式: 默认部署（install=配置+unit生成，up=enable--now，down=stop，uninstall=停止+清理）
+  2. 关闭: MOOSEFS_ENABLED=no，不部署 MooseFS（使用本地文件系统）
 
 Examples:
   # systemd 模式（默认，从 config.yaml 获取 master IP）
@@ -1278,15 +1132,12 @@ Examples:
   ./$(basename "$0") down
   ./$(basename "$0") uninstall
 
-  # 非 systemd SSH 多机模式
-  ./$(basename "$0") install                                          # 本机生成配置
-  ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2,192.168.1.3  # 多机启动集群
-  ./$(basename "$0") down --hosts 192.168.1.1                        # 停止集群
-  ./$(basename "$0") uninstall                                        # 本机清理配置和数据
+  # 指定本机 IP（多网卡环境）
+  ./$(basename "$0") up --ip 192.168.1.1
+
   MOOSEFS_ENABLED=no ./$(basename "$0") up                            # 关闭 MooseFS 部署
 
 注意:
-  - 部署机器到所有目标主机需配置SSH免密登录（仅 SSH 多机模式）
   - install 需要在每台目标主机上执行（每台主机都需配置）
   - MooseFS 软件包（RPM/DEB）需由上游预装（见 deploy/moosefs/README.md）
   - master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取

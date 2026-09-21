@@ -5,18 +5,16 @@ set -euo pipefail
 # jiuwenbox 部署脚本（自包含，对齐 yuanrong_deploy.sh）
 # 优先使用 systemd 托管（Restart=on-failure）；无 systemd 时回退 nohup。
 # 用法:
-#   ./jiuwenbox_deploy.sh up --hosts 192.168.1.1,192.168.1.2
-#   ./jiuwenbox_deploy.sh down --hosts 192.168.1.1
+#   ./jiuwenbox_deploy.sh up --ip 192.168.1.1
+#   ./jiuwenbox_deploy.sh down --ip 192.168.1.1
 #   ./jiuwenbox_deploy.sh up                    # 默认本机
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-CLUSTER_HOSTS=""
 CMD=""
+BIND_IP="${BIND_IP:-}"
 PYTHON_CONFIG=""
-SSH_OPTS="${JIUWENBOX_SSH_OPTS:--o StrictHostKeyChecking=accept-new -o ConnectTimeout=10}"
-REMOTE_STAGE="${JIUWENBOX_REMOTE_STAGE:-/tmp/agentos_jiuwenbox}"
 POLICY_TEMPLATE="${SCRIPT_DIR}/default-policy.yaml"
 
 RUN_DIR="${JIUWENBOX_RUN_DIR:-/tmp/jiuwenbox}"
@@ -62,8 +60,8 @@ Commands:
   status    查看 jiuwenbox 运行状态
 
 Options:
-  --hosts HOSTS   逗号分隔 IP；不指定则本机 IP
   --python PATH   Python 解释器（默认 python3）
+  --ip IP         指定本机 IP（多网卡环境必用），覆盖自动探测
   -h, --help      显示帮助
 
 Environment:
@@ -75,21 +73,50 @@ Notes:
   无 systemd 时回退 nohup（被 kill 后不会自动拉起）。
 
 Examples:
-  ./$(basename "$0") up --hosts 192.168.1.1,192.168.1.2
-  ./$(basename "$0") down --hosts 192.168.1.1
+  ./$(basename "$0") up --ip 192.168.1.1
+  ./$(basename "$0") down --ip 192.168.1.1
   sudo ./$(basename "$0") --python python3.11 up
 EOF
   exit 0
 }
 
-# ===== SSH =====
+# ===== 本机 IP 探测 =====
+# 取本机所有 IPv4 地址。hostname -I 不可用时回退到 ip addr、/etc/hosts、ifconfig。
+_get_local_ips() {
+  local ips
+  ips=$(hostname -I 2>/dev/null || true)
+  if [ -n "${ips}" ]; then
+    echo "${ips}"
+    return
+  fi
+  # 回退 1：ip addr show
+  if command -v ip >/dev/null 2>&1; then
+    ip -4 addr show 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+    return
+  fi
+  # 回退 2：/etc/hosts 里本机 hostname 对应的 IP
+  local hname
+  hname=$(cat /etc/hostname 2>/dev/null || true)
+  if [ -n "${hname}" ]; then
+    grep -E "^[0-9.]+[[:space:]]+.*${hname}" /etc/hosts 2>/dev/null | awk '{print $1}'
+  fi
+  # 回退 3：ifconfig 的 inet 地址
+  if command -v ifconfig >/dev/null 2>&1; then
+    ifconfig 2>/dev/null | grep -oE "inet [0-9.]+" | awk '{print $2}' | grep -v "^127\."
+  fi
+}
+
 is_local_host() {
   local host="$1"
   if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
     return 0
   fi
+  # --ip 指定时只认指定 IP，避免多网卡下误判
+  if [ -n "${BIND_IP}" ]; then
+    [ "${host}" = "${BIND_IP}" ] && return 0 || return 1
+  fi
   local local_ips
-  local_ips=$(hostname -I 2>/dev/null || echo "")
+  local_ips=$(_get_local_ips)
   for ip in ${local_ips}; do
     [ "${host}" = "${ip}" ] && return 0
   done
@@ -97,8 +124,13 @@ is_local_host() {
 }
 
 get_local_ip() {
+  # --ip 指定时直接返回，跳过自动探测
+  if [ -n "${BIND_IP}" ]; then
+    echo "${BIND_IP}"
+    return 0
+  fi
   local local_ips ip
-  local_ips=$(hostname -I 2>/dev/null || echo "")
+  local_ips=$(_get_local_ips)
   for ip in ${local_ips}; do
     if [ "${ip}" != "127.0.0.1" ] && [ "${ip}" != "localhost" ]; then
       echo "${ip}"
@@ -108,34 +140,11 @@ get_local_ip() {
   echo "127.0.0.1"
 }
 
+# ===== 本机执行封装（不再 SSH 到远端）=====
 exec_on_host() {
   local host="$1"
   shift
-  if is_local_host "${host}"; then
-    bash -c "$*"
-  else
-    # shellcheck disable=SC2086
-    ssh ${SSH_OPTS} "root@${host}" "$*"
-  fi
-}
-
-jiuwenbox_check_ssh() {
-  local host="$1"
-  is_local_host "${host}" && return 0
-  # shellcheck disable=SC2086
-  ssh ${SSH_OPTS} "root@${host}" "echo ok" >/dev/null 2>&1
-}
-
-sync_remote_stage() {
-  local host="$1"
-  local remote_dir="${REMOTE_STAGE}/jiuwenbox"
-  info "Syncing jiuwenbox scripts to ${host}:${remote_dir}"
-  exec_on_host "${host}" "mkdir -p '${remote_dir}'"
-  # shellcheck disable=SC2086
-  scp ${SSH_OPTS} \
-    "${SCRIPT_DIR}/jiuwenbox_deploy.sh" \
-    "${POLICY_TEMPLATE}" \
-    "root@${host}:${remote_dir}/" >/dev/null
+  bash -c "$*"
 }
 
 require_root() {
@@ -517,30 +526,21 @@ stop_server_processes() {
   echo "Stopped jiuwenbox"
 }
 
-# 本机是否在跑（供 check_existing；远端用 SSH pgrep）
+# 本机是否在跑（供 check_existing）
 jiuwenbox_status_on_host() {
   local host="$1"
-  if is_local_host "${host}"; then
-    local pids
-    # 崩溃重启间隙进程可能暂时不在，故 systemd 模式下先看 unit 状态
-    if _jiuwenbox_has_systemd && systemctl is-active --quiet "${JIUWENBOX_SVC}" 2>/dev/null; then
-      echo "jiuwenbox is running (systemd: ${JIUWENBOX_SVC})"
-      return 0
-    fi
-    pids="$(find_server_pids)"
-    if [[ -n "$pids" ]]; then
-      echo "jiuwenbox is running (pid(s): ${pids//$'\n'/ })"
-      return 0
-    fi
-    echo "jiuwenbox is not running"
-    return 1
-  fi
-  if exec_on_host "${host}" \
-    "systemctl is-active --quiet ${JIUWENBOX_SVC} 2>/dev/null || pgrep -f '${PGREP_PATTERN}' >/dev/null 2>&1"; then
-    echo "jiuwenbox is running on ${host}"
+  local pids
+  # 崩溃重启间隙进程可能暂时不在，故 systemd 模式下先看 unit 状态
+  if _jiuwenbox_has_systemd && systemctl is-active --quiet "${JIUWENBOX_SVC}" 2>/dev/null; then
+    echo "jiuwenbox is running (systemd: ${JIUWENBOX_SVC})"
     return 0
   fi
-  echo "jiuwenbox is not running on ${host}"
+  pids="$(find_server_pids)"
+  if [[ -n "$pids" ]]; then
+    echo "jiuwenbox is running (pid(s): ${pids//$'\n'/ })"
+    return 0
+  fi
+  echo "jiuwenbox is not running"
   return 1
 }
 
@@ -640,34 +640,14 @@ uninstall_on_this_host() {
   stop_server_processes >/dev/null || true
 }
 
-# ===== 多机调度：up/down/uninstall 内区分本机 / 远端 =====
-# 本机：直接 start/stop/uninstall_on_this_host
-# 远端：scp 后执行同一套命令（不带 --hosts → 在对端对本机 IP 启停）
+# ===== 本机调度：up/down/uninstall =====
 jiuwenbox_run_on_host() {
   local host="$1" sub="$2"
-  if is_local_host "${host}"; then
-    case "${sub}" in
-      up)         start_on_this_host ;;
-      down)       stop_on_this_host ;;
-      uninstall)  uninstall_on_this_host ;;
-      *)          error "unknown local sub: ${sub}" ;;
-    esac
-    return $?
-  fi
-
-  sync_remote_stage "${host}"
-  local remote_script="${REMOTE_STAGE}/jiuwenbox/jiuwenbox_deploy.sh"
-  local py
-  py="$(python_bin)"
   case "${sub}" in
-    up|down|uninstall)
-      # 对端跑公开命令；默认 CLUSTER_HOSTS=对端本机 IP，只会走本机分支
-      exec_on_host "${host}" \
-        "JIUWENBOX_RUN_DIR='${RUN_DIR}' JIUWENBOX_LOG_DIR='${LOG_DIR}' JIUWENBOX_LISTEN='${LISTEN_URI}' bash '${remote_script}' --python '${py}' ${sub}"
-      ;;
-    *)
-      error "unknown host sub: ${sub}"
-      ;;
+    up)         start_on_this_host ;;
+    down)       stop_on_this_host ;;
+    uninstall)  uninstall_on_this_host ;;
+    *)          error "unknown sub: ${sub}" ;;
   esac
 }
 
@@ -681,95 +661,47 @@ jiuwenbox_check_existing() {
   info "No existing jiuwenbox on ${host}"
 }
 
-_require_root_if_local_in_hosts() {
-  local hosts_str="$1" cluster_cmd="$2" host
-  IFS=',' read -ra _rh <<< "${hosts_str}"
-  for host in "${_rh[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    if is_local_host "${host}"; then
-      require_root "$0" --python "$(python_bin)" "${cluster_cmd}" --hosts "${hosts_str}"
-      return 0
-    fi
-  done
-}
-
 deploy_jiuwenbox_up() {
-  local hosts_str="${CLUSTER_HOSTS}" host
+  local host
   local jiuwenbox_up_phase=0
-
-  IFS=',' read -ra JIUWENBOX_HOST_LIST <<< "${hosts_str}"
+  host="$(get_local_ip)"
 
   trap '
     if [ "${jiuwenbox_up_phase:-0}" = "1" ]; then
-      warning "deploy_jiuwenbox_up failed during startup, cleaning up jiuwenbox on all hosts..."
-      for _h in "${JIUWENBOX_HOST_LIST[@]}"; do
-        _h="$(echo "${_h}" | tr -d "[:space:]")"
-        [ -z "${_h}" ] && continue
-        jiuwenbox_run_on_host "${_h}" down >/dev/null 2>&1 || true
-      done
+      warning "deploy_jiuwenbox_up failed during startup, cleaning up jiuwenbox..."
+      jiuwenbox_run_on_host "'"${host}"'" down >/dev/null 2>&1 || true
     fi
   ' EXIT
 
-  _require_root_if_local_in_hosts "${hosts_str}" up
+  require_root "$0" --python "$(python_bin)" up
 
-  info "Deploying jiuwenbox"
-  info "Hosts: ${hosts_str}"
+  info "Deploying jiuwenbox on ${host}"
   info "Python: $(python_bin)"
   require_python
 
-  info "Checking connectivity..."
-  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    if is_local_host "${host}"; then
-      success "${host} is local host, skip SSH check"
-    elif jiuwenbox_check_ssh "${host}"; then
-      success "SSH to ${host} OK"
-    else
-      error "SSH to ${host} failed! Configure SSH key authentication first."
-    fi
-  done
-
-  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    jiuwenbox_check_existing "${host}"
-  done
+  success "${host} is local host"
+  jiuwenbox_check_existing "${host}"
 
   jiuwenbox_up_phase=1
-  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    info "Starting jiuwenbox on ${host}..."
-    jiuwenbox_run_on_host "${host}" up
-    success "jiuwenbox started on ${host}"
-  done
+  info "Starting jiuwenbox on ${host}..."
+  jiuwenbox_run_on_host "${host}" up
+  success "jiuwenbox started on ${host}"
 
   jiuwenbox_up_phase=2
   trap - EXIT
   success "jiuwenbox deployment completed!"
-  echo "  Hosts: ${hosts_str}"
-  echo "  Stop:  ./$(basename "$0") down --hosts ${hosts_str}"
+  echo "  Host: ${host}"
+  echo "  Stop:  ./$(basename "$0") down"
 }
 
 deploy_jiuwenbox_down() {
-  local hosts_str="${CLUSTER_HOSTS}" host
-  IFS=',' read -ra JIUWENBOX_HOST_LIST <<< "${hosts_str}"
-  _require_root_if_local_in_hosts "${hosts_str}" down
+  local host
+  host="$(get_local_ip)"
+  require_root "$0" --python "$(python_bin)" down
 
-  info "Stopping jiuwenbox on hosts: ${hosts_str}"
-  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    if ! is_local_host "${host}" && ! jiuwenbox_check_ssh "${host}"; then
-      warning "SSH to ${host} failed, skip"
-      continue
-    fi
-    info "Stopping jiuwenbox on ${host}..."
-    jiuwenbox_run_on_host "${host}" down || warning "Failed to stop on ${host} (may not be running)"
-    success "jiuwenbox stopped on ${host}"
-  done
+  info "Stopping jiuwenbox on ${host}..."
+  jiuwenbox_run_on_host "${host}" down || warning "Failed to stop on ${host} (may not be running)"
+  success "jiuwenbox stopped on ${host}"
 }
 
 deploy_jiuwenbox_restart() {
@@ -788,15 +720,6 @@ parse_args() {
         CMD="${args[$i]}"
         i=$((i+1))
         ;;
-      --hosts)
-        CLUSTER_HOSTS="${args[$((i+1))]:-}"
-        [ -n "${CLUSTER_HOSTS}" ] || error "--hosts requires a comma-separated host list"
-        i=$((i+2))
-        ;;
-      --hosts=*)
-        CLUSTER_HOSTS="${args[$i]#--hosts=}"
-        i=$((i+1))
-        ;;
       --python)
         PYTHON_CONFIG="${args[$((i+1))]:-}"
         [ -n "${PYTHON_CONFIG}" ] || error "--python requires a path"
@@ -805,6 +728,11 @@ parse_args() {
       --python=*)
         PYTHON_CONFIG="${args[$i]#--python=}"
         i=$((i+1))
+        ;;
+      --ip)
+        BIND_IP="${args[$((i+1))]:-}"
+        [ -n "${BIND_IP}" ] || error "--ip requires a value"
+        i=$((i+2))
         ;;
       -h|--help|help)
         print_help
@@ -816,16 +744,11 @@ parse_args() {
   done
 
   [ -n "${CMD:-}" ] || print_help
-
-  if [ -z "${CLUSTER_HOSTS:-}" ]; then
-    CLUSTER_HOSTS="$(get_local_ip)"
-    warning "CLUSTER_HOSTS not specified, using local IP: ${CLUSTER_HOSTS}"
-  fi
 }
 
 deploy_jiuwenbox_install() {
   info "Installing jiuwenbox"
-  info "Hosts: ${CLUSTER_HOSTS}"
+  info "Host: $(get_local_ip)"
   info "Python: $(python_bin)"
   if _jiuwenbox_has_systemd; then
     info "systemd detected; jiuwenbox will be managed by systemd on up (Restart=on-failure)"
@@ -835,22 +758,13 @@ deploy_jiuwenbox_install() {
 }
 
 deploy_jiuwenbox_uninstall() {
-  local hosts_str="${CLUSTER_HOSTS}" host
-  IFS=',' read -ra JIUWENBOX_HOST_LIST <<< "${hosts_str}"
-  _require_root_if_local_in_hosts "${hosts_str}" uninstall
+  local host
+  host="$(get_local_ip)"
+  require_root "$0" --python "$(python_bin)" uninstall
 
-  info "Uninstalling jiuwenbox on hosts: ${hosts_str}"
-  for host in "${JIUWENBOX_HOST_LIST[@]}"; do
-    host="$(echo "${host}" | tr -d '[:space:]')"
-    [ -z "${host}" ] && continue
-    if ! is_local_host "${host}" && ! jiuwenbox_check_ssh "${host}"; then
-      warning "SSH to ${host} failed, skip"
-      continue
-    fi
-    info "Uninstalling jiuwenbox on ${host}..."
-    jiuwenbox_run_on_host "${host}" uninstall || warning "Failed to uninstall on ${host}"
-    success "jiuwenbox uninstalled on ${host}"
-  done
+  info "Uninstalling jiuwenbox on ${host}..."
+  jiuwenbox_run_on_host "${host}" uninstall || warning "Failed to uninstall on ${host}"
+  success "jiuwenbox uninstalled on ${host}"
 }
 
 # 只读探测本机 jiuwenbox 运行状态（不做多机 fanout）

@@ -45,7 +45,7 @@ jiuwenswarm_install() {
     _jiuwenswarm_check_sandbox_image
 
     local local_host
-    local_host=$(hostname -I 2>/dev/null | awk '{print $1}')
+    local_host="${BIND_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
     [ -z "${local_host}" ] && local_host="127.0.0.1"
 
     local found_whl
@@ -165,7 +165,7 @@ jiuwenswarm_disable_systemd() {
 
 jiuwenswarm_uninstall() {
     local local_host
-    local_host=$(hostname -I 2>/dev/null | awk '{print $1}')
+    local_host="${BIND_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
     [ -z "${local_host}" ] && local_host="127.0.0.1"
 
     # 先停用 systemd 服务，再卸载 pip 包，避免卸载后残留 unit 文件
