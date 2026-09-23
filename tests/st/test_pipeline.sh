@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ST：跑通 build.sh 并校验产物存在
 set -u
 

@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ============================================================
 # ppt-pipeline-swarm runtime —— 预装全部运行依赖
 # 基础镜像: yr-runtime-sandbox:latest (openEuler, aarch64, py3.11)

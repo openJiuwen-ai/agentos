@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ============================================================
 # 模块: agent-gateway (A2X 注册中心，存储 etcd)
 # 优先使用 systemd 托管；无 systemd 时回退到 nohup 后台进程。

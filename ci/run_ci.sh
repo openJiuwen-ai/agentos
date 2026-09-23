@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # 用于开发者自测 UT/ST
 # 用法：
 #   ./ci/run_ci.sh                       # 跑全部（UT + ST）

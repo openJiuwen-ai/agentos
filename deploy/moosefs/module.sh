@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 MOOSEFS_DEPLOY_DIR="${SCRIPT_DIR}/moosefs"
 
 # 内部工具：调用 moosefs_deploy.sh

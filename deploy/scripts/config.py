@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 """AgentOS 集群配置解析与角色推导工具。
 
 读取 ~/.agentos/deploy/config.yaml，提供：

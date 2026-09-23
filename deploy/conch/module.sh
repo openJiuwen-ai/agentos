@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ============================================================
 # 模块: conch (Conch + StratoVirt + erofs-utils RPM)
 # 钩子函数: conch_up / conch_down / conch_install / conch_uninstall / conch_status

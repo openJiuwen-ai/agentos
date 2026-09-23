@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # agentos-check-ingress-master
 # 由 agent-gateway install 时复制到 /usr/local/bin/agentos-check-ingress-master
 # 供 systemd ExecStartPre 调用：检查本机是否持有 ingress_virtual_ip

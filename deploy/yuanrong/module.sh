@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ============================================================
 # 模块: yuanrong (openyuanrong 集群)
 # 钩子函数: yuanrong_up / yuanrong_down / yuanrong_status / yuanrong_install / yuanrong_uninstall

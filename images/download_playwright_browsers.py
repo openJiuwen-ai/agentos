@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 """从 npmmirror 下载两个 revision 的 playwright chromium 到标准缓存路径。
 
 node 侧(1200) 与 python 侧(1234) 各用一套, 目录按 revision 隔离互不冲突。

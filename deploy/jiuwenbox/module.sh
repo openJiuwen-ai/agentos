@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 # ============================================================
 # 模块: jiuwenbox (沙箱服务，随 jiuwenswarm whl 包安装)
 # 钩子函数: jiuwenbox_up / jiuwenbox_down / jiuwenbox_install / jiuwenbox_uninstall / jiuwenbox_status
