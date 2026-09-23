@@ -8,7 +8,7 @@
 
 | 产物 | 说明 |
 |------|------|
-| `AgentOS-Client.tgz` | 客户端 TUI（含全平台 jiuwenswarm_tui + agentos_tui_launcher，不区分架构；daily/release 同逻辑） |
+| `AgentOS-Client.tgz` | 客户端 TUI（含全平台 jiuwenswarm_tui，不区分架构；daily/release 同逻辑） |
 | `AgentOS-Server-${ARCH}.tgz` | 服务端（`deploy/` + jiuwenswarm + openyuanrong + a2x_registry wheels） |
 | `AgentOS-Buildinfo.tgz` | 各部件构建信息汇总（收集 jiuwenswarm/openyuanrong/agent-protocol/conch/credential_router 各 archive 内名字含 buildinfo 关键字的文件，归入 `AgentOS-Buildinfo/` 目录后压缩；保留源文件时间戳，与 AgentOS-Server/Client 同级目录） |
 
@@ -94,7 +94,7 @@ archive/*.rpm                    -> server 包（平台无关 none rpm，在 arc
 
 `ARCH` 默认取执行机器 `uname -m`，可用环境变量覆盖以指定目标产物架构（如 `ARCH=aarch64`）。
 
-脚本只下载对应 arch 的预编译 wheel 并打包，**无平台编译过程（不是交叉编译）**。client 包不区分架构（含全平台 jiuwenswarm_tui + agentos_tui_launcher），server 包按 ${ARCH} 一次只出一个 arch；要出另一个 arch 的 server 包，再跑一次（设不同 `ARCH`）。
+脚本只下载对应 arch 的预编译 wheel 并打包，**无平台编译过程（不是交叉编译）**。client 包不区分架构（含全平台 jiuwenswarm_tui），server 包按 ${ARCH} 一次只出一个 arch；要出另一个 arch 的 server 包，再跑一次（设不同 `ARCH`）。
 
 ## 重构要点（相对原始 build.sh）
 
@@ -103,31 +103,30 @@ archive/*.rpm                    -> server 包（平台无关 none rpm，在 arc
 - agent-protocol/a2x_registry release/daily 都改从 OBS archive 获取，删逐小时探测（72h）和版本号拼文件名逻辑
 - 删 `--jiuwenswarm-release-version` / `--jiuwenswarm-release-git-tag` / `--yuanrong-release-version` / `--yuanrong-daily-version` / `--yr-schedule-time` / `--yr-release-download-base` / `--cp-tag` 等死参数及相关死数组
 - daily 删时间戳拼路径逻辑（`$(date +%Y%m%d)17`）和 yuanrong index 解析（`fetch_latest_yr_schedule_time`），jiuwenswarm/openyuanrong/agent-protocol 都改用 `last_successful_build`
-- Client 包不区分架构，全平台 jiuwenswarm_tui + agentos_tui_launcher 打到一起，命名同 build.sh 的 `AgentOS-Client.tgz`（原按 ${ARCH} 一次只出一个 linux 平台、带 `-TUI_${ARCH}` 后缀）
+- Client 包不区分架构，全平台 jiuwenswarm_tui 打到一起，命名同 build.sh 的 `AgentOS-Client.tgz`（原按 ${ARCH} 一次只出一个 linux 平台、带 `-TUI_${ARCH}` 后缀）
 - 命令行统一 `--key=value` 形式，`BUILD_MODE` 重命名为 `BUILD_TYPE`
 - archive 解压后删 `archive.tar.gz` 省磁盘空间
 - tar 加 `--atime-preserve`、wheel cp 加 `-p` 保留原始 mtime 可回溯
-- `TUI_LAUNCHER_VERSION` 与 build.sh 一致取 `0.1.0`（pyproject.toml 声明值）；不用 git 短 hash，避免 wheel 文件名版本号与内部 metadata 不一致导致 pip 校验/部署失败
+- 随远端 client 迁移删除 `tui-launcher` 本地构建逻辑（`TUI_LAUNCHER_VERSION`/`TUI_LAUNCHER_PACKAGES`/`build_tui_launcher`），client 包不再包含 `agentos_tui_launcher`
 - 新增 conch 沙箱模块：daily/release 都从 OBS archive 获取 rpm（平台相关按 `${ARCH}` 取 + 平台无关 none），打入 server 包根目录与各 whl 同级
-- manager 逻辑未动
+- 新增 credential_router：daily/release 都从 OBS archive 获取平台相关 `credential-router*.tar.gz`（按 `${ARCH}` 取 + 平台无关 none），打入 server 包根目录与各 whl/rpm 同级
 
 ## 依赖
 
-- 本地目录：`control-panel/deploy`（manager 来源）、`deploy/`（server deploy 来源）、`tui-launcher/`（pip wheel 构建）
-- 工具：`python`/`python3` + `pip`（构建 tui-launcher）、`curl` 或 `wget`、`git`、`tar`
+- 本地目录：`deploy/`（server deploy 来源）
+- 工具：`curl` 或 `wget`、`git`、`tar`
 - 网络：访问 OBS（openjiuwen-ci、openyuanrong）
 
 ## 构建流程（main 顺序）
 
 1. `clean` — 清空 `build/dist/`（含 downloads 和 staging）
-2. `build_manager_app` — 校验 `control-panel/deploy` 存在（manager 产物来源）
-3. `build_openyuanrong` — 下载并解压 OBS `archive.tar.gz`（openyuanrong wheels）
-4. `build_jiuwenswarm` — 下载并解压 OBS `archive.tar.gz`（jiuwenswarm wheels + deploy）
-5. `build_tui_launcher` — `pip wheel` 本地构建 tui-launcher（纯 Python，生成多平台命名副本）
-6. `build_agent_gateway` — 下载并解压 OBS `archive.tar.gz`（a2x_registry wheel）
-7. `build_conch` — 下载并解压 OBS `archive.tar.gz`（conch 沙箱模块 rpm：平台相关按 `${ARCH}` 取 + 平台无关 none，打入 server 包根目录与各 whl 同级）
-8. `pack` — 组装 client/server/manager 三个 tgz 产物
-9. `collect_buildinfo` — 收集各部件 archive 内名字含 buildinfo 关键字的构建信息文件，以及 `build/` 目录顶层名字含 buildinfo 关键字的文件（agent-os 主仓 buildinfo 由 CI 流水线生成于此），到 `AgentOS-Buildinfo/` 目录，`cp -p` + `tar --atime-preserve` 保留源文件时间戳，压缩为 `AgentOS-Buildinfo.tgz`（与 AgentOS-Server/Client 同级；须在 pack 之后，pack 会清空 staging）
+2. `build_openyuanrong` — 下载并解压 OBS `archive.tar.gz`（openyuanrong wheels）
+3. `build_jiuwenswarm` — 下载并解压 OBS `archive.tar.gz`（jiuwenswarm wheels + deploy）
+4. `build_agent_gateway` — 下载并解压 OBS `archive.tar.gz`（a2x_registry wheel）
+5. `build_conch` — 下载并解压 OBS `archive.tar.gz`（conch 沙箱模块 rpm：平台相关按 `${ARCH}` 取 + 平台无关 none，打入 server 包根目录与各 whl 同级）
+6. `build_credential_router` — 下载并解压 OBS `archive.tar.gz`（credential-router 平台相关 tar.gz）
+7. `pack` — 组装 client/server 两个 tgz 产物
+8. `collect_buildinfo` — 收集各部件 archive 内名字含 buildinfo 关键字的构建信息文件，以及 `build/` 目录顶层名字含 buildinfo 关键字的文件（agent-os 主仓 buildinfo 由 CI 流水线生成于此），到 `AgentOS-Buildinfo/` 目录，`cp -p` + `tar --atime-preserve` 保留源文件时间戳，压缩为 `AgentOS-Buildinfo.tgz`（与 AgentOS-Server/Client 同级；须在 pack 之后，pack 会清空 staging）
 
 > agent-os 主仓 buildinfo 文件由 CI 流水线单独生成，放 `build/` 目录顶层（不受脚本 `clean` 影响，`clean` 只删 `build/dist/`）。`build-v2.sh` 不生成该文件，仅在 `collect_buildinfo` 阶段模糊匹配 `build/` 下所有含 `buildinfo` 关键字的文件纳入打包。
 

@@ -3,7 +3,7 @@
 set -e
 
 # AgentOS b050 交付产物打包脚本。详细说明（产物清单/archive 结构/路径规则/重构要点/依赖）见 README-v2.md。
-# daily/release 共用 OBS archive.tar.gz 获取 jiuwenswarm/openyuanrong/agent-protocol/conch，client 包不区分架构（含全平台 jiuwenswarm_tui + agentos_tui_launcher），server 包按 ${ARCH} 打。
+# daily/release 共用 OBS archive.tar.gz 获取 jiuwenswarm/openyuanrong/agent-protocol/conch，client 包不区分架构（含全平台 jiuwenswarm_tui），server 包按 ${ARCH} 打。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -33,11 +33,6 @@ CONCH_ARCHIVE_ROOT=""           # conch archive.tar.gz 解压根目录（pack �
 
 CREDENTIAL_ROUTER_BASE=""       # credential_router archive 下载基址（configure_* 设置）
 CREDENTIAL_ROUTER_ARCHIVE_ROOT=""  # credential_router archive.tar.gz 解压根目录（pack 取 credential-router*.tar.gz，平台相关）
-
-TUI_LAUNCHER_DIR="${PROJECT_ROOT}/tui-launcher"
-# 版本号取 tui-launcher/pyproject.toml 声明的 0.1.0（与 build.sh 一致；避免用 git 短 hash 导致 wheel 文件名版本号与内部 metadata 0.1.0 不一致，pip 校验/部署失败）
-TUI_LAUNCHER_VERSION="0.1.0"
-TUI_LAUNCHER_PACKAGES=()
 
 usage() {
   cat <<EOF
@@ -102,12 +97,6 @@ configure_daily() {
   CONCH_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/conch/package/${BUILD_TYPE}/${BUILD_TARGET}/last_successful_build"
   CREDENTIAL_ROUTER_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/credential_router/package/${BUILD_TYPE}/${BUILD_TARGET}/last_successful_build"
 
-  TUI_LAUNCHER_PACKAGES=(
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
-  )
 }
 
 configure_release() {
@@ -117,12 +106,6 @@ configure_release() {
   CONCH_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/conch/package/${BUILD_TYPE}/${BUILD_TARGET}/last_successful_build"
   CREDENTIAL_ROUTER_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/credential_router/package/${BUILD_TYPE}/${BUILD_TARGET}/last_successful_build"
 
-  TUI_LAUNCHER_PACKAGES=(
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
-  )
 }
 
 configure_build() {
@@ -334,44 +317,6 @@ build_credential_router() {
   fi
 }
 
-build_tui_launcher() {
-  echo "==> build_tui_launcher (version=${TUI_LAUNCHER_VERSION})"
-  local dist_dir="${DOWNLOAD_DIR}/tui-launcher"
-  mkdir -p "${dist_dir}"
-
-  # 使用 pip wheel 构建 tui-launcher 的 wheel 包（不下载依赖）
-  # 构建产物放在 DOWNLOAD_DIR/tui-launcher 下，后续 pack 阶段会将其与 jiuwenswarm_tui 放在同一目录
-  if command -v python >/dev/null 2>&1; then
-    python -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
-  else
-    echo "error: python is required to build tui-launcher" >&2
-    return 1
-  fi
-
-  # pip wheel 构建出 py3-none-any 的纯 Python wheel，此处复制为各平台命名的 wheel，
-  # 与 jiuwenswarm_tui 保持一致的多平台打包方式
-  local base_whl=""
-  for whl in "${dist_dir}"/*.whl; do
-    if [[ -f "${whl}" ]]; then
-      base_whl="${whl}"
-      echo "  built: $(basename "${whl}")"
-      break
-    fi
-  done
-
-  if [[ -z "${base_whl}" ]]; then
-    echo "error: tui-launcher wheel not found after build" >&2
-    return 1
-  fi
-
-  for pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
-    cp -p "${base_whl}" "${dist_dir}/${pkg}"
-    echo "  created: ${pkg}"
-  done
-}
-
 pack() {
   echo "==> pack"
   mkdir -p "${BUILD_DIR}"
@@ -386,7 +331,7 @@ pack() {
   rm -rf "${BUILD_DIR}/staging"
   mkdir -p "${server_staging}/deploy"
 
-  # ---- client 打包（不区分架构：把全平台 jiuwenswarm_tui + agentos_tui_launcher 打到一起，命名/逻辑同 build.sh 的 AgentOS-Client.tgz；daily/release 同逻辑）----
+  # ---- client 打包（不区分架构：把全平台 jiuwenswarm_tui 打到一起，命名/逻辑同 build.sh 的 AgentOS-Client.tgz；daily/release 同逻辑）----
   local client_staging="${BUILD_DIR}/staging/client"
   mkdir -p "${client_staging}"
 
@@ -401,19 +346,6 @@ pack() {
   done
   if [[ "${tui_found}" -eq 0 ]]; then
     echo "error: no jiuwenswarm_tui wheel found in ${JIUWENSWARM_ARCHIVE_ROOT}/{x86_64,aarch64}" >&2
-    exit 1
-  fi
-
-  # agentos_tui_launcher：build_tui_launcher 已按 TUI_LAUNCHER_PACKAGES 列表生成 4 个平台命名副本（macosx/win/linux_aarch64/linux_x86_64），全部打入 client 包
-  local launcher_pkg launcher_found=0
-  for launcher_pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
-    if [[ -f "${DOWNLOAD_DIR}/tui-launcher/${launcher_pkg}" ]]; then
-      cp -p "${DOWNLOAD_DIR}/tui-launcher/${launcher_pkg}" "${client_staging}/"
-      launcher_found=1
-    fi
-  done
-  if [[ "${launcher_found}" -eq 0 ]]; then
-    echo "error: no tui-launcher wheel found in ${DOWNLOAD_DIR}/tui-launcher" >&2
     exit 1
   fi
 
@@ -474,7 +406,7 @@ collect_buildinfo() {
   # 收集各部件 archive 内名字含 buildinfo 关键字的构建信息文件到 AgentOS-Buildinfo 目录，
   # 再压缩为 AgentOS-Buildinfo.tgz（与 AgentOS-Server/AgentOS-Client 同级，位于 ${BUILD_DIR}）。
   # cp -p + tar --atime-preserve 保留各 buildinfo 源文件时间戳不变，便于版本回溯。
-  # 仅收集下载拉取的各部件 archive（tui-launcher 为本地构建，无 buildinfo）。
+  # 仅收集下载拉取的各部件 archive。
   local buildinfo_staging="${BUILD_DIR}/staging/AgentOS-Buildinfo"
   rm -rf "${buildinfo_staging}"
   mkdir -p "${buildinfo_staging}"
@@ -546,7 +478,6 @@ main() {
   clean                                # 清空 build/dist/（含 downloads 和 staging）
   build_openyuanrong                   # 下载并解压 OBS archive.tar.gz（openyuanrong wheels）
   build_jiuwenswarm                    # 下载并解压 OBS archive.tar.gz（jiuwenswarm wheels + deploy）
-  build_tui_launcher                   # pip wheel 本地构建 tui-launcher（生成多平台命名副本）
   build_agent_gateway                  # 下载并解压 OBS archive.tar.gz（a2x_registry wheel）
   build_conch                          # 下载并解压 OBS archive.tar.gz（conch 沙箱模块 rpm）
   build_credential_router             # 下载并解压 OBS archive.tar.gz（credential-router 平台相关 tar.gz）
