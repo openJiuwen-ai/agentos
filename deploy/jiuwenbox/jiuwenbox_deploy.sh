@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # ============================================================
-# jiuwenbox 部署脚本（自包含，对齐 yuanrong_deploy.sh）
+# jiuwenbox 部署脚本（自包含，对齐 agent_runtime_deploy.sh）
 # 优先使用 systemd 托管（Restart=on-failure）；无 systemd 时回退 nohup。
 # 用法:
 #   ./jiuwenbox_deploy.sh up --ip 192.168.1.1
@@ -652,7 +652,7 @@ jiuwenbox_run_on_host() {
   esac
 }
 
-# 对齐 yuanrong yr_check_existing：已存在则报错，不自动清理
+# 对齐 agent-runtime yr_check_existing：已存在则报错，不自动清理
 jiuwenbox_check_existing() {
   local host="$1" status_out=""
   info "Checking for existing jiuwenbox on ${host}..."

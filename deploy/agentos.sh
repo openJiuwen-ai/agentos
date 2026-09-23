@@ -33,7 +33,7 @@ AGENTOS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ETCD_SH="${SCRIPT_DIR}/etcd.sh"
 
 # ===== 模块注册（按部署/安装顺序声明，down/uninstall 自动逆序） =====
-MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")
+MODULES=("moosefs" "jiuwenbox" "agent-runtime" "agent-gateway" "jiuwenswarm")
 
 # ===== 全局环境变量 =====
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
@@ -228,7 +228,7 @@ ensure_agentos_user() {
 
 # ===== up 前置检查：etcd 集群必须已就绪 =====
 # init 与 up 拆开后，用户可能忘记先 init。这里显式探测 etcd 可达性，
-# 不可达则明确报错引导先 init，而不是让 yuanrong 抛看不懂的连接失败。
+# 不可达则明确报错引导先 init，而不是让 agent-runtime 抛看不懂的连接失败。
 ensure_etcd_ready() {
     info "Checking etcd availability (run 'agentos.sh init' first if this fails)"
     [ -r "${ETCD_SH}" ] || error "etcd script not found or not readable: ${ETCD_SH}"
@@ -473,7 +473,7 @@ Commands (Required):
 
 Options:
   --ip IP          指定本机使用的 IP 地址（多网卡环境必用）。
-                   指定后所有子组件（yuanrong/moosefs/conch/jiuwenbox/gateway/jiuwenswarm/etcd）
+                   指定后所有子组件（agent-runtime/moosefs/conch/jiuwenbox/gateway/jiuwenswarm/etcd）
                    的 local-ip 探测统一使用该 IP，避免自动探测不准导致 down/up 的 IP 对不上。
                    不指定时各组件各自自动探测（hostname -I / UDP socket）。
   -h, --help      显示帮助信息
@@ -493,7 +493,7 @@ Config:
               数据保留: MOOSEFS_PURGE_DATA=no(默认保留数据,重新install+up可恢复) / yes(彻底清理)
   jiuwenbox   配置文件: deploy/jiuwenbox/default-policy.yaml (含 extensions 目录占位符)
               jiuwenbox-server 随 jiuwenswarm whl 包安装，无需单独 install
-  yuanrong    环境变量直接通过命令行/环境变量传入（见 yuanrong_deploy.sh -h）
+  agent-runtime  环境变量直接通过命令行/环境变量传入（见 agent_runtime_deploy.sh -h）
               agent SSH 直连默认启用（简便模式：host/backend/client 混用一套密钥）：
                 AGENTOS_SSH_KEY              私钥 (/root/.ssh/agent_key)，三处用途共用
                 AGENTOS_SSH_BACKEND_PUBLIC_DIR 公钥目录 (/root/.ssh/agent_pub)，
@@ -508,7 +508,7 @@ Config:
 Prerequisites:
   - 本机需预装指定版本的 Python
   - jiuwenbox 部署前需确保 jiuwenswarm whl 包已安装（jiuwenbox-server 入口随 jiuwenswarm 安装）
-  - jiuwenswarm/gateway 部署前需确保 openyuanrong 已在本机安装并启动
+  - jiuwenswarm/gateway 部署前需确保 agent-runtime（openyuanrong）已在本机安装并启动
   - IMPORTANT: up 前需先执行 init 启动 etcd（up 会前置检查 etcd 可达性）
 
 Examples:
@@ -540,7 +540,7 @@ Examples:
   # 查询全部组件状态（只读探测，不启停服务）
   ./agentos.sh status
 
-  # 指定其他 whl 目录安装 yuanrong
+  # 指定其他 whl 目录安装 agent-runtime
   YR_PKG_BASE=/data/yr_whls ./agentos.sh install
 
   # 8. 自定义 agent SSH 直连密钥路径（默认 /root/.ssh/ 下，需用户自行生成）

@@ -12,12 +12,12 @@ DEPLOY_DIR="${PROJECT_ROOT}/deploy"
 BUILD_MODE="daily"
 CP_TAG="cp311"
 ARCH="$(uname -m)"
-YUANRONG_RELEASE_VERSION="0.9.0"
+OPENYUANRONG_RELEASE_VERSION="0.9.0"
 JIUWENSWARM_RELEASE_VERSION="0.2.3"
 JIUWENSWARM_RELEASE_GIT_TAG="release_0.2.3"
-YUANRONG_DAILY_VERSION="9.9.9"
-YR_SCHEDULE_TIME=""
-YR_RELEASE_DOWNLOAD_BASE=""
+OPENYUANRONG_DAILY_VERSION="9.9.9"
+OPENYUANRONG_SCHEDULE_TIME=""
+OPENYUANRONG_RELEASE_DOWNLOAD_BASE=""
 DOWNLOAD_JOBS=3
 REGISTRY_RELEASE_TAG="agentos-registry-prerelease-v0.2.1"
 REGISTRY_WHL_VERSION="0.3.3"
@@ -29,7 +29,7 @@ STRATOVIRT_RPM_VERSION="2.4.0-12.oe2403sp4"
 EROFS_RPM_VERSION="1.9.3-2.oe2403sp4"
 # ./ build parameters
 
-YUANRONG_DAILY_INDEX_URL="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html"
+OPENYUANRONG_DAILY_INDEX_URL="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/index.html"
 
 JIUWENSWARM_VERSION=""
 JIUWENSWARM_BASE=""
@@ -45,10 +45,6 @@ AGENT_INFER_PACKAGES=()
 
 CLIENT_TUI_PACKAGES=()
 SERVER_PACKAGES=()
-
-TUI_LAUNCHER_DIR="${PROJECT_ROOT}/tui-launcher"
-TUI_LAUNCHER_VERSION="0.1.0"
-TUI_LAUNCHER_PACKAGES=()
 
 usage() {
   cat <<EOF
@@ -102,19 +98,19 @@ parse_args() {
         shift
         ;;
       --yuanrong-release-version)
-        YUANRONG_RELEASE_VERSION="$2"
+        OPENYUANRONG_RELEASE_VERSION="$2"
         shift 2
         ;;
       --yuanrong-release-version=*)
-        YUANRONG_RELEASE_VERSION="${1#*=}"
+        OPENYUANRONG_RELEASE_VERSION="${1#*=}"
         shift
         ;;
       --yuanrong-daily-version)
-        YUANRONG_DAILY_VERSION="$2"
+        OPENYUANRONG_DAILY_VERSION="$2"
         shift 2
         ;;
       --yuanrong-daily-version=*)
-        YUANRONG_DAILY_VERSION="${1#*=}"
+        OPENYUANRONG_DAILY_VERSION="${1#*=}"
         shift
         ;;
       --jiuwenswarm-release-version)
@@ -142,19 +138,19 @@ parse_args() {
         shift
         ;;
       --yr-schedule-time)
-        YR_SCHEDULE_TIME="$2"
+        OPENYUANRONG_SCHEDULE_TIME="$2"
         shift 2
         ;;
       --yr-schedule-time=*)
-        YR_SCHEDULE_TIME="${1#*=}"
+        OPENYUANRONG_SCHEDULE_TIME="${1#*=}"
         shift
         ;;
       --yr-release-download-base)
-        YR_RELEASE_DOWNLOAD_BASE="$2"
+        OPENYUANRONG_RELEASE_DOWNLOAD_BASE="$2"
         shift 2
         ;;
       --yr-release-download-base=*)
-        YR_RELEASE_DOWNLOAD_BASE="${1#*=}"
+        OPENYUANRONG_RELEASE_DOWNLOAD_BASE="${1#*=}"
         shift
         ;;
       --download-jobs)
@@ -188,18 +184,18 @@ parse_args() {
   fi
 }
 
-fetch_latest_yr_schedule_time() {
+fetch_latest_openyuanrong_schedule_time() {
   local html schedule_time
 
-  echo "  fetch latest openeuler build from: ${YUANRONG_DAILY_INDEX_URL}" >&2
+  echo "  fetch latest openeuler build from: ${OPENYUANRONG_DAILY_INDEX_URL}" >&2
 
   if command -v curl >/dev/null 2>&1; then
     html="$(curl -fsSL --no-progress-meter --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 60 \
-      "${YUANRONG_DAILY_INDEX_URL}")"
+      "${OPENYUANRONG_DAILY_INDEX_URL}")"
   elif command -v wget >/dev/null 2>&1; then
-    html="$(wget -qO- "${YUANRONG_DAILY_INDEX_URL}")"
+    html="$(wget -qO- "${OPENYUANRONG_DAILY_INDEX_URL}")"
   else
-    echo "error: curl or wget is required to fetch yuanrong daily index" >&2
+    echo "error: curl or wget is required to fetch openyuanrong daily index" >&2
     return 1
   fi
 
@@ -222,7 +218,7 @@ fetch_latest_yr_schedule_time() {
   fi
 
   if [[ -z "${schedule_time}" ]]; then
-    echo "error: no openeuler daily build matching 0010/1410 schedule in ${YUANRONG_DAILY_INDEX_URL}" >&2
+    echo "error: no openeuler daily build matching 0010/1410 schedule in ${OPENYUANRONG_DAILY_INDEX_URL}" >&2
     echo "  (manual triggers like 1728/1541 are skipped; set --yr-schedule-time to override)" >&2
     return 1
   fi
@@ -230,21 +226,21 @@ fetch_latest_yr_schedule_time() {
   echo "${schedule_time}"
 }
 
-resolve_yr_schedule_time() {
-  if [[ -n "${YR_SCHEDULE_TIME}" ]]; then
-    echo "${YR_SCHEDULE_TIME}"
+resolve_openyuanrong_schedule_time() {
+  if [[ -n "${OPENYUANRONG_SCHEDULE_TIME}" ]]; then
+    echo "${OPENYUANRONG_SCHEDULE_TIME}"
     return 0
   fi
 
-  fetch_latest_yr_schedule_time
+  fetch_latest_openyuanrong_schedule_time
 }
 
 configure_daily() {
-  local jiuwen_schedule_time yr_schedule_time
+  local jiuwen_schedule_time openyuanrong_schedule_time
 
   jiuwen_schedule_time="$(date +%Y%m%d)02"
-  yr_schedule_time="$(resolve_yr_schedule_time)"
-  echo "  yuanrong daily build: ${yr_schedule_time}, version: ${YUANRONG_DAILY_VERSION}"
+  openyuanrong_schedule_time="$(resolve_openyuanrong_schedule_time)"
+  echo "  openyuanrong daily build: ${openyuanrong_schedule_time}, version: ${OPENYUANRONG_DAILY_VERSION}"
 
   JIUWENSWARM_VERSION="${jiuwen_schedule_time}"
   JIUWENSWARM_BASE="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/jiuwenswarm_agent_os/package/daily/dist/${jiuwen_schedule_time}"
@@ -257,8 +253,8 @@ configure_daily() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-macosx_11_0_arm64.whl"
   )
 
-  OPENYUANRONG_VERSION="${YUANRONG_DAILY_VERSION}"
-  OPENYUANRONG_BASE="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/${yr_schedule_time}/openeuler/${ARCH}"
+  OPENYUANRONG_VERSION="${OPENYUANRONG_DAILY_VERSION}"
+  OPENYUANRONG_BASE="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily_build/${openyuanrong_schedule_time}/openeuler/${ARCH}"
 
   OPENYUANRONG_PACKAGES=(
     "openyuanrong-${OPENYUANRONG_VERSION}-py3-none-manylinux_2_34_${ARCH}.whl"
@@ -275,13 +271,6 @@ configure_daily() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-win_amd64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_aarch64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_x86_64.whl"
-  )
-
-  TUI_LAUNCHER_PACKAGES=(
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
   )
 
   SERVER_PACKAGES=(
@@ -298,7 +287,7 @@ configure_daily() {
 
 configure_release() {
   JIUWENSWARM_VERSION="${JIUWENSWARM_RELEASE_VERSION}"
-  OPENYUANRONG_VERSION="${YUANRONG_RELEASE_VERSION}"
+  OPENYUANRONG_VERSION="${OPENYUANRONG_RELEASE_VERSION}"
 
   BASE_URL="https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com"
   JIUWENSWARM_BASE="${BASE_URL}/jiuwenswarm/agentos_b050/package/release/last_successful_build"
@@ -311,12 +300,12 @@ configure_release() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_x86_64.whl"
   )
 
-   if [[ -n "${YR_RELEASE_DOWNLOAD_BASE}" ]]; then
-    OPENYUANRONG_BASE="${YR_RELEASE_DOWNLOAD_BASE}/openeuler/${ARCH}"
+   if [[ -n "${OPENYUANRONG_RELEASE_DOWNLOAD_BASE}" ]]; then
+    OPENYUANRONG_BASE="${OPENYUANRONG_RELEASE_DOWNLOAD_BASE}/openeuler/${ARCH}"
   else
     OPENYUANRONG_BASE="https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/${OPENYUANRONG_VERSION}/openeuler/${ARCH}"
   fi
-  echo "yuanrong release download base: ${OPENYUANRONG_BASE}"
+  echo "openyuanrong release download base: ${OPENYUANRONG_BASE}"
 
   OPENYUANRONG_PACKAGES=(
     "openyuanrong-${OPENYUANRONG_VERSION}-py3-none-manylinux_2_34_${ARCH}.whl"
@@ -333,13 +322,6 @@ configure_release() {
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-win_amd64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_aarch64.whl"
     "jiuwenswarm_tui-${JIUWENSWARM_VERSION}-py3-none-linux_x86_64.whl"
-  )
-
-  TUI_LAUNCHER_PACKAGES=(
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-macosx_11_0_arm64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-win_amd64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_aarch64.whl"
-    "agentos_tui_launcher-${TUI_LAUNCHER_VERSION}-py3-none-linux_x86_64.whl"
   )
 
   SERVER_PACKAGES=(
@@ -538,44 +520,6 @@ build_conch() {
     "conch-${CONCH_RPM_VERSION}.${ARCH}.rpm"
 }
 
-build_tui_launcher() {
-  echo "==> build_tui_launcher (version=${TUI_LAUNCHER_VERSION})"
-  local dist_dir="${DOWNLOAD_DIR}/tui-launcher"
-  mkdir -p "${dist_dir}"
-
-  # 使用 pip wheel 构建 tui-launcher 的 wheel 包（不下载依赖）
-  # 构建产物放在 DOWNLOAD_DIR/tui-launcher 下，后续 pack 阶段会将其与 jiuwenswarm_tui 放在同一目录
-  if command -v python >/dev/null 2>&1; then
-    python -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -m pip wheel --no-deps -w "${dist_dir}" "${TUI_LAUNCHER_DIR}"
-  else
-    echo "error: python is required to build tui-launcher" >&2
-    return 1
-  fi
-
-  # pip wheel 构建出 py3-none-any 的纯 Python wheel，此处复制为各平台命名的 wheel，
-  # 与 jiuwenswarm_tui 保持一致的多平台打包方式
-  local base_whl=""
-  for whl in "${dist_dir}"/*.whl; do
-    if [[ -f "${whl}" ]]; then
-      base_whl="${whl}"
-      echo "  built: $(basename "${whl}")"
-      break
-    fi
-  done
-
-  if [[ -z "${base_whl}" ]]; then
-    echo "error: tui-launcher wheel not found after build" >&2
-    return 1
-  fi
-
-  for pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
-    cp "${base_whl}" "${dist_dir}/${pkg}"
-    echo "  created: ${pkg}"
-  done
-}
-
 pack() {
   echo "==> pack"
   mkdir -p "${BUILD_DIR}"
@@ -593,11 +537,6 @@ pack() {
 
   for pkg in "${CLIENT_TUI_PACKAGES[@]}"; do
     cp "${DOWNLOAD_DIR}/jiuwenswarm/${pkg}" "${client_staging}/"
-  done
-
-  # tui-launcher whl 与 jiuwenswarm_tui 放在同一目录（client 包），因为 tui-launcher 依赖 jiuwenswarm 运行时
-  for pkg in "${TUI_LAUNCHER_PACKAGES[@]}"; do
-    cp "${DOWNLOAD_DIR}/tui-launcher/${pkg}" "${client_staging}/"
   done
 
   for pkg in "${SERVER_PACKAGES[@]}"; do
@@ -637,16 +576,15 @@ main() {
   parse_args "$@"
   configure_build
 
-  local yr_version="${YUANRONG_DAILY_VERSION}"
+  local openyuanrong_version="${OPENYUANRONG_DAILY_VERSION}"
   if [[ "${BUILD_MODE}" == "release" ]]; then
-    yr_version="${YUANRONG_RELEASE_VERSION}"
+    openyuanrong_version="${OPENYUANRONG_RELEASE_VERSION}"
   fi
 
-  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, yr_schedule=${YR_SCHEDULE_TIME:-auto}, yr_version=${yr_version}, yr_release_base=${YR_RELEASE_DOWNLOAD_BASE:-auto}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
+  echo "AgentOS build (mode=${BUILD_MODE}, cp_tag=${CP_TAG}, arch=${ARCH}, openyuanrong_schedule=${OPENYUANRONG_SCHEDULE_TIME:-auto}, openyuanrong_version=${openyuanrong_version}, openyuanrong_release_base=${OPENYUANRONG_RELEASE_DOWNLOAD_BASE:-auto}, jw_git_tag=${JIUWENSWARM_RELEASE_GIT_TAG}, download_jobs=${DOWNLOAD_JOBS})"
   clean
   build_openyuanrong
   build_jiuwenswarm
-  build_tui_launcher
   build_agent_gateway
   build_agent_infer
   pack

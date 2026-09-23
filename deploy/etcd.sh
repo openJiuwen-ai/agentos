@@ -5,7 +5,7 @@ set -euo >/dev/null 2>&1
 # ============================================================
 # agentos-etcd 独立启停脚本
 #
-# 从 yuanrong/module.sh 的 etcd 逻辑中拆出，单独管理 etcd unit 生命周期。
+# 从 agent-runtime（openyuanrong）的部署脚本中拆出，单独管理 etcd unit 生命周期。
 #   - 仅 etcd_nodes 节点生成并启动 agentos-etcd.service
 #   - 角色推导读取 ~/.agentos/deploy/config.yaml（由 deploy/scripts/config.py 解析）
 #   - etcd 二进制路径从 yr config dump 的 values.etcd.bin_path 探测，回退 yr 包内 third_party/etcd/etcd
@@ -20,10 +20,10 @@ set -euo >/dev/null 2>&1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 YR_PYTHON_VERSION="${YR_PYTHON_VERSION:-3.11}"
-YR_CONFIG_PY="${SCRIPT_DIR}/scripts/config.py"
-YR_ETCD_SVC="agentos-etcd"
-YR_ETCD_UNIT="/etc/systemd/system/${YR_ETCD_SVC}.service"
-YR_ETCD_DATA_DIR="/var/lib/agentos/etcd"
+AGENT_RUNTIME_CONFIG_PY="${SCRIPT_DIR}/scripts/config.py"
+AGENT_RUNTIME_ETCD_SVC="agentos-etcd"
+AGENT_RUNTIME_ETCD_UNIT="/etc/systemd/system/${AGENT_RUNTIME_ETCD_SVC}.service"
+AGENT_RUNTIME_ETCD_DATA_DIR="/var/lib/agentos/etcd"
 YR_ETCD_CLIENT_PORT="${YR_ETCD_CLIENT_PORT:-32379}"
 YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
@@ -48,9 +48,9 @@ _yr_python() {
 # BIND_IP 非空时传 --ip 给 config.py，使 config.py 的 local-ip 探测与本脚本一致
 _yr_cfg() {
     if [ -n "${BIND_IP:-}" ]; then
-        "$(_yr_python)" "${YR_CONFIG_PY}" --ip "${BIND_IP}" "$@"
+        "$(_yr_python)" "${AGENT_RUNTIME_CONFIG_PY}" --ip "${BIND_IP}" "$@"
     else
-        "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+        "$(_yr_python)" "${AGENT_RUNTIME_CONFIG_PY}" "$@"
     fi
 }
 
@@ -109,10 +109,10 @@ _yr_etcdctl_path() {
     return 1
 }
 
-# ===== yuanrong 在 etcd 中写入的业务数据前缀 =====
+# ===== agent-runtime（openyuanrong）在 etcd 中写入的业务数据前缀 =====
 # yr stop --force 不会优雅退出清理 etcd 数据，down 后按前缀删除避免残留。
 # 不动 etcd 自身集群元数据（member/ 等），仅清业务层数据。
-YR_ETCD_DATA_PREFIXES=("/datasystem/" "/scheduler/" "/sn/" "/yr/")
+AGENT_RUNTIME_ETCD_DATA_PREFIXES=("/datasystem/" "/scheduler/" "/sn/" "/yr/")
 
 # ===== 生成 etcd unit（仅 etcd_nodes 节点调用） =====
 # advertise IP 必须用本机在 etcd_nodes 中匹配到的 config IP（通配匹配时用通配 IP 本身），
@@ -131,7 +131,7 @@ _yr_generate_etcd_unit() {
         || error "Failed to derive etcd advertise IP"
 
     # 有 member/ 子目录说明已有 etcd 数据，用 existing 状态恢复；否则用 new 全新启动
-    if [ -d "${YR_ETCD_DATA_DIR}/member" ]; then
+    if [ -d "${AGENT_RUNTIME_ETCD_DATA_DIR}/member" ]; then
         cluster_state="existing"
         info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}, state=existing (data preserved)"
     else
@@ -139,7 +139,7 @@ _yr_generate_etcd_unit() {
         info "etcd unit: bin=${etcd_bin}, name=${node_name}, advertise=${advertise_ip}, state=new (clean bootstrap)"
     fi
 
-    cat > "${YR_ETCD_UNIT}" <<EOF
+    cat > "${AGENT_RUNTIME_ETCD_UNIT}" <<EOF
 [Unit]
 Description=AgentOS etcd Service
 After=network-online.target
@@ -150,7 +150,7 @@ StartLimitBurst=5
 [Service]
 ExecStart=${etcd_bin} \\
     --name ${node_name} \\
-    --data-dir ${YR_ETCD_DATA_DIR} \\
+    --data-dir ${AGENT_RUNTIME_ETCD_DATA_DIR} \\
     --unsafe-no-fsync=false \\
     --auto-compaction-mode=revision \\
     --auto-compaction-retention=100000 \\
@@ -182,29 +182,29 @@ EOF
 # --initial-cluster-state（new/existing），实现不删数据的平滑重启。
 # 彻底清理数据需显式执行 ./etcd.sh clean。
 etcd_up() {
-    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
+    [ -f "${AGENT_RUNTIME_CONFIG_PY}" ] || error "config parser not found: ${AGENT_RUNTIME_CONFIG_PY}"
     _yr_has_systemd || error "systemd not available; etcd.sh requires systemd"
 
     if ! _yr_cfg is-etcd-node; then
-        info "This host is NOT an etcd node, skipping ${YR_ETCD_SVC}"
+        info "This host is NOT an etcd node, skipping ${AGENT_RUNTIME_ETCD_SVC}"
         return 0
     fi
 
-    info "This host is an etcd node, generating ${YR_ETCD_SVC} unit"
-    mkdir -p "${YR_ETCD_DATA_DIR}"
+    info "This host is an etcd node, generating ${AGENT_RUNTIME_ETCD_SVC} unit"
+    mkdir -p "${AGENT_RUNTIME_ETCD_DATA_DIR}"
 
     _yr_generate_etcd_unit
     systemctl daemon-reload
-    systemctl enable --now "${YR_ETCD_SVC}" || error "Failed to start ${YR_ETCD_SVC}"
+    systemctl enable --now "${AGENT_RUNTIME_ETCD_SVC}" || error "Failed to start ${AGENT_RUNTIME_ETCD_SVC}"
 
     local i
     for i in $(seq 1 "${YR_HEALTH_CHECK_RETRIES}"); do
-        systemctl is-active --quiet "${YR_ETCD_SVC}" && break
+        systemctl is-active --quiet "${AGENT_RUNTIME_ETCD_SVC}" && break
         sleep 1
     done
-    systemctl is-active --quiet "${YR_ETCD_SVC}" \
-        || error "${YR_ETCD_SVC} not active, see: journalctl -u ${YR_ETCD_SVC}"
-    success "${YR_ETCD_SVC} up"
+    systemctl is-active --quiet "${AGENT_RUNTIME_ETCD_SVC}" \
+        || error "${AGENT_RUNTIME_ETCD_SVC} not active, see: journalctl -u ${AGENT_RUNTIME_ETCD_SVC}"
+    success "${AGENT_RUNTIME_ETCD_SVC} up"
 }
 
 # ===== down: disable → 删除 unit（保留 /var/lib/agentos/etcd 数据） =====
@@ -213,11 +213,11 @@ etcd_up() {
 etcd_down() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
-    systemctl disable --now "${YR_ETCD_SVC}" 2>/dev/null || true
-    rm -f "${YR_ETCD_UNIT}"
-    systemctl reset-failed "${YR_ETCD_SVC}" 2>/dev/null || true
+    systemctl disable --now "${AGENT_RUNTIME_ETCD_SVC}" 2>/dev/null || true
+    rm -f "${AGENT_RUNTIME_ETCD_UNIT}"
+    systemctl reset-failed "${AGENT_RUNTIME_ETCD_SVC}" 2>/dev/null || true
     systemctl daemon-reload
-    success "${YR_ETCD_SVC} down (data preserved at ${YR_ETCD_DATA_DIR})"
+    success "${AGENT_RUNTIME_ETCD_SVC} down (data preserved at ${AGENT_RUNTIME_ETCD_DATA_DIR})"
 }
 
 # ===== clean: 清理 etcd 数据（显式操作，需交互确认） =====
@@ -240,13 +240,13 @@ EOF
         esac
     done
 
-    if [ ! -d "${YR_ETCD_DATA_DIR}" ]; then
-        info "etcd data directory does not exist: ${YR_ETCD_DATA_DIR}"
+    if [ ! -d "${AGENT_RUNTIME_ETCD_DATA_DIR}" ]; then
+        info "etcd data directory does not exist: ${AGENT_RUNTIME_ETCD_DATA_DIR}"
         return 0
     fi
 
     # 交互确认（-y/--yes 跳过）
-    info "WARNING: This will DELETE all etcd data at ${YR_ETCD_DATA_DIR}"
+    info "WARNING: This will DELETE all etcd data at ${AGENT_RUNTIME_ETCD_DATA_DIR}"
     info "This is needed only for: topology change, data corruption, or fresh re-bootstrap."
     info "For smooth restart, use 'down' + 'up' (data preserved)."
     local confirm
@@ -256,12 +256,12 @@ EOF
         return 0
     fi
 
-    info "Cleaning etcd data directory: ${YR_ETCD_DATA_DIR}"
-    rm -rf "${YR_ETCD_DATA_DIR:?}"/*
-    success "etcd data cleaned: ${YR_ETCD_DATA_DIR}"
+    info "Cleaning etcd data directory: ${AGENT_RUNTIME_ETCD_DATA_DIR}"
+    rm -rf "${AGENT_RUNTIME_ETCD_DATA_DIR:?}"/*
+    success "etcd data cleaned: ${AGENT_RUNTIME_ETCD_DATA_DIR}"
 }
 
-# ===== clean-yr-data: 清理 yuanrong 在 etcd 中残留的业务数据 =====
+# ===== clean-yr-data: 清理 agent-runtime（openyuanrong）在 etcd 中残留的业务数据 =====
 # yr stop --force 是强制停止，不会优雅退出清理 etcd 业务数据。
 # 按前缀删除 /datasystem/、/scheduler/、/sn/、/yr/ 开头的 key，
 # 避免下次 up 时读到旧拓扑/旧实例路由导致路由失败。
@@ -286,14 +286,14 @@ etcd_clean_yr_data() {
         endpoints="${endpoints}http://${node}:${YR_ETCD_CLIENT_PORT}"
     done
 
-    info "Cleaning yuanrong etcd data (endpoints: ${endpoints})..."
-    for prefix in "${YR_ETCD_DATA_PREFIXES[@]}"; do
+    info "Cleaning agent-runtime (openyuanrong) etcd data (endpoints: ${endpoints})..."
+    for prefix in "${AGENT_RUNTIME_ETCD_DATA_PREFIXES[@]}"; do
         local deleted
         deleted=$(ETCDCTL_API=3 "${etcdctl}" --endpoints="${endpoints}" del "${prefix}" --prefix 2>/dev/null) \
             && info "  cleaned prefix: ${prefix} (${deleted} keys)" \
             || warning "  failed to clean prefix: ${prefix} (may not exist)"
     done
-    success "yuanrong etcd data cleaned"
+    success "agent-runtime (openyuanrong) etcd data cleaned"
 }
 
 # ===== check: 探测 etcd 集群是否可达（供 agentos.sh up 前置检查调用） =====
@@ -301,7 +301,7 @@ etcd_clean_yr_data() {
 # 只要有任一节点可达即视为集群就绪（quorum 由 etcd 自身保证，这里只验连通性）。
 # 全部不可达返回 1，调用方据此提示用户先执行 init。
 etcd_check() {
-    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
+    [ -f "${AGENT_RUNTIME_CONFIG_PY}" ] || error "config parser not found: ${AGENT_RUNTIME_CONFIG_PY}"
 
     local nodes node
     nodes=$(_yr_cfg etcd-nodes) || error "Failed to read etcd_nodes from config"
@@ -329,7 +329,7 @@ etcd_check() {
 #   - unit 非 active：stopped
 #   版本号从 etcd 二进制 --version 输出提取，获取失败显示 -
 etcd_status() {
-    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
+    [ -f "${AGENT_RUNTIME_CONFIG_PY}" ] || error "config parser not found: ${AGENT_RUNTIME_CONFIG_PY}"
 
     # 探测 etcd 版本号
     local etcd_ver="-"
@@ -341,31 +341,31 @@ etcd_status() {
     fi
 
     if ! _yr_cfg is-etcd-node 2>/dev/null; then
-        echo "etcd|${YR_ETCD_SVC}.service|n/a|not etcd node|${etcd_ver}"
+        echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|n/a|not etcd node|${etcd_ver}"
         return 0
     fi
 
     if ! _yr_has_systemd; then
-        echo "etcd|${YR_ETCD_SVC}.service|stopped|systemd required|${etcd_ver}"
+        echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|stopped|systemd required|${etcd_ver}"
         return 0
     fi
 
     # unit 文件已被 down/uninstall 删除时，systemd 可能仍记忆 failed 状态
     # 此时应判为 stopped（服务确实未运行），而非 failed
-    if [ ! -f "${YR_ETCD_UNIT}" ]; then
-        echo "etcd|${YR_ETCD_SVC}.service|stopped|unit not found|${etcd_ver}"
+    if [ ! -f "${AGENT_RUNTIME_ETCD_UNIT}" ]; then
+        echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|stopped|unit not found|${etcd_ver}"
         return 0
     fi
 
     local unit_state nodes node reachable
 
     # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
-    if systemctl is-failed --quiet "${YR_ETCD_SVC}" 2>/dev/null; then
-        echo "etcd|${YR_ETCD_SVC}.service|failed|unit failed|${etcd_ver}"
+    if systemctl is-failed --quiet "${AGENT_RUNTIME_ETCD_SVC}" 2>/dev/null; then
+        echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|failed|unit failed|${etcd_ver}"
         return 1
     fi
 
-    unit_state=$(systemctl is-active "${YR_ETCD_SVC}" 2>/dev/null || true)
+    unit_state=$(systemctl is-active "${AGENT_RUNTIME_ETCD_SVC}" 2>/dev/null || true)
 
     if [ "${unit_state}" = "active" ]; then
         # 端口探测：复用 etcd_check 的 TCP 逻辑，对 config 中 etcd_nodes 的 client port
@@ -378,14 +378,14 @@ etcd_status() {
             fi
         done
         if [ -n "${reachable}" ]; then
-            echo "etcd|${YR_ETCD_SVC}.service|running|${reachable}:${YR_ETCD_CLIENT_PORT}|${etcd_ver}"
+            echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|running|${reachable}:${YR_ETCD_CLIENT_PORT}|${etcd_ver}"
             return 0
         fi
-        echo "etcd|${YR_ETCD_SVC}.service|failed|unit active, port unreachable|${etcd_ver}"
+        echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|failed|unit active, port unreachable|${etcd_ver}"
         return 1
     fi
 
-    echo "etcd|${YR_ETCD_SVC}.service|stopped|unit inactive|${etcd_ver}"
+    echo "etcd|${AGENT_RUNTIME_ETCD_SVC}.service|stopped|unit inactive|${etcd_ver}"
     return 0
 }
 
@@ -393,7 +393,7 @@ print_help() {
     cat << EOF
 Usage: ./$(basename "$0") <COMMAND>
 
-agentos-etcd 独立启停脚本，从 yuanrong/module.sh 的 etcd 逻辑中拆出。
+agentos-etcd 独立启停脚本，从 agent-runtime 部署脚本的 etcd 逻辑中拆出。
 
 角色推导读取 ~/.agentos/deploy/config.yaml：
   - 仅 etcd_nodes 节点生成并启动 agentos-etcd.service
@@ -410,7 +410,7 @@ Commands:
   clean           清理 etcd 数据目录（交互确认，-y/--yes 跳过确认）
                   适用场景：etcd 拓扑变更、数据损坏修复、全新 re-bootstrap
                   平滑重启不需 clean，down + up 即可保留数据恢复
-  clean-yr-data   清理 yuanrong 在 etcd 中残留的业务数据（按前缀删除）
+  clean-yr-data   清理 agent-runtime（openyuanrong）在 etcd 中残留的业务数据（按前缀删除）
                   删除 /datasystem/、/scheduler/、/sn/、/yr/ 开头的 key
                   etcd 服务必须正在运行；不影响 etcd 集群元数据
 

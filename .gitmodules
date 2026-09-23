@@ -1,13 +1,16 @@
-[submodule "yuanrong"]
-	path = yuanrong
-	url = https://gitcode.com/openeuler/yuanrong.git
 [submodule "jiuwenswarm"]
 	path = jiuwenswarm
 	url = https://gitcode.com/openJiuwen/jiuwenswarm.git
-[submodule "Conch"]
-	path = Conch
+[submodule "conch"]
+	path = conch
 	url = https://gitcode.com/openeuler/Conch.git
 [submodule "agent-protocol"]
 	path = agent-protocol
 	url = https://gitcode.com/openJiuwen/agent-protocol.git
 	branch = feature/Agentregistry-dev
+[submodule "agent-dx"]
+	path = agent-runtime/agent-dx
+	url = https://gitcode.com/openJiuwen/agent-dx.git
+[submodule "yuanrong"]
+	path = agent-runtime/yuanrong
+	url = https://gitcode.com/openeuler/yuanrong.git

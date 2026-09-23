@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `moosefs` | 分布式共享存储 | MooseFS 集群（master + chunkserver + client），单机自动跳过 |
 | `jiuwenbox` | 沙箱服务 | 每台机器同构启动 jiuwenbox-server（随 jiuwenswarm whl 安装） |
-| `yuanrong` | openyuanrong 集群 | 分布式进程模式集群（master + agent） |
+| `agent-runtime` | Agent 分布式运行时（具体选型: openyuanrong 集群） | 分布式进程模式集群（master + agent） |
 | `conch` | Conch 沙箱引擎 | RPM 安装 erofs-utils、StratoVirt、Conch |
 | `agent-gateway` | A2X 注册中心 | a2x-registry 后端（sqlite 存储），优先 systemd 托管，抢占 ingress VIP 的节点启动 |
 | `jiuwenswarm` | jiuwenswarm gateway + web | gateway 进程 + web 前端（whl 包已包含 gateway） |
@@ -33,9 +33,9 @@ deploy/
 │   ├── module.sh             # jiuwenbox 钩子
 │   ├── jiuwenbox_deploy.sh   # up/down/restart
 │   └── default-policy.yaml   # policy 模板（含 extensions 占位符）
-├── yuanrong/
-│   ├── module.sh             # yuanrong 钩子函数
-│   └── yuanrong_deploy.sh    # yuanrong 原始部署脚本
+├── agent-runtime/
+│   ├── module.sh             # agent-runtime 钩子函数
+│   └── agent_runtime_deploy.sh  # agent-runtime 部署脚本（openyuanrong 集群安装/启停）
 ├── conch/
 │   ├── module.sh             # conch 钩子函数
 │   └── conch_deploy.sh       # Conch 部署脚本
@@ -53,7 +53,7 @@ deploy/
 核心机制：**模块注册 + 钩子函数 + 调度引擎**。
 
 1. **模块注册**：`agentos.sh` 顶部的 `MODULES` 数组声明所有模块及其部署顺序：
-   `MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm")`
+   `MODULES=("moosefs" "jiuwenbox" "agent-runtime" "agent-gateway" "jiuwenswarm")`
 2. **钩子约定**：每个模块在 `deploy/<module>/module.sh` 中实现 5 个钩子函数：
    - `<module>_up` — 启动/部署
    - `<module>_down` — 停止/卸载
@@ -118,7 +118,7 @@ cluster:
   ingress_virtual_ip: "192.168.100.1"
 ```
 
-**示例二：双机 HA**（master 节点持有 VIP，备份节点不持 VIP（gateway/registry 跳过启动，yuanrong/jiuwenbox 照常）：
+**示例二：双机 HA**（master 节点持有 VIP，备份节点不持 VIP（gateway/registry 跳过启动，agent-runtime/jiuwenbox 照常）：
 
 ```yaml
 cluster:
@@ -145,7 +145,7 @@ cluster:
 
 `config.yaml` 随 `install` 持久化到 `~/.agentos/deploy/config.yaml`，角色推导（etcd 节点、master 节点、VIP 持有）由 `scripts/config.py` 解析。修改持久化文件后重启对应服务即可生效（`ExecStartPre` 每次启动时重新判定）。
 
-### agent SSH 直连密钥（yuanrong 前置）
+### agent SSH 直连密钥（agent-runtime 前置）
 
 各目标主机需预生成 agent SSH 直连密钥（`up` 默认启用，脚本不生成）。默认路径 `/root/.ssh/`，已存在则无需重复创建：
 
@@ -158,7 +158,7 @@ chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
 
 **多机部署时，每台节点上都需要有一份相同的密钥**（同一套私钥 + 公钥），在任一节点生成后通过 scp 分发到其余所有节点即可。
 
-docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。详见下文「yuanrong」配置。
+docker-in-docker 部署时，密钥需放在 docker daemon 可见的 bind mount 路径（如挂载进容器的宿主共享目录），否则宿主路径不可见会导致挂载失败。详见下文「agent-runtime」配置。
 
 ### 命令
 
@@ -281,12 +281,12 @@ MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fu
 - 配置文件：`deploy/jiuwenbox/default-policy.yaml`（`__JIUWENSWARM_EXTENSIONS_DIR__` 在各机 start 时按该机 `pip show jiuwenswarm` 替换）
 - `module.sh` 为薄封装；启停逻辑在 `jiuwenbox_deploy.sh`
 - 每台机器各启动一份 jiuwenbox（无 master/agent 差异）
-- 已有实例时只报错、不自动清理（对齐 yuanrong）；需先 `down` 再 `up`
+- 已有实例时只报错、不自动清理（对齐 agent-runtime）；需先 `down` 再 `up`
 - 前置：各目标机已安装 jiuwenswarm（含 `jiuwenbox-server`）
 
-#### yuanrong
+#### agent-runtime
 
-通过环境变量传入，常用变量：
+Agent 分布式运行时模块，具体选型为 openyuanrong 集群。通过环境变量传入，常用变量：
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
@@ -296,9 +296,9 @@ MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fu
 | `AGENTOS_SSH_KEY` | agent SSH 直连私钥路径（host/backend/client 三处混用） | `/root/.ssh/agent_key` |
 | `AGENTOS_SSH_BACKEND_PUBLIC_DIR` | 挂进实例的公钥目录（须含 `authorized_keys`） | `/root/.ssh/agent_pub` |
 
-详见 `yuanrong_deploy.sh -h`。
+详见 `agent_runtime_deploy.sh -h`。
 
-**agent SSH 直连密钥配置**：`up` 默认启用 SSH 直连（frontend bastion `:2222` + function_proxy tcp tunnel + 平台公钥挂载），不提供关闭开关（三方 agent 镜像自带 sshd，frontend→实例 sshd 段必需）。密钥由用户自行生成，部署脚本不生成；`yuanrong_deploy.sh` 启动前会校验，缺失则报错并提示。
+**agent SSH 直连密钥配置**：`up` 默认启用 SSH 直连（frontend bastion `:2222` + function_proxy tcp tunnel + 平台公钥挂载），不提供关闭开关（三方 agent 镜像自带 sshd，frontend→实例 sshd 段必需）。密钥由用户自行生成，部署脚本不生成；`agent_runtime_deploy.sh` 启动前会校验，缺失则报错并提示。
 
 简便模式 host/backend/client 三处用途混用同一套密钥，默认路径在 `/root/.ssh/` 下，部署前生成（**已存在则无需重复创建**）：
 
@@ -411,12 +411,12 @@ docker load -i yr-runtime-sandbox.tar
 
 `install` 时统一从 agentos 根目录（`deploy` 的同级目录）获取 whl 包：
 
-- **openyuanrong**：`YR_PKG_BASE` 默认指向 agentos 根目录，yuanrong 脚本按版本/arch 自动拼接 whl 文件名
+- **openyuanrong**：`YR_PKG_BASE` 默认指向 agentos 根目录，agent-runtime 脚本按版本/arch 自动拼接 whl 文件名
 - **jiuwenswarm**：匹配 `jiuwenswarm-*-py3-none-any.whl`（如 `jiuwenswarm-0.2.3-py3-none-any.whl`，已包含 gateway）
 - **a2x-registry**：匹配 `a2x_registry-*-py3-none-any.whl`（agent-gateway 模块）
 - **moosefs**：从 agentos 根目录获取 RPM 包（moosefs-master/chunkserver/client）
 
-可通过 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 yuanrong 的 whl 目录。
+可通过 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 agent-runtime 的 whl 目录。
 
 ---
 
@@ -473,7 +473,7 @@ mymodule_status() {
 编辑 `agentos.sh` 顶部的 `MODULES` 数组，按部署顺序添加模块名：
 
 ```bash
-MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodule")
+MODULES=("moosefs" "jiuwenbox" "agent-runtime" "agent-gateway" "jiuwenswarm" "mymodule")
 ```
 
 ### 完成

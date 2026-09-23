@@ -153,7 +153,7 @@ install_system_openeuler() {
     fi
 
     # iproute 提供 ip 命令（openEuler 包名是 iproute 不是 iproute2）
-    # bwrap 是 jiuwenbox 沙箱的前置依赖；jq 是 yuanrong session.json 解析依赖
+    # bwrap 是 jiuwenbox 沙箱的前置依赖；jq 是 agent-runtime session.json 解析依赖
     local pkgs=(
         "iptables"
         "curl"
@@ -207,7 +207,7 @@ install_system_ubuntu() {
 
     apt-get update -y
 
-    # bwrap 是 jiuwenbox 沙箱的前置依赖；jq 是 yuanrong session.json 解析依赖
+    # bwrap 是 jiuwenbox 沙箱的前置依赖；jq 是 agent-runtime session.json 解析依赖
     # gpg 是 MooseFS GPG key 导入依赖
     local pkgs=(
         "iptables"

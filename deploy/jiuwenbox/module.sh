@@ -5,7 +5,7 @@
 # 钩子函数: jiuwenbox_up / jiuwenbox_down / jiuwenbox_install / jiuwenbox_uninstall / jiuwenbox_status
 #
 # 说明:
-#   薄封装，对齐 yuanrong/module.sh：up/down 逻辑在 jiuwenbox_deploy.sh。
+#   薄封装，对齐 agent-runtime/module.sh：up/down 逻辑在 jiuwenbox_deploy.sh。
 #   jiuwenbox-server 入口随 jiuwenswarm whl 安装，无需单独 pip install。
 # ============================================================
 

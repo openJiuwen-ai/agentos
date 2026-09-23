@@ -3,12 +3,13 @@
 set -euo >/dev/null 2>&1
 
 # ============================================================
-# yuanrong 分布式部署独立脚本
+# agent-runtime（Agent 分布式运行时）部署独立脚本
+# 具体选型为 openyuanrong 集群：安装/启停 openyuanrong 组件
 # 完全自包含，不依赖任何其他文件
 # 用法:
-#   ./yuanrong_deploy.sh up --ip 192.168.1.1
-#   ./yuanrong_deploy.sh down --ip 192.168.1.1
-#   ./yuanrong_deploy.sh up    # 默认本机
+#   ./agent_runtime_deploy.sh up --ip 192.168.1.1
+#   ./agent_runtime_deploy.sh down --ip 192.168.1.1
+#   ./agent_runtime_deploy.sh up    # 默认本机
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,11 +24,11 @@ NO_SYSTEMD=0
 
 # ===== systemd 模式常量 =====
 # etcd 相关常量与逻辑已拆到 deploy/etcd.sh，此处仅保留 executor unit 相关定义
-YR_CONFIG_PY="${SCRIPT_DIR}/../scripts/config.py"
-YR_EXECUTOR_SVC="agentos-executor"
-YR_EXECUTOR_UNIT="/etc/systemd/system/${YR_EXECUTOR_SVC}.service"
-YR_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${YR_EXECUTOR_SVC}.service.d"
-YR_EXECUTOR_DROPIN="${YR_EXECUTOR_DROPIN_DIR}/env.conf"
+AGENT_RUNTIME_CONFIG_PY="${SCRIPT_DIR}/../scripts/config.py"
+AGENT_RUNTIME_EXECUTOR_SVC="agentos-executor"
+AGENT_RUNTIME_EXECUTOR_UNIT="/etc/systemd/system/${AGENT_RUNTIME_EXECUTOR_SVC}.service"
+AGENT_RUNTIME_EXECUTOR_DROPIN_DIR="/etc/systemd/system/${AGENT_RUNTIME_EXECUTOR_SVC}.service.d"
+AGENT_RUNTIME_EXECUTOR_DROPIN="${AGENT_RUNTIME_EXECUTOR_DROPIN_DIR}/env.conf"
 YR_HEALTH_CHECK_RETRIES="${YR_HEALTH_CHECK_RETRIES:-30}"
 
 # ===== frontend 端口 =====
@@ -568,14 +569,14 @@ yr_verify_install() {
 }
 
 # ===== 进程清理与检测函数 =====
-# 清理指定节点上残留的 yuanrong 进程:
+# 清理指定节点上残留的 agent-runtime（openyuanrong）进程:
 #   1. 先 kill "yr start" 命令进程（避免其继续拉起服务）
 #   2. 再 kill yr 运行时进程（命令行含 /yr/ 路径）
 # 注: grep 模式使用字符类 (yr star[t] / /yr[/]) 避免匹配到当前清理命令自身
 yr_cleanup_processes() {
     local host="$1"
 
-    info "Cleaning up yuanrong processes on ${host}..."
+    info "Cleaning up agent-runtime (openyuanrong) processes on ${host}..."
 
     # 1. 清理 "yr start" 命令进程
     local start_pids
@@ -631,13 +632,13 @@ yr_cleanup_tool_sandboxes() {
     return 0
 }
 
-# 在 yr start 前检测节点上是否已存在 yuanrong 集群/进程。
+# 在 yr start 前检测节点上是否已存在 agent-runtime（openyuanrong）集群/进程。
 # 若已存在则直接报错退出，不自动清理，避免误杀原可用集群。
 # 由用户决定是否执行 down/stop 后再重新 up。
 yr_check_existing() {
     local host="$1"
 
-    info "Checking for existing yuanrong processes on ${host}..."
+    info "Checking for existing agent-runtime (openyuanrong) processes on ${host}..."
 
     local start_pids yr_pids error_msg=""
     start_pids=$(exec_on_host "${host}" "ps -ef | grep 'yr star[t]' | grep -v grep | awk '{print \$2}'" 2>/dev/null | tr -d '\r')
@@ -646,9 +647,9 @@ yr_check_existing() {
     if [ -n "${start_pids}" ] || [ -n "${yr_pids}" ]; then
         [ -n "${start_pids}" ] && error_msg="${error_msg}'yr start' PIDs: ${start_pids}; "
         [ -n "${yr_pids}" ] && error_msg="${error_msg}yr PIDs: ${yr_pids}; "
-        error "Existing yuanrong processes detected on ${host}: ${error_msg}Please run 'down' first to avoid launching duplicate clusters, then retry 'up'."
+        error "Existing agent-runtime (openyuanrong) processes detected on ${host}: ${error_msg}Please run 'down' first to avoid launching duplicate clusters, then retry 'up'."
     else
-        info "No existing yuanrong processes on ${host}"
+        info "No existing agent-runtime (openyuanrong) processes on ${host}"
     fi
 
     return 0
@@ -807,13 +808,13 @@ _yr_python() {
 # --ip 指定时把 BIND_IP 传给 config.py，使 config.py 的 local-ip 探测与本脚本一致
 _yr_cfg() {
     if [ -n "${BIND_IP}" ]; then
-        "$(_yr_python)" "${YR_CONFIG_PY}" --ip "${BIND_IP}" "$@"
+        "$(_yr_python)" "${AGENT_RUNTIME_CONFIG_PY}" --ip "${BIND_IP}" "$@"
     else
-        "$(_yr_python)" "${YR_CONFIG_PY}" "$@"
+        "$(_yr_python)" "${AGENT_RUNTIME_CONFIG_PY}" "$@"
     fi
 }
 
-# ===== 清理 yuanrong 在 etcd 中残留的业务数据 =====
+# ===== 清理 agent-runtime（openyuanrong）在 etcd 中残留的业务数据 =====
 # yr stop --force 是强制停止，不会优雅退出清理 etcd 数据。
 # 委托 deploy/etcd.sh clean-yr-data 按前缀删除，避免重复维护 etcdctl 定位逻辑。
 _yr_clean_etcd_data() {
@@ -825,7 +826,7 @@ _yr_clean_etcd_data() {
         return 0
     fi
 
-    info "Cleaning yuanrong etcd data on ${host}..."
+    info "Cleaning agent-runtime (openyuanrong) etcd data on ${host}..."
     bash "${etcd_sh}" clean-yr-data || warning "etcd clean-yr-data failed on ${host}"
 }
 
@@ -852,7 +853,7 @@ _yr_resolve_yr_path() {
 
 # ===== 生成 executor unit（所有节点调用；master/agent 变体） =====
 # etcd unit 由 deploy/etcd.sh 独立管理，此处只生成 executor unit；
-# executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 YR_ETCD_SVC）。
+# executor unit 通过 After/Wants 依赖 agentos-etcd.service（字面量，对应 etcd.sh 中的 AGENT_RUNTIME_ETCD_SVC）。
 _yr_generate_executor_unit() {
     local host_ip etcd_addr_list yr_bin py_bindir
     host_ip=$(_yr_cfg local-ip) || error "Failed to get local IP"
@@ -862,7 +863,7 @@ _yr_generate_executor_unit() {
 
     if _yr_cfg is-master-node; then
         info "executor unit: master variant (host_ip=${host_ip})"
-        cat > "${YR_EXECUTOR_UNIT}" <<EOF
+        cat > "${AGENT_RUNTIME_EXECUTOR_UNIT}" <<EOF
 [Unit]
 Description=AgentOS Executor Service (Master)
 After=agentos-etcd.service
@@ -909,7 +910,7 @@ EOF
         local master_ip
         master_ip=$(_yr_cfg master-ip) || error "Failed to get function master IP"
         info "executor unit: agent variant (host_ip=${host_ip}, master=${master_ip})"
-        cat > "${YR_EXECUTOR_UNIT}" <<EOF
+        cat > "${AGENT_RUNTIME_EXECUTOR_UNIT}" <<EOF
 [Unit]
 Description=AgentOS Executor Service (Agent)
 After=agentos-etcd.service
@@ -954,8 +955,8 @@ EOF
     fi
 
     # drop-in: PATH/LD_LIBRARY_PATH（systemd 默认 PATH 不含 /usr/local/bin）
-    mkdir -p "${YR_EXECUTOR_DROPIN_DIR}"
-    cat > "${YR_EXECUTOR_DROPIN}" <<EOF
+    mkdir -p "${AGENT_RUNTIME_EXECUTOR_DROPIN_DIR}"
+    cat > "${AGENT_RUNTIME_EXECUTOR_DROPIN}" <<EOF
 [Service]
 Environment=PATH=${py_bindir}:${PATH}
 Environment=LD_LIBRARY_PATH=${py_bindir}/lib:${LD_LIBRARY_PATH:-}
@@ -965,8 +966,8 @@ EOF
 # ===== systemd up: 角色推导 → 生成 unit → enable --now → 健康检查 =====
 # etcd 启动已拆到 deploy/etcd.sh，需先执行 etcd.sh up
 deploy_yr_up_systemd() {
-    [ -f "${YR_CONFIG_PY}" ] || error "config parser not found: ${YR_CONFIG_PY}"
-    _yr_has_systemd || error "systemd not available; yuanrong up requires systemd (or use --no-systemd)"
+    [ -f "${AGENT_RUNTIME_CONFIG_PY}" ] || error "config parser not found: ${AGENT_RUNTIME_CONFIG_PY}"
+    _yr_has_systemd || error "systemd not available; agent-runtime up requires systemd (or use --no-systemd)"
 
     local i
 
@@ -974,17 +975,17 @@ deploy_yr_up_systemd() {
     yr_check_ssh_keys "$(get_local_ip)"
 
     # ---- executor（所有节点）----
-    info "Generating ${YR_EXECUTOR_SVC} unit"
+    info "Generating ${AGENT_RUNTIME_EXECUTOR_SVC} unit"
     _yr_generate_executor_unit
     systemctl daemon-reload
-    systemctl enable --now "${YR_EXECUTOR_SVC}" || error "Failed to start ${YR_EXECUTOR_SVC}"
+    systemctl enable --now "${AGENT_RUNTIME_EXECUTOR_SVC}" || error "Failed to start ${AGENT_RUNTIME_EXECUTOR_SVC}"
     for i in $(seq 1 "${YR_HEALTH_CHECK_RETRIES}"); do
-        systemctl is-active --quiet "${YR_EXECUTOR_SVC}" && break
+        systemctl is-active --quiet "${AGENT_RUNTIME_EXECUTOR_SVC}" && break
         sleep 1
     done
-    systemctl is-active --quiet "${YR_EXECUTOR_SVC}" \
-        || error "${YR_EXECUTOR_SVC} not active, see: journalctl -u ${YR_EXECUTOR_SVC}"
-    success "${YR_EXECUTOR_SVC} up"
+    systemctl is-active --quiet "${AGENT_RUNTIME_EXECUTOR_SVC}" \
+        || error "${AGENT_RUNTIME_EXECUTOR_SVC} not active, see: journalctl -u ${AGENT_RUNTIME_EXECUTOR_SVC}"
+    success "${AGENT_RUNTIME_EXECUTOR_SVC} up"
 }
 
 # ===== systemd down: 只停服务，不删 unit 文件（删文件留给 uninstall） =====
@@ -993,18 +994,18 @@ deploy_yr_up_systemd() {
 deploy_yr_down_systemd() {
     _yr_has_systemd || { warning "systemd not available, nothing to stop"; return 0; }
 
-    systemctl stop "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+    systemctl stop "${AGENT_RUNTIME_EXECUTOR_SVC}" 2>/dev/null || true
 
     # 等待 frontend 端口释放，避免快速 restart 时端口冲突导致 yr start 失败
     _wait_port_release
 
-    # 清理 yuanrong 在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
+    # 清理 agent-runtime（openyuanrong）在 etcd 中残留的业务数据（topology/agentInfo/route/instance 等）
     _yr_clean_etcd_data "$(get_local_ip)"
 
     # 兜底回收残留的 docker 工具沙箱容器（yr stop --force 不清理 docker 实例）
     yr_cleanup_tool_sandboxes "$(get_local_ip)"
 
-    success "yuanrong executor stopped"
+    success "agent-runtime executor stopped"
 }
 
 # ===== 主流程 =====
@@ -1040,7 +1041,7 @@ deploy_yr_up() {
     #   - check 阶段 (phase=0) 失败（如发现已有集群）不清理，保护原可用集群
     trap '
         if [ "${yr_up_phase:-0}" = "1" ]; then
-            warning "deploy_yr_up failed during startup phase, cleaning up residual yuanrong processes on this host..."
+            warning "deploy_yr_up failed during startup phase, cleaning up residual agent-runtime (openyuanrong) processes on this host..."
             yr_cleanup_processes "'"${local_ip}"'"
         fi
     ' EXIT
@@ -1055,7 +1056,7 @@ deploy_yr_up() {
     # up 不负责安装whl包，仅校验yr命令是否就绪（需先执行 install）
     yr_verify_install "${local_ip}"
 
-    # 预检查：确认本机无残留 yuanrong 进程后才进入启动阶段。
+    # 预检查：确认本机无残留 agent-runtime（openyuanrong）进程后才进入启动阶段。
     # 此处失败（发现已有集群）不触发清理，保护原可用集群。
     yr_check_existing "${local_ip}"
 
@@ -1099,7 +1100,7 @@ deploy_yr_down() {
 }
 
 # ===== 状态探测：只读检测，不启停服务 =====
-# 输出格式：yuanrong|<service>|<state>|<detail>|<version>（state 小写）
+# 输出格式：agent-runtime|<service>|<state>|<detail>|<version>（state 小写）
 deploy_yr_status() {
     # 探测 yuanrong 版本号：importlib.metadata 比 pip show 快约 30 倍
     local yr_ver="-"
@@ -1110,7 +1111,7 @@ deploy_yr_status() {
     # 模式判定：NO_SYSTEMD=1 直接走进程模式
     # 否则需确认 systemd 可用且 unit 文件存在——用户可能以 --no-systemd 部署但 status 未传该参数，
     # 此时 NO_SYSTEMD=0 但实际无 unit，应回退进程检测避免误报 stopped
-    if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd && [ -f "${YR_EXECUTOR_UNIT}" ]; then
+    if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd && [ -f "${AGENT_RUNTIME_EXECUTOR_UNIT}" ]; then
         _deploy_yr_status_systemd "${yr_ver}"
         return $?
     fi
@@ -1121,20 +1122,20 @@ deploy_yr_status() {
 # ----- systemd 模式：检测 agentos-executor.service -----
 _deploy_yr_status_systemd() {
     local yr_ver="${1:-}"
-    local svc="${YR_EXECUTOR_SVC}"
+    local svc="${AGENT_RUNTIME_EXECUTOR_SVC}"
     local is_active is_failed role
 
     # unit 文件已被 uninstall 删除时，systemd 可能仍记忆 failed 状态
     # 此时应判为 stopped（服务确实未运行），而非 failed
-    if [ ! -f "${YR_EXECUTOR_UNIT}" ]; then
-        echo "yuanrong|${svc}.service|stopped|unit not found|${yr_ver}"
+    if [ ! -f "${AGENT_RUNTIME_EXECUTOR_UNIT}" ]; then
+        echo "agent-runtime|${svc}.service|stopped|unit not found|${yr_ver}"
         return 0
     fi
 
     # is-failed 优先：failed 状态下 is-active 也会返回非 active，先判 failed 避免误判
     is_failed=$(systemctl is-failed "${svc}" 2>/dev/null | tr -d '\r' || true)
     if [ "${is_failed}" = "failed" ]; then
-        echo "yuanrong|${svc}.service|failed|unit failed|${yr_ver}"
+        echo "agent-runtime|${svc}.service|failed|unit failed|${yr_ver}"
         return 1
     fi
 
@@ -1146,12 +1147,12 @@ _deploy_yr_status_systemd() {
         else
             role="agent"
         fi
-        echo "yuanrong|${svc}.service|running|${role} variant|${yr_ver}"
+        echo "agent-runtime|${svc}.service|running|${role} variant|${yr_ver}"
         return 0
     fi
 
     # 既非 active 也非 failed：视为 stopped
-    echo "yuanrong|${svc}.service|stopped|unit inactive|${yr_ver}"
+    echo "agent-runtime|${svc}.service|stopped|unit inactive|${yr_ver}"
     return 0
 }
 
@@ -1179,15 +1180,15 @@ _deploy_yr_status_process() {
         else
             role="agent"
         fi
-        echo "yuanrong|yr-start|running|${role}|${yr_ver}"
+        echo "agent-runtime|yr-start|running|${role}|${yr_ver}"
         return 0
     elif [ -n "${start_pids}" ] && [ -z "${yr_pids}" ]; then
         # 只有 yr start 没有 /yr/：failed
-        echo "yuanrong|yr-start|failed|yr start alive, runtime not found|${yr_ver}"
+        echo "agent-runtime|yr-start|failed|yr start alive, runtime not found|${yr_ver}"
         return 1
     else
         # 都没有：stopped
-        echo "yuanrong|yr-start|stopped|no process|${yr_ver}"
+        echo "agent-runtime|yr-start|stopped|no process|${yr_ver}"
         return 0
     fi
 }
@@ -1232,10 +1233,10 @@ deploy_yr_uninstall() {
     if [ "${NO_SYSTEMD}" != "1" ] && _yr_has_systemd; then
         deploy_yr_down_systemd
         # down 只 stop，unit 文件的 disable + 删除留给 uninstall
-        systemctl disable "${YR_EXECUTOR_SVC}" 2>/dev/null || true
-        rm -rf "${YR_EXECUTOR_UNIT}" "${YR_EXECUTOR_DROPIN_DIR}"
+        systemctl disable "${AGENT_RUNTIME_EXECUTOR_SVC}" 2>/dev/null || true
+        rm -rf "${AGENT_RUNTIME_EXECUTOR_UNIT}" "${AGENT_RUNTIME_EXECUTOR_DROPIN_DIR}"
         # reset-failed 清除 systemd 残留 failed 状态，避免 status 误报
-        systemctl reset-failed "${YR_EXECUTOR_SVC}" 2>/dev/null || true
+        systemctl reset-failed "${AGENT_RUNTIME_EXECUTOR_SVC}" 2>/dev/null || true
         systemctl daemon-reload 2>/dev/null || true
     fi
 
@@ -1307,7 +1308,7 @@ Commands (Required):
   down      停止 openyuanrong 集群
   restart   重启 openyuanrong 集群（不安装whl包）
   status    只读探测集群状态（systemd: agentos-executor.service；进程模式: yr start 进程）
-            输出格式：yuanrong|<service>|<state>|<detail>，state 小写
+            输出格式：agent-runtime|<service>|<state>|<detail>，state 小写
   install   仅在本机安装 openyuanrong whl 包（不启动服务）
   uninstall 仅在本机卸载 openyuanrong whl 包
             卸载与 install 严格使用同一解释器（python3.11，YR_PYTHON_VERSION 可覆盖）：

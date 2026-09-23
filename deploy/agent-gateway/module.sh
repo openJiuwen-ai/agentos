@@ -15,7 +15,7 @@ A2X_REGISTRY_TLS_KEYFILE="${A2X_REGISTRY_TLS_KEYFILE:-}"
 A2X_REGISTRY_TLS_CA_CERTS="${A2X_REGISTRY_TLS_CA_CERTS:-}"
 
 # ===== 存储后端（固定 etcd） =====
-# up 时自动探测 yuanrong 的 etcd（etcd 在本模块 up 之前应已启动），探测不到直接报错失败。
+# up 时自动探测 agent-runtime 的 etcd（etcd 在本模块 up 之前应已启动），探测不到直接报错失败。
 # endpoint 留空时自动填充首个可达 etcd_node 的 client endpoint；显式配置则跳过探测。
 # 未配证书必须 http://，配齐证书必须 https://。
 A2X_REGISTRY_DB_ENDPOINT="${A2X_REGISTRY_DB_ENDPOINT:-}"
@@ -91,7 +91,7 @@ _agentregistry_validate_etcd() {
 # 其次绑定 ingress_virtual_ip（VIP），使注册中心对外可通过统一入口访问；
 # 均无配置时回退本机网卡 IP。
 # 注意：注册中心后端禁止 A2X_REGISTRY_BIND=0.0.0.0，故只能绑定具体地址。
-# 触发前提：registry 部署时 yuanrong 已装完（YR python 环境内置 yaml），故用 python+yaml 解析。
+# 触发前提：registry 部署时 agent-runtime 已装完（YR python 环境内置 yaml），故用 python+yaml 解析。
 _agentregistry_bind() {
     # --ip 指定时优先使用，避免多网卡下 hostname -I 探测不准
     if [ -n "${BIND_IP:-}" ]; then
@@ -123,7 +123,7 @@ except Exception:
     echo "${ip:-127.0.0.1}"
 }
 
-# ===== etcd 探测：yuanrong 先 up，etcd 此时应已启动 =====
+# ===== etcd 探测：agent-runtime 先 up，etcd 此时应已启动 =====
 # 从 ~/.agentos/deploy/config.yaml 读 etcd_nodes，对 client 端口做 TCP 连通探测，
 # 与 etcd.sh check 同逻辑；endpoint 未显式配置时自动填充首个可达 etcd_node 的 client endpoint。
 # etcd 是注册中心唯一的存储后端：探测不到直接报错失败。
@@ -212,7 +212,7 @@ agent-gateway_install() {
     whl=$(ls "${AGENTOS_ROOT}"/a2x_registry-*-py3-none-any.whl 2>/dev/null | sort -V | tail -n1)
     [ -n "${whl}" ] || error "registry whl not found in ${AGENTOS_ROOT}"
 
-    # 校验 Python（与 yuanrong 共用同一 Python 环境）
+    # 校验 Python（与 agent-runtime 共用同一 Python 环境）
     info "Checking Python ${YR_PYTHON_VERSION}..."
     local py_check
     py_check=$("python${YR_PYTHON_VERSION}" --version 2>&1 || echo "not_installed")
@@ -223,12 +223,12 @@ agent-gateway_install() {
     esac
     success "Python ${YR_PYTHON_VERSION} available: ${py_check}"
 
-    # 确保 pip 可用（与 yuanrong 一致）
+    # 确保 pip 可用（与 agent-runtime 一致）
     info "Ensuring pip..."
     "python${YR_PYTHON_VERSION}" -m ensurepip 2>/dev/null || true
 
     # 安装 a2x-registry whl。
-    # agent-gateway 在 yuanrong 之后安装，Python 依赖已由 yuanrong 装好，
+    # agent-gateway 在 agent-runtime 之后安装，Python 依赖已由 agent-runtime 装好，
     # pip install 仅作检查用（依赖满足则无需公网）。
     info "Installing a2x-registry whl: $(basename "${whl}")"
     if "python${YR_PYTHON_VERSION}" -m pip install "${whl}" --quiet; then
