@@ -1,46 +1,99 @@
 # AgentOS
 
-AgentOS 仓库通过 Git Submodule 引入以下依赖，均位于仓库根目录：
+[English](README.en.md) | 简体中文
 
-| 目录 | 仓库 | 固定版本 |
-|------|------|----------|
-| `yuanrong/` | [openeuler/yuanrong](https://gitcode.com/openeuler/yuanrong) | `v0.8.0` |
-| `jiuwenswarm/` | [openJiuwen/jiuwenswarm](https://gitcode.com/openJiuwen/jiuwenswarm) | `JiuwenSwarm0.2.2` |
-| `Conch/` | [openeuler/Conch](https://gitcode.com/openeuler/Conch) | 主仓库记录的 commit |
-| `agent-protocol/` | [openJiuwen/agent-protocol](https://gitcode.com/openJiuwen/agent-protocol) | `feature/Agentregistry-dev` 分支记录的 commit |
+AgentOS 是 openJiuwen 体系的一站式 Agent 基础设施集成交付仓：通过 Git Submodule 聚合 openYuanrong 分布式运行时、jiuwenswarm 网关与客户端、Conch 沙箱引擎和 A2X 注册中心，提供统一构建与一键集群部署能力。
 
-## 克隆仓库
+## 核心特性
 
-首次克隆时一并拉取 submodule：
+- **组件聚合、版本固定**：通过 Git Submodule 引入并锁定四大组件——[yuanrong](yuanrong/)（`v0.8.0`）、[jiuwenswarm](jiuwenswarm/)（`JiuwenSwarm0.2.2`）、[Conch](Conch/)、[agent-protocol](agent-protocol/)，一键拉取、版本可追溯。
+- **一键构建**：`build/build.sh` 支持 `daily` / `release` 两种模式，产出 `AgentOS-Client.tgz`（全平台 TUI 客户端）与 `AgentOS-Server-<arch>.tgz`（服务端）可分发包。
+- **模块化部署**：`deploy/agentos.sh` 以可插拔钩子编排 moosefs、jiuwenbox、yuanrong、conch、agent-gateway、jiuwenswarm 六大模块，新增模块只需实现钩子函数，无需改动调度引擎。
+- **单机 / 集群双模式**：默认单机开箱即用；多机通过 `deploy/config.yaml` 声明 etcd 集群、master 节点与 ingress VIP，支持高可用部署。
+- **全生命周期管理**：`install → init → up → down → deinit → uninstall` 覆盖安装、启停、拆除全流程，`status` 一键只读探测各组件运行状态。
+
+## 相关文档
+
+- [文档中心](docs/README.md)：教程 / 操作指南 / 参考 / 解释
+- [示例工程](examples/README.md) ｜ [部署指南](deploy/README.md)
+- [构建说明](build/README.md) ｜ [构建说明 v2（b050 产品线）](build/README-v2.md)
+- [开源软件声明](OPEN_SOURCE_SOFTWARE_NOTICE.md) ｜ [贡献指南](CONTRIBUTING.md)
+- [版本发布记录](https://gitcode.com/openJiuwen/agent-os/releases)
+
+## 环境要求
+
+| 类别 | 要求 |
+|------|------|
+| 操作系统 | openEuler 22.03-LTS-SP1/SP4 或 24.03-LTS-SP1/SP4（x86_64 / aarch64），需 systemd；Ubuntu 22.04 / 24.04 亦可 |
+| Python | 3.11（服务端 whl 均按 cp311 构建） |
+| Bash | 4.3 及以上 |
+| 下载工具 | `curl` 或 `wget`（需可访问华为云 OBS 与 gitcode.com） |
+| 系统命令 | `bwrap`、`ip`、`iptables`、`jq`、`fuse3`（可通过 `deploy/install_deps.sh` 安装） |
+| Docker（可选） | Docker Engine ≥ 26.0（Docker 类型沙箱要求 API v1.45） |
+| MooseFS（多机部署） | 4.59.2（master / chunkserver / client RPM 及 fuse3，需上游预装） |
+
+## 安装指南
+
+**方式一：下载发布包（推荐）**
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/<your-org>/agentos.git
+# x86_64（请替换为最新发布日期路径；aarch64 将 x86_64 改为 aarch64）
+wget https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/x86_64/AgentOS-Server.tgz
 ```
 
-若已克隆但未初始化 submodule：
+**方式二：源码构建**
+
+```bash
+git clone --recurse-submodules https://gitcode.com/openJiuwen/agent-os.git
+cd agent-os
+./build/build.sh release     # 或 daily；全部参数见 build/README.md
+```
+
+已克隆但未初始化 submodule，或拉取主仓库更新后同步 submodule 至记录的 commit：
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## 更新 submodule
-
-拉取主仓库最新代码后，同步 submodule 到主仓库记录的 commit：
+如需将某个 submodule 切换到指定 tag（以 yuanrong 为例）：
 
 ```bash
-git submodule update --init --recursive
-```
-
-如需将某个 submodule 切换到指定 tag（以 `yuanrong` 为例）：
-
-```bash
-cd yuanrong
-git fetch --tags
-git checkout v0.8.0
-cd ..
+cd yuanrong && git fetch --tags && git checkout v0.8.0 && cd ..
 git add yuanrong
 ```
 
-## 构建
+## Quick Start
 
-发布包构建说明见 [build/README.md](build/README.md)。
+以单机部署为例（多机部署见[部署指南](deploy/README.md)）：
+
+```bash
+# 1. 解压安装包并安装系统依赖
+tar -xzf AgentOS-Server.tgz && cd AgentOS-Server
+bash deploy/install_deps.sh
+
+# 2. 配置集群拓扑：编辑 deploy/config.yaml，
+#    将 etcd_nodes / master_nodes / ingress_virtual_ip 替换为本机 IP（请勿使用 127.0.0.1）
+vi deploy/config.yaml
+
+# 3. 生成 agent SSH 直连密钥（已存在则跳过）
+ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
+mkdir -p /root/.ssh/agent_pub
+cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
+chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
+
+# 4. 安装 whl 包 → 初始化 etcd → 启动全部组件
+bash deploy/agentos.sh install
+bash deploy/agentos.sh init
+bash deploy/agentos.sh up
+
+# 5. 确认各组件运行状态
+bash deploy/agentos.sh status
+```
+
+启动完成后，浏览器访问 `http://<ingress_virtual_ip>:19000` 进入 jiuwenswarm web 前端；客户端安装 `AgentOS-Client.tgz` 中对应平台的 `jiuwenswarm_tui` wheel 即可使用 TUI。
+
+> 完整分步教程与常见问题见[快速开始教程](docs/zh/tutorial/01-quick-start.md)；大模型接口、工具沙箱镜像等进阶配置见[部署配置参考](docs/zh/reference/cluster-config.md)。
+
+## License
+
+本项目基于 [Apache License 2.0](LICENSE) 开源。
