@@ -4,7 +4,7 @@
 
 完成本教程后，你将获得：
 
-- 一套运行中的 AgentOS（etcd + jiuwenbox + yuanrong + agent-gateway + jiuwenswarm）
+- 一套运行中的 AgentOS（etcd + jiuwenbox + agent-runtime + agent-gateway + jiuwenswarm）
 - 可通过浏览器访问的 jiuwenswarm Web 前端
 
 ## 前置条件
@@ -71,7 +71,7 @@ bash deploy/agentos.sh init       # 启动 etcd（保留已有数据，平滑升
 bash deploy/agentos.sh up         # 按顺序部署全部应用组件
 ```
 
-`up` 按声明顺序拉起 moosefs（单机自动跳过）、jiuwenbox、yuanrong、agent-gateway、jiuwenswarm，首次启动耗时数分钟。
+`up` 按声明顺序拉起 moosefs（单机自动跳过）、jiuwenbox、agent-runtime、agent-gateway、jiuwenswarm，首次启动耗时数分钟。
 
 ## 第 6 步：验证
 

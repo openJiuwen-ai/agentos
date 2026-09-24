@@ -10,7 +10,7 @@ This guide uses a two-node HA setup to explain what differs from single-node dep
 | master nodes | 2 (primary/backup) | Declared in `master_nodes`; only the node holding the ingress VIP starts gateway / registry / web |
 | ingress VIP | 1 | Unified external entry; must be bound to the master's NIC beforehand |
 
-The remaining components (jiuwenbox, yuanrong, etc.) deploy identically on every node, with no primary/backup distinction.
+The remaining components (jiuwenbox, agent-runtime, etc.) deploy identically on every node, with no primary/backup distinction.
 
 ## Step 1: Prepare the environment on every node
 

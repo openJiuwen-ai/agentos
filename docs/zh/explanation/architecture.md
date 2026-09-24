@@ -8,7 +8,7 @@ AgentOS 是**集成交付仓**，不实现具体功能组件，而是把 openJiu
 
 | 组件 | 来源 | 角色 |
 |------|------|------|
-| openYuanrong | submodule [yuanrong/](../../../yuanrong/) | 分布式 Agent 运行时（faas / sdk / runtime / datasystem / functionsystem） |
+| agent-runtime | Git submodule | 分布式 Agent 运行时（faas / sdk / runtime / datasystem / functionsystem） |
 | jiuwenswarm | submodule [jiuwenswarm/](../../../jiuwenswarm/) | Agent 网关 + Web 前端 + TUI 客户端 |
 | Conch | submodule [Conch/](../../../Conch/) | 沙箱引擎（erofs-utils、StratoVirt） |
 | agent-protocol | submodule [agent-protocol/](../../../agent-protocol/) | A2X 协议与注册中心（a2x-registry） |

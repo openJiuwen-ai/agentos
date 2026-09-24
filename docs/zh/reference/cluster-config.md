@@ -31,7 +31,7 @@ cluster:
 |------|----------|--------|
 | moosefs | `deploy/moosefs/moosefs.conf` | `MOOSEFS_ENABLED`（auto/yes/no，单机自动跳过）、`MFS_MOUNT_POINT`（默认 `/home/agentos/users`） |
 | jiuwenbox | `deploy/jiuwenbox/default-policy.yaml` | policy 模板（`__JIUWENSWARM_EXTENSIONS_DIR__` 启动时自动替换） |
-| yuanrong | 环境变量 | `YR_PYTHON_VERSION`（默认 3.11）、`YR_VERSION`（默认 0.9.0）、`AGENTOS_SSH_KEY`、`AGENTOS_SSH_BACKEND_PUBLIC_DIR` |
+| agent-runtime | 环境变量 | `YR_PYTHON_VERSION`（默认 3.11）、`YR_VERSION`（默认 0.9.0）、`AGENTOS_SSH_KEY`、`AGENTOS_SSH_BACKEND_PUBLIC_DIR` |
 | etcd | 环境变量 | `YR_ETCD_CLIENT_PORT`（默认 32379） |
 | agent-gateway | 环境变量 | `A2X_REGISTRY_PORT`（默认 4003）、`A2X_REGISTRY_TLS_*`（三者齐全开启 mTLS） |
 | jiuwenswarm | `deploy/jiuwenswarm/.env.custom` | 见下表 |
@@ -49,14 +49,15 @@ cluster:
 
 ### 工具沙箱镜像必须预先拉取
 
-`install` 与 `up` 均**不会**自动拉取 `TOOL_SANDBOX_IMAGE` 指定的镜像。`TOOL_SANDBOX_ENABLE=true` 时，`install` 会检查本机 docker 可用性与镜像是否存在，任一不满足直接中断安装：
+`install` 与 `up` 均**不会**自动拉取 `TOOL_SANDBOX_IMAGE` 指定的镜像（镜像地址以 `deploy/jiuwenswarm/.env.custom` 的配置为准）。`TOOL_SANDBOX_ENABLE=true` 时，`install` 会检查本机 docker 可用性与镜像是否存在，任一不满足直接中断安装：
 
 ```bash
-docker pull swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
+# <TOOL_SANDBOX_IMAGE> 请替换为 .env.custom 中配置的镜像地址
+docker pull <TOOL_SANDBOX_IMAGE>
 
 # 离线环境：有网机器导出 -> 传输 -> 目标主机导入
-docker save -o yr-runtime-sandbox.tar swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
-docker load -i yr-runtime-sandbox.tar
+docker save -o sandbox-image.tar <TOOL_SANDBOX_IMAGE>
+docker load -i sandbox-image.tar
 ```
 
 ## agent SSH 直连密钥
@@ -76,4 +77,4 @@ docker load -i yr-runtime-sandbox.tar
 
 ## whl 包来源
 
-`install` 统一从 agentos 根目录（`deploy` 的同级目录）获取 whl / rpm 包；可用 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 yuanrong 的 whl 目录。
+`install` 统一从 agentos 根目录（`deploy` 的同级目录）获取 whl / rpm 包；可用 `YR_PKG_BASE=/other/path bash agentos.sh install` 覆盖 agent-runtime 的 whl 目录。

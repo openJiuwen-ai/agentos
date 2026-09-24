@@ -4,7 +4,7 @@ This tutorial walks you through a complete AgentOS deployment on a single Linux 
 
 When you finish, you will have:
 
-- A running AgentOS (etcd + jiuwenbox + yuanrong + agent-gateway + jiuwenswarm)
+- A running AgentOS (etcd + jiuwenbox + agent-runtime + agent-gateway + jiuwenswarm)
 - A jiuwenswarm web frontend reachable from a browser
 
 ## Prerequisites
@@ -71,7 +71,7 @@ bash deploy/agentos.sh init       # start etcd (keeps existing data for smooth u
 bash deploy/agentos.sh up         # deploy all application components in order
 ```
 
-`up` starts moosefs (skipped automatically on a single node), jiuwenbox, yuanrong, agent-gateway, and jiuwenswarm in declaration order; the first start takes a few minutes.
+`up` starts moosefs (skipped automatically on a single node), jiuwenbox, agent-runtime, agent-gateway, and jiuwenswarm in declaration order; the first start takes a few minutes.
 
 ## Step 6: Verify
 

@@ -15,11 +15,8 @@ This guide shows how to produce the distributable `AgentOS-Client.tgz` and `Agen
 # daily build (default, pulls daily artifacts from OBS)
 ./build/build.sh
 
-# release build (pinned versions)
-./build/build.sh release \
-  --yuanrong-release-version 0.9.0 \
-  --jiuwenswarm-release-version 0.2.2 \
-  --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
+# release build (pinned versions; per-component version options in build/README.md)
+./build/build.sh release
 
 # lower download parallelism on an unstable network
 ./build/build.sh daily --download-jobs 1
@@ -30,13 +27,12 @@ Common options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `daily` / `release` | `daily` | Build mode (positional) |
-| `--cp-tag` | `cp311` | Python ABI tag of yuanrong wheels |
-| `--yuanrong-release-version` | `0.9.0` | openYuanrong version (release mode) |
+| `--cp-tag` | `cp311` | Python ABI tag of agent-runtime wheels |
 | `--jiuwenswarm-release-version` | `0.2.2` | jiuwenswarm wheel version (release mode) |
 | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | jiuwenswarm git tag (release mode) |
-| `--yuanrong-daily-version` | `9.9.9` | wheel version number (daily mode) |
-| `--yr-schedule-time` | auto-detected | OBS build timestamp (daily mode) |
 | `--download-jobs` | `3` | Max concurrent downloads |
+
+> For per-component version pins, OBS build timestamps, and other full options, see [build/README.md](../../../build/README.md).
 
 ## Option 2: build-v2.sh (b050 product line)
 

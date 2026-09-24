@@ -2,13 +2,13 @@
 
 [English](README.en.md) | 简体中文
 
-AgentOS 是 openJiuwen 体系的一站式 Agent 基础设施集成交付仓：通过 Git Submodule 聚合 openYuanrong 分布式运行时、jiuwenswarm 网关与客户端、Conch 沙箱引擎和 A2X 注册中心，提供统一构建与一键集群部署能力。
+AgentOS 是 openJiuwen 体系的一站式 Agent 基础设施集成交付仓：通过 Git Submodule 聚合 agent-runtime 分布式运行时、jiuwenswarm 网关与客户端、Conch 沙箱引擎和 A2X 注册中心，提供统一构建与一键集群部署能力。
 
 ## 核心特性
 
-- **组件聚合、版本固定**：通过 Git Submodule 引入并锁定四大组件——[yuanrong](yuanrong/)（`v0.8.0`）、[jiuwenswarm](jiuwenswarm/)（`JiuwenSwarm0.2.2`）、[Conch](Conch/)、[agent-protocol](agent-protocol/)，一键拉取、版本可追溯。
+- **组件聚合、版本固定**：通过 Git Submodule 引入并锁定四大组件——agent-runtime（`v0.8.0`）、[jiuwenswarm](jiuwenswarm/)（`JiuwenSwarm0.2.2`）、[Conch](Conch/)、[agent-protocol](agent-protocol/)，一键拉取、版本可追溯。
 - **一键构建**：`build/build.sh` 支持 `daily` / `release` 两种模式，产出 `AgentOS-Client.tgz`（全平台 TUI 客户端）与 `AgentOS-Server-<arch>.tgz`（服务端）可分发包。
-- **模块化部署**：`deploy/agentos.sh` 以可插拔钩子编排 moosefs、jiuwenbox、yuanrong、conch、agent-gateway、jiuwenswarm 六大模块，新增模块只需实现钩子函数，无需改动调度引擎。
+- **模块化部署**：`deploy/agentos.sh` 以可插拔钩子编排 moosefs、jiuwenbox、agent-runtime、agent-gateway、jiuwenswarm 五大模块，新增模块只需实现钩子函数，无需改动调度引擎。
 - **单机 / 集群双模式**：默认单机开箱即用；多机通过 `deploy/config.yaml` 声明 etcd 集群、master 节点与 ingress VIP，支持高可用部署。
 - **全生命周期管理**：`install → init → up → down → deinit → uninstall` 覆盖安装、启停、拆除全流程，`status` 一键只读探测各组件运行状态。
 
@@ -55,11 +55,11 @@ cd agent-os
 git submodule update --init --recursive
 ```
 
-如需将某个 submodule 切换到指定 tag（以 yuanrong 为例）：
+如需将某个 submodule 切换到指定 tag（以 jiuwenswarm 为例）：
 
 ```bash
-cd yuanrong && git fetch --tags && git checkout v0.8.0 && cd ..
-git add yuanrong
+cd jiuwenswarm && git fetch --tags && git checkout JiuwenSwarm0.2.2 && cd ..
+git add jiuwenswarm
 ```
 
 ## Quick Start
@@ -93,6 +93,10 @@ bash deploy/agentos.sh status
 启动完成后，浏览器访问 `http://<ingress_virtual_ip>:19000` 进入 jiuwenswarm web 前端；客户端安装 `AgentOS-Client.tgz` 中对应平台的 `jiuwenswarm_tui` wheel 即可使用 TUI。
 
 > 完整分步教程与常见问题见[快速开始教程](docs/zh/tutorial/01-quick-start.md)；大模型接口、工具沙箱镜像等进阶配置见[部署配置参考](docs/zh/reference/cluster-config.md)。
+
+## 合规声明
+
+本产品仅作为流程编排工具，不包含 AI 模型能力；用户在连接 AI 模型用于特定业务场景时，需自行承担欧盟 AI 法案等相关合规义务。
 
 ## License
 

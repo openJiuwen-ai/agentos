@@ -2,13 +2,13 @@
 
 English | [简体中文](README.md)
 
-AgentOS is a one-stop integration and delivery repository for the openJiuwen agent infrastructure: it aggregates the openYuanrong distributed runtime, the jiuwenswarm gateway and clients, the Conch sandbox engine, and the A2X registry via Git submodules, and provides unified build and one-command cluster deployment.
+AgentOS is a one-stop integration and delivery repository for the openJiuwen agent infrastructure: it aggregates the agent-runtime distributed runtime, the jiuwenswarm gateway and clients, the Conch sandbox engine, and the A2X registry via Git submodules, and provides unified build and one-command cluster deployment.
 
 ## Core Features
 
-- **Aggregated components with pinned versions**: four components are pulled in and pinned via Git submodules — [yuanrong](yuanrong/) (`v0.8.0`), [jiuwenswarm](jiuwenswarm/) (`JiuwenSwarm0.2.2`), [Conch](Conch/), and [agent-protocol](agent-protocol/) — fetched in one command, with traceable versions.
+- **Aggregated components with pinned versions**: four components are pulled in and pinned via Git submodules — agent-runtime (`v0.8.0`), [jiuwenswarm](jiuwenswarm/) (`JiuwenSwarm0.2.2`), [Conch](Conch/), and [agent-protocol](agent-protocol/) — fetched in one command, with traceable versions.
 - **One-command build**: `build/build.sh` supports `daily` / `release` modes and produces the distributable `AgentOS-Client.tgz` (all-platform TUI client) and `AgentOS-Server-<arch>.tgz` (server) packages.
-- **Modular deployment**: `deploy/agentos.sh` orchestrates six modules — moosefs, jiuwenbox, yuanrong, conch, agent-gateway, and jiuwenswarm — via pluggable hooks; adding a module only requires implementing its hook functions, with no changes to the scheduling engine.
+- **Modular deployment**: `deploy/agentos.sh` orchestrates five modules — moosefs, jiuwenbox, agent-runtime, agent-gateway, and jiuwenswarm — via pluggable hooks; adding a module only requires implementing its hook functions, with no changes to the scheduling engine.
 - **Single-machine and cluster modes**: single-machine deployment works out of the box; multi-machine clusters declare etcd nodes, master nodes, and an ingress VIP in `deploy/config.yaml` with high availability.
 - **Full lifecycle management**: `install → init → up → down → deinit → uninstall` covers the whole install / start-stop / teardown flow, and `status` probes the running state of every component read-only.
 
@@ -55,11 +55,11 @@ If the repository was cloned without submodules, or after pulling upstream updat
 git submodule update --init --recursive
 ```
 
-To switch a submodule to a specific tag (yuanrong as an example):
+To switch a submodule to a specific tag (jiuwenswarm as an example):
 
 ```bash
-cd yuanrong && git fetch --tags && git checkout v0.8.0 && cd ..
-git add yuanrong
+cd jiuwenswarm && git fetch --tags && git checkout JiuwenSwarm0.2.2 && cd ..
+git add jiuwenswarm
 ```
 
 ## Quick Start
@@ -93,6 +93,10 @@ bash deploy/agentos.sh status
 Once started, open `http://<ingress_virtual_ip>:19000` in a browser to access the jiuwenswarm web frontend; on the client side, install the `jiuwenswarm_tui` wheel matching your platform from `AgentOS-Client.tgz` to use the TUI.
 
 > For a complete step-by-step tutorial and FAQ, see [Quick Start](docs/en/tutorial/01-quick-start.md); for advanced configuration such as LLM endpoints and tool sandbox images, see the [Deployment Configuration Reference](docs/en/reference/cluster-config.md).
+
+## Compliance Disclaimer
+
+This product serves solely as a workflow orchestration tool and does not embed any AI model capabilities. When users integrate AI models for specific business scenarios, they shall bear full responsibility for compliance obligations under the EU AI Act and other relevant regulatory frameworks.
 
 ## License
 

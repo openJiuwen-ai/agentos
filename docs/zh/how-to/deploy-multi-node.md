@@ -10,7 +10,7 @@
 | master 节点 | 2（主备） | 在 `master_nodes` 声明；只有持有 ingress VIP 的节点启动 gateway / registry / web |
 | ingress VIP | 1 | 统一外部入口，需预先绑定到 master 网卡 |
 
-其余组件（jiuwenbox、yuanrong 等）在每个节点对等部署，无主备差异。
+其余组件（jiuwenbox、agent-runtime 等）在每个节点对等部署，无主备差异。
 
 ## 第 1 步：各节点准备环境
 

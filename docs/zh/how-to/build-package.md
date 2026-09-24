@@ -15,11 +15,8 @@
 # daily 构建（默认，从 OBS 拉取每日构建产物）
 ./build/build.sh
 
-# release 构建（固定版本发布包）
-./build/build.sh release \
-  --yuanrong-release-version 0.9.0 \
-  --jiuwenswarm-release-version 0.2.2 \
-  --jiuwenswarm-release-git-tag JiuwenSwarm0.2.2
+# release 构建（固定版本发布包；各组件版本参数见 build/README.md）
+./build/build.sh release
 
 # 网络不稳定时降低并行下载数
 ./build/build.sh daily --download-jobs 1
@@ -30,13 +27,12 @@
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `daily` / `release` | `daily` | 构建模式（位置参数） |
-| `--cp-tag` | `cp311` | yuanrong wheel 的 Python ABI tag |
-| `--yuanrong-release-version` | `0.9.0` | release 模式 openYuanrong 版本 |
+| `--cp-tag` | `cp311` | agent-runtime wheel 的 Python ABI tag |
 | `--jiuwenswarm-release-version` | `0.2.2` | release 模式 jiuwenswarm wheel 版本 |
 | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | release 模式 jiuwenswarm git tag |
-| `--yuanrong-daily-version` | `9.9.9` | daily 模式 wheel 版本号 |
-| `--yr-schedule-time` | 自动获取 | daily 模式 OBS 构建时间戳 |
 | `--download-jobs` | `3` | 并行下载数 |
+
+> 各组件版本、OBS 构建时间戳等完整参数见 [build/README.md](../../../build/README.md)。
 
 ## 方式二：build-v2.sh（b050 产品线）
 

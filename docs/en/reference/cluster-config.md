@@ -31,7 +31,7 @@ cluster:
 |--------|---------------|-----------|
 | moosefs | `deploy/moosefs/moosefs.conf` | `MOOSEFS_ENABLED` (auto/yes/no, auto-skipped single-node), `MFS_MOUNT_POINT` (default `/home/agentos/users`) |
 | jiuwenbox | `deploy/jiuwenbox/default-policy.yaml` | policy template (`__JIUWENSWARM_EXTENSIONS_DIR__` replaced at start) |
-| yuanrong | env vars | `YR_PYTHON_VERSION` (default 3.11), `YR_VERSION` (default 0.9.0), `AGENTOS_SSH_KEY`, `AGENTOS_SSH_BACKEND_PUBLIC_DIR` |
+| agent-runtime | env vars | `YR_PYTHON_VERSION` (default 3.11), `YR_VERSION` (default 0.9.0), `AGENTOS_SSH_KEY`, `AGENTOS_SSH_BACKEND_PUBLIC_DIR` |
 | etcd | env vars | `YR_ETCD_CLIENT_PORT` (default 32379) |
 | agent-gateway | env vars | `A2X_REGISTRY_PORT` (default 4003), `A2X_REGISTRY_TLS_*` (mTLS enabled when all three are set) |
 | jiuwenswarm | `deploy/jiuwenswarm/.env.custom` | see below |
@@ -49,14 +49,15 @@ cluster:
 
 ### Tool sandbox images must be pulled beforehand
 
-Neither `install` nor `up` pulls the image named by `TOOL_SANDBOX_IMAGE`. With `TOOL_SANDBOX_ENABLE=true`, `install` checks local docker availability and image presence, and aborts the installation if either fails:
+Neither `install` nor `up` pulls the image named by `TOOL_SANDBOX_IMAGE` (the image address is whatever is configured in `deploy/jiuwenswarm/.env.custom`). With `TOOL_SANDBOX_ENABLE=true`, `install` checks local docker availability and image presence, and aborts the installation if either fails:
 
 ```bash
-docker pull swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
+# replace <TOOL_SANDBOX_IMAGE> with the image address configured in .env.custom
+docker pull <TOOL_SANDBOX_IMAGE>
 
 # offline: export on a connected machine -> transfer -> import on the target host
-docker save -o yr-runtime-sandbox.tar swr.cn-southwest-2.myhuaweicloud.com/yuanrong-dev/yr-runtime-sandbox:latest
-docker load -i yr-runtime-sandbox.tar
+docker save -o sandbox-image.tar <TOOL_SANDBOX_IMAGE>
+docker load -i sandbox-image.tar
 ```
 
 ## agent SSH key pair
@@ -76,4 +77,4 @@ Notes:
 
 ## whl package source
 
-`install` takes whl / rpm packages from the agentos root (the sibling of `deploy/`); override the yuanrong wheel directory with `YR_PKG_BASE=/other/path bash agentos.sh install`.
+`install` takes whl / rpm packages from the agentos root (the sibling of `deploy/`); override the agent-runtime wheel directory with `YR_PKG_BASE=/other/path bash agentos.sh install`.

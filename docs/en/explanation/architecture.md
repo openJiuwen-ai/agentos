@@ -8,7 +8,7 @@ AgentOS is an **integration and delivery repository** — it implements no funct
 
 | Component | Source | Role |
 |-----------|--------|------|
-| openYuanrong | submodule [yuanrong/](../../../yuanrong/) | distributed agent runtime (faas / sdk / runtime / datasystem / functionsystem) |
+| agent-runtime | Git submodule | distributed agent runtime (faas / sdk / runtime / datasystem / functionsystem) |
 | jiuwenswarm | submodule [jiuwenswarm/](../../../jiuwenswarm/) | agent gateway + web frontend + TUI client |
 | Conch | submodule [Conch/](../../../Conch/) | sandbox engine (erofs-utils, StratoVirt) |
 | agent-protocol | submodule [agent-protocol/](../../../agent-protocol/) | A2X protocol and registry (a2x-registry) |
