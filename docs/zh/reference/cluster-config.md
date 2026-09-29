@@ -1,6 +1,6 @@
 # 部署配置参考
 
-AgentOS 的配置分两层：`deploy/config.yaml` 声明集群拓扑；各模块的运行参数由模块配置文件或环境变量传入。本文列出核心项；完整参数表见[部署指南](../../../deploy/README.md)。
+AgentOS 的配置分两层：`deploy/config.yaml` 声明集群拓扑；各模块的运行参数由模块配置文件或环境变量传入。本文列出核心项；完整参数表见[部署指南](../../../deploy/README.zh.md)。
 
 ## 集群拓扑：deploy/config.yaml
 

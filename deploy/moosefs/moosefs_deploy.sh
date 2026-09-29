@@ -327,13 +327,13 @@ deploy_mfs_install() {
         fi
     done
     if [ ${#missing[@]} -gt 0 ]; then
-        error "MooseFS packages not installed: ${missing[*]}. Please install them before running this script. See deploy/moosefs/README.md for dependency list."
+        error "MooseFS packages not installed: ${missing[*]}. Please install them before running this script. See deploy/moosefs/README.zh.md for dependency list."
     fi
     success "MooseFS packages verified"
 
     # 3. 验证 fuse3 依赖
     if ! _mfs_check_pkg_installed fuse3; then
-        error "fuse3 package not installed. moosefs-client requires libfuse3.so.3. See deploy/moosefs/README.md for installation."
+        error "fuse3 package not installed. moosefs-client requires libfuse3.so.3. See deploy/moosefs/README.zh.md for installation."
     fi
     success "fuse3 dependency verified"
 
@@ -1140,7 +1140,7 @@ Examples:
 
 注意:
   - install 需要在每台目标主机上执行（每台主机都需配置）
-  - MooseFS 软件包（RPM/DEB）需由上游预装（见 deploy/moosefs/README.md）
+  - MooseFS 软件包（RPM/DEB）需由上游预装（见 deploy/moosefs/README.zh.md）
   - master IP 从 deploy/config.yaml 的 master_nodes 第一个 IP 获取
 EOF
     exit 0

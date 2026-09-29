@@ -30,8 +30,8 @@
 ## 文档要求
 
 - **文档随 PR**：功能变更的 PR 必须同步更新相关文档（README、docs、脚本帮助文本）。
-- **双语主从**：中文为权威源（`README.md`、`docs/zh/`），英文跟随（`README.en.md`、`docs/en/`），两份参数一致、结构对称。
-- docs 按 Diátaxis 四类归位：教程（tutorial，数字前缀编号）、操作指南（how-to）、参考（reference）、解释（explanation），一文件一主题；详见 [docs/README.md](docs/README.md)。
+- **双语主从**：中文为权威源（`README.zh.md`、`docs/zh/`），英文跟随（`README.md`、`docs/en/`），两份参数一致、结构对称。
+- docs 按 Diátaxis 四类归位：教程（tutorial，数字前缀编号）、操作指南（how-to）、参考（reference）、解释（explanation），一文件一主题；详见 [docs/README.zh.md](docs/README.zh.md)。
 - 临时文件（如 `.tmp`、`.bak`）不得提交到仓库。
 
 ## 版本发布

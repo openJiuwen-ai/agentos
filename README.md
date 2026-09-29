@@ -1,61 +1,61 @@
 # AgentOS
 
-[English](README.en.md) | 简体中文
+English | [简体中文](README.zh.md)
 
-AgentOS 是 openJiuwen 体系的一站式 Agent 基础设施集成交付仓：通过 Git Submodule 聚合 agent-runtime 分布式运行时、jiuwenswarm 网关与客户端、Conch 沙箱引擎和 A2X 注册中心，提供统一构建与一键集群部署能力。
+AgentOS is a one-stop integration and delivery repository for the openJiuwen agent infrastructure: it aggregates the agent-runtime distributed runtime, the jiuwenswarm gateway and clients, the Conch sandbox engine, and the A2X registry via Git submodules, and provides unified build and one-command cluster deployment.
 
-## 核心特性
+## Core Features
 
-- **组件聚合、版本固定**：通过 Git Submodule 引入并锁定四大组件——agent-runtime（`v0.8.0`）、[jiuwenswarm](jiuwenswarm/)（`JiuwenSwarm0.2.2`）、[Conch](Conch/)、[agent-protocol](agent-protocol/)，一键拉取、版本可追溯。
-- **一键构建**：`build/build.sh` 支持 `daily` / `release` 两种模式，产出 `AgentOS-Client.tgz`（全平台 TUI 客户端）与 `AgentOS-Server-<arch>.tgz`（服务端）可分发包。
-- **模块化部署**：`deploy/agentos.sh` 以可插拔钩子编排 moosefs、jiuwenbox、agent-runtime、agent-gateway、jiuwenswarm 五大模块，新增模块只需实现钩子函数，无需改动调度引擎。
-- **单机 / 集群双模式**：默认单机开箱即用；多机通过 `deploy/config.yaml` 声明 etcd 集群、master 节点与 ingress VIP，支持高可用部署。
-- **全生命周期管理**：`install → init → up → down → deinit → uninstall` 覆盖安装、启停、拆除全流程，`status` 一键只读探测各组件运行状态。
+- **Aggregated components with pinned versions**: four components are pulled in and pinned via Git submodules — agent-runtime (`v0.8.0`), [jiuwenswarm](jiuwenswarm/) (`JiuwenSwarm0.2.2`), [Conch](Conch/), and [agent-protocol](agent-protocol/) — fetched in one command, with traceable versions.
+- **One-command build**: `build/build.sh` supports `daily` / `release` modes and produces the distributable `AgentOS-Client.tgz` (all-platform TUI client) and `AgentOS-Server-<arch>.tgz` (server) packages.
+- **Modular deployment**: `deploy/agentos.sh` orchestrates five modules — moosefs, jiuwenbox, agent-runtime, agent-gateway, and jiuwenswarm — via pluggable hooks; adding a module only requires implementing its hook functions, with no changes to the scheduling engine.
+- **Single-machine and cluster modes**: single-machine deployment works out of the box; multi-machine clusters declare etcd nodes, master nodes, and an ingress VIP in `deploy/config.yaml` with high availability.
+- **Full lifecycle management**: `install → init → up → down → deinit → uninstall` covers the whole install / start-stop / teardown flow, and `status` probes the running state of every component read-only.
 
-## 相关文档
+## Related Documentation
 
-- [文档中心](docs/README.md)：教程 / 操作指南 / 参考 / 解释
-- [示例工程](examples/README.md) ｜ [部署指南](deploy/README.md)
-- [构建说明](build/README.md) ｜ [构建说明 v2（b050 产品线）](build/README-v2.md)
-- [开源软件声明](OPEN_SOURCE_SOFTWARE_NOTICE.md) ｜ [贡献指南](CONTRIBUTING.md)
-- [版本发布记录](https://gitcode.com/openJiuwen/agent-os/releases)
+- [Documentation Hub](docs/README.zh.md): tutorials / how-tos / reference / explanation
+- [Examples](examples/README.zh.md) ｜ [Deployment Guide](deploy/README.zh.md)
+- [Build Guide](build/README.zh.md) ｜ [Build Guide v2 (b050 product line)](build/README-v2.zh.md)
+- [Open Source Software Notice](OPEN_SOURCE_SOFTWARE_NOTICE.md) ｜ [Contributing Guide](CONTRIBUTING.md)
+- [Release Notes](https://gitcode.com/openJiuwen/agent-os/releases)
 
-## 环境要求
+## Environment Requirements
 
-| 类别 | 要求 |
-|------|------|
-| 操作系统 | openEuler 22.03-LTS-SP1/SP4 或 24.03-LTS-SP1/SP4（x86_64 / aarch64），需 systemd；Ubuntu 22.04 / 24.04 亦可 |
-| Python | 3.11（服务端 whl 均按 cp311 构建） |
-| Bash | 4.3 及以上 |
-| 下载工具 | `curl` 或 `wget`（需可访问华为云 OBS 与 gitcode.com） |
-| 系统命令 | `bwrap`、`ip`、`iptables`、`jq`、`fuse3`（可通过 `deploy/install_deps.sh` 安装） |
-| Docker（可选） | Docker Engine ≥ 26.0（Docker 类型沙箱要求 API v1.45） |
-| MooseFS（多机部署） | 4.59.2（master / chunkserver / client RPM 及 fuse3，需上游预装） |
+| Category | Requirement |
+|----------|-------------|
+| OS | openEuler 22.03-LTS-SP1/SP4 or 24.03-LTS-SP1/SP4 (x86_64 / aarch64) with systemd; Ubuntu 22.04 / 24.04 also works |
+| Python | 3.11 (all server wheels are built for cp311) |
+| Bash | 4.3 or later |
+| Download tools | `curl` or `wget` (with access to Huawei Cloud OBS and gitcode.com) |
+| System commands | `bwrap`, `ip`, `iptables`, `jq`, `fuse3` (installable via `deploy/install_deps.sh`) |
+| Docker (optional) | Docker Engine ≥ 26.0 (Docker-type sandboxes require API v1.45) |
+| MooseFS (multi-machine) | 4.59.2 (master / chunkserver / client RPMs plus fuse3, pre-installed upstream) |
 
-## 安装指南
+## Installation
 
-**方式一：下载发布包（推荐）**
+**Option 1: Download a release package (recommended)**
 
 ```bash
-# x86_64（请替换为最新发布日期路径；aarch64 将 x86_64 改为 aarch64）
+# x86_64 (replace with the latest release date path; for aarch64 change x86_64 to aarch64)
 wget https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/x86_64/AgentOS-Server.tgz
 ```
 
-**方式二：源码构建**
+**Option 2: Build from source**
 
 ```bash
 git clone --recurse-submodules https://gitcode.com/openJiuwen/agent-os.git
 cd agent-os
-./build/build.sh release     # 或 daily；全部参数见 build/README.md
+./build/build.sh release     # or daily; see build/README.zh.md for all options
 ```
 
-已克隆但未初始化 submodule，或拉取主仓库更新后同步 submodule 至记录的 commit：
+If the repository was cloned without submodules, or after pulling upstream updates, sync submodules to the recorded commits:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-如需将某个 submodule 切换到指定 tag（以 jiuwenswarm 为例）：
+To switch a submodule to a specific tag (jiuwenswarm as an example):
 
 ```bash
 cd jiuwenswarm && git fetch --tags && git checkout JiuwenSwarm0.2.2 && cd ..
@@ -64,40 +64,40 @@ git add jiuwenswarm
 
 ## Quick Start
 
-以单机部署为例（多机部署见[部署指南](deploy/README.md)）：
+Single-machine deployment example (for multi-machine deployment see the [Deployment Guide](deploy/README.zh.md)):
 
 ```bash
-# 1. 解压安装包并安装系统依赖
+# 1. Extract the package and install system dependencies
 tar -xzf AgentOS-Server.tgz && cd AgentOS-Server
 bash deploy/install_deps.sh
 
-# 2. 配置集群拓扑：编辑 deploy/config.yaml，
-#    将 etcd_nodes / master_nodes / ingress_virtual_ip 替换为本机 IP（请勿使用 127.0.0.1）
+# 2. Configure the cluster topology: edit deploy/config.yaml and replace
+#    etcd_nodes / master_nodes / ingress_virtual_ip with this machine's IP (do not use 127.0.0.1)
 vi deploy/config.yaml
 
-# 3. 生成 agent SSH 直连密钥（已存在则跳过）
+# 3. Generate the agent SSH key pair (skip if it already exists)
 ssh-keygen -t ed25519 -N '' -f /root/.ssh/agent_key
 mkdir -p /root/.ssh/agent_pub
 cp /root/.ssh/agent_key.pub /root/.ssh/agent_pub/authorized_keys
 chmod 644 /root/.ssh/agent_pub/authorized_keys && chmod 755 /root/.ssh/agent_pub
 
-# 4. 安装 whl 包 → 初始化 etcd → 启动全部组件
+# 4. Install wheels -> initialize etcd -> start all components
 bash deploy/agentos.sh install
 bash deploy/agentos.sh init
 bash deploy/agentos.sh up
 
-# 5. 确认各组件运行状态
+# 5. Verify the running state of every component
 bash deploy/agentos.sh status
 ```
 
-启动完成后，浏览器访问 `http://<ingress_virtual_ip>:19000` 进入 jiuwenswarm web 前端；客户端安装 `AgentOS-Client.tgz` 中对应平台的 `jiuwenswarm_tui` wheel 即可使用 TUI。
+Once started, open `http://<ingress_virtual_ip>:19000` in a browser to access the jiuwenswarm web frontend; on the client side, install the `jiuwenswarm_tui` wheel matching your platform from `AgentOS-Client.tgz` to use the TUI.
 
-> 完整分步教程与常见问题见[快速开始教程](docs/zh/tutorial/01-quick-start.md)；大模型接口、工具沙箱镜像等进阶配置见[部署配置参考](docs/zh/reference/cluster-config.md)。
+> For a complete step-by-step tutorial and FAQ, see [Quick Start](docs/en/tutorial/01-quick-start.md); for advanced configuration such as LLM endpoints and tool sandbox images, see the [Deployment Configuration Reference](docs/en/reference/cluster-config.md).
 
-## 合规声明
+## Compliance Disclaimer
 
-本产品仅作为流程编排工具，不包含 AI 模型能力；用户在连接 AI 模型用于特定业务场景时，需自行承担欧盟 AI 法案等相关合规义务。
+This product serves solely as a workflow orchestration tool and does not embed any AI model capabilities. When users integrate AI models for specific business scenarios, they shall bear full responsibility for compliance obligations under the EU AI Act and other relevant regulatory frameworks.
 
 ## License
 
-本项目基于 [Apache License 2.0](LICENSE) 开源。
+This project is open-sourced under the [Apache License 2.0](LICENSE).

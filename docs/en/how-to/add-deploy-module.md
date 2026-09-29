@@ -81,4 +81,4 @@ Usable directly in `module.sh` (defined by `agentos.sh` before sourcing):
 - Hook function names: `<module-name>_<hook>`, hook ∈ up / down / install / uninstall / status
 - Internal functions inside `module.sh` should be prefixed with `_` (e.g. `_mymodule_helper`) to avoid name collisions
 
-For the full template and existing module implementations, see [deploy/README.md](../../../deploy/README.md) and `deploy/*/module.sh`.
+For the full template and existing module implementations, see [deploy/README.zh.md](../../../deploy/README.zh.md) and `deploy/*/module.sh`.

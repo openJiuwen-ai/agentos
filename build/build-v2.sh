@@ -2,7 +2,7 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 set -e
 
-# AgentOS b050 交付产物打包脚本。详细说明（产物清单/archive 结构/路径规则/重构要点/依赖）见 README-v2.md。
+# AgentOS b050 交付产物打包脚本。详细说明（产物清单/archive 结构/路径规则/重构要点/依赖）见 README-v2.zh.md。
 # daily/release 共用 OBS archive.tar.gz 获取 jiuwenswarm/openyuanrong/agent-protocol/conch，client 包不区分架构（含全平台 jiuwenswarm_tui），server 包按 ${ARCH} 打。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +47,7 @@ Examples:
   $(basename "$0") --build-type=daily --build-target=agentos_b050
   $(basename "$0") --build-type=release --build-target=agentos_b050
 
-详见 README-v2.md（archive 结构/路径规则/构建流程）。
+详见 README-v2.zh.md（archive 结构/路径规则/构建流程）。
 EOF
 }
 

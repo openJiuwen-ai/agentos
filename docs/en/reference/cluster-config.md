@@ -1,6 +1,6 @@
 # Deployment Configuration Reference
 
-AgentOS configuration has two layers: `deploy/config.yaml` declares the cluster topology; per-module runtime parameters come from module config files or environment variables. This page lists the core items; for the full parameter tables see the [Deployment Guide](../../../deploy/README.md).
+AgentOS configuration has two layers: `deploy/config.yaml` declares the cluster topology; per-module runtime parameters come from module config files or environment variables. This page lists the core items; for the full parameter tables see the [Deployment Guide](../../../deploy/README.zh.md).
 
 ## Cluster topology: deploy/config.yaml
 

@@ -8,8 +8,8 @@
 
 ## 运行前提
 
-- 一台满足[环境要求](../README.md)的 Linux 服务器（root 权限）
-- 已获取 `AgentOS-Server.tgz` 安装包（[下载](../README.md)或[自行构建](../docs/zh/how-to/build-package.md)）
+- 一台满足[环境要求](../README.zh.md)的 Linux 服务器（root 权限）
+- 已获取 `AgentOS-Server.tgz` 安装包（[下载](../README.zh.md)或[自行构建](../docs/zh/how-to/build-package.md)）
 
 ## 快速使用
 

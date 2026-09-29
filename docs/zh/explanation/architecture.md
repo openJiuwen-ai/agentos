@@ -27,7 +27,7 @@ AgentOS-Client.tgz          # 全平台 TUI wheel，分发给最终用户
 AgentOS-Server-<arch>.tgz   # 服务端 whl/rpm + deploy/ 脚本，分发给部署者
 ```
 
-v2 构建线（b050）进一步用 `last_successful_build` 目录解耦"总体打包"与"组件构建"：组件 CI 定时出包归档，总体打包只拉最新成功归档，消除版本号 / 时间戳硬编码。设计全文见 [build/README-v2.md](../../../build/README-v2.md)。
+v2 构建线（b050）进一步用 `last_successful_build` 目录解耦"总体打包"与"组件构建"：组件 CI 定时出包归档，总体打包只拉最新成功归档，消除版本号 / 时间戳硬编码。设计全文见 [build/README-v2.zh.md](../../../build/README-v2.zh.md)。
 
 ## 部署架构：模块注册 + 钩子函数 + 调度引擎
 

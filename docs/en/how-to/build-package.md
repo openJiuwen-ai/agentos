@@ -15,7 +15,7 @@ This guide shows how to produce the distributable `AgentOS-Client.tgz` and `Agen
 # daily build (default, pulls daily artifacts from OBS)
 ./build/build.sh
 
-# release build (pinned versions; per-component version options in build/README.md)
+# release build (pinned versions; per-component version options in build/README.zh.md)
 ./build/build.sh release
 
 # lower download parallelism on an unstable network
@@ -32,7 +32,7 @@ Common options:
 | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | jiuwenswarm git tag (release mode) |
 | `--download-jobs` | `3` | Max concurrent downloads |
 
-> For per-component version pins, OBS build timestamps, and other full options, see [build/README.md](../../../build/README.md).
+> For per-component version pins, OBS build timestamps, and other full options, see [build/README.zh.md](../../../build/README.zh.md).
 
 ## Option 2: build-v2.sh (b050 product line)
 
@@ -70,4 +70,4 @@ Artifacts land in `build/dist/` (git-ignored):
 - **`curl: (18) transfer closed` while downloading large files**: OBS large packages break easily under high parallelism; lower it with `--download-jobs 1`.
 - **Retrying after an interrupted build**: every build first clears `build/dist/`; leftover `.part` temp files can be deleted manually.
 
-For the full parameter list, OBS path rules, and artifact directory layout, see [build/README.md](../../../build/README.md) and [build/README-v2.md](../../../build/README-v2.md).
+For the full parameter list, OBS path rules, and artifact directory layout, see [build/README.zh.md](../../../build/README.zh.md) and [build/README-v2.zh.md](../../../build/README-v2.zh.md).

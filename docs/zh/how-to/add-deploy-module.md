@@ -81,4 +81,4 @@ MODULES=("moosefs" "jiuwenbox" "yuanrong" "agent-gateway" "jiuwenswarm" "mymodul
 - 钩子函数名：`<module名>_<hook>`，hook ∈ up / down / install / uninstall / status
 - `module.sh` 内部函数建议加 `_` 前缀（如 `_mymodule_helper`）避免命名冲突
 
-完整模板与现有模块实现见 [deploy/README.md](../../../deploy/README.md) 与 `deploy/*/module.sh`。
+完整模板与现有模块实现见 [deploy/README.zh.md](../../../deploy/README.zh.md) 与 `deploy/*/module.sh`。

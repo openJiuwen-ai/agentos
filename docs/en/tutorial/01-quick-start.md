@@ -94,7 +94,7 @@ bash deploy/agentos.sh uninstall  # uninstall all wheels (must use the same pyth
 - **`up` reports etcd unreachable**: run `bash deploy/agentos.sh init` first.
 - **Web not reachable externally**: check that `config.yaml` was not left with `127.0.0.1`; make sure the firewall allows port 19000.
 - **`install` aborts on the sandbox image check**: with the tool sandbox enabled the image must be pulled beforehand — see the [Deployment Configuration Reference](../reference/cluster-config.md).
-- For more troubleshooting and parameter details, see the [Deployment Guide](../../../deploy/README.md).
+- For more troubleshooting and parameter details, see the [Deployment Guide](../../../deploy/README.zh.md).
 
 ## Next steps
 

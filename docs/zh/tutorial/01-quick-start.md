@@ -16,7 +16,7 @@
 | Python | 3.11（`python3.11 --version` 可用） |
 | 磁盘 | ≥ 20 GB |
 
-> 完整环境要求（含 Docker、MooseFS 等可选项）见[仓库 README](../../../README.md)。
+> 完整环境要求（含 Docker、MooseFS 等可选项）见[仓库 README](../../../README.zh.md)。
 
 ## 第 1 步：获取安装包
 
@@ -94,7 +94,7 @@ bash deploy/agentos.sh uninstall  # 卸载全部 whl 包（须与 install 同一
 - **`up` 提示 etcd 不可达**：先执行 `bash deploy/agentos.sh init`。
 - **Web 无法从外部访问**：检查 `config.yaml` 是否误填 `127.0.0.1`；确认防火墙放通 19000 端口。
 - **install 中断于沙箱镜像检查**：启用工具沙箱时需预先 `docker pull` 镜像，见[部署配置参考](../reference/cluster-config.md)。
-- 更多排障与参数细节见[部署指南](../../../deploy/README.md)。
+- 更多排障与参数细节见[部署指南](../../../deploy/README.zh.md)。
 
 ## 下一步
 

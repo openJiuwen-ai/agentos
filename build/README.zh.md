@@ -184,7 +184,7 @@ build/dist/downloads/agent-gateway/     # 注册中心 wheel、rqlite rpm
 ```
 build/
 ├── build.sh
-├── README.md
+├── README.zh.md
 └── dist/
     ├── AgentOS-Client.tgz
     ├── AgentOS-Server-<arch>.tgz   # 如 AgentOS-Server-x86_64.tgz
@@ -215,7 +215,7 @@ AgentOS-Server/
 └── deploy/
     ├── agentos.sh
     ├── deploy.sh
-    ├── README.md
+    ├── README.zh.md
     ├── jiuwenswarm/
     │   ├── deploy.sh           # 来自 jiuwenswarm_src/deploy/yuanrong/
     │   ├── ...                 # 来自 jiuwenswarm_src/deploy/yuanrong/
@@ -257,7 +257,7 @@ AgentOS-Server/
 └── deploy/
     ├── agentos.sh
     ├── deploy.sh
-    ├── README.md
+    ├── README.zh.md
     ├── jiuwenswarm/
     │   ├── deploy.sh           # 来自 jiuwenswarm_src/deploy/yuanrong/
     │   ├── ...                 # 来自 jiuwenswarm_src/deploy/yuanrong/

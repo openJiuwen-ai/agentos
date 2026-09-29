@@ -27,7 +27,7 @@ AgentOS-Client.tgz          # all-platform TUI wheels, distributed to end users
 AgentOS-Server-<arch>.tgz   # server wheels/rpms + deploy/ scripts, distributed to deployers
 ```
 
-The v2 build line (b050) further decouples "solution packaging" from "component builds" via the `last_successful_build` directory: component CIs archive builds on schedule, and solution packaging just pulls the latest successful archive — eliminating hardcoded versions and timestamps. The full design is in [build/README-v2.md](../../../build/README-v2.md).
+The v2 build line (b050) further decouples "solution packaging" from "component builds" via the `last_successful_build` directory: component CIs archive builds on schedule, and solution packaging just pulls the latest successful archive — eliminating hardcoded versions and timestamps. The full design is in [build/README-v2.zh.md](../../../build/README-v2.zh.md).
 
 ## Deployment architecture: module registration + hooks + scheduling engine
 

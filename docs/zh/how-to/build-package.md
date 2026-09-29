@@ -15,7 +15,7 @@
 # daily 构建（默认，从 OBS 拉取每日构建产物）
 ./build/build.sh
 
-# release 构建（固定版本发布包；各组件版本参数见 build/README.md）
+# release 构建（固定版本发布包；各组件版本参数见 build/README.zh.md）
 ./build/build.sh release
 
 # 网络不稳定时降低并行下载数
@@ -32,7 +32,7 @@
 | `--jiuwenswarm-release-git-tag` | `JiuwenSwarm0.2.2` | release 模式 jiuwenswarm git tag |
 | `--download-jobs` | `3` | 并行下载数 |
 
-> 各组件版本、OBS 构建时间戳等完整参数见 [build/README.md](../../../build/README.md)。
+> 各组件版本、OBS 构建时间戳等完整参数见 [build/README.zh.md](../../../build/README.zh.md)。
 
 ## 方式二：build-v2.sh（b050 产品线）
 
@@ -70,4 +70,4 @@ ARCH=aarch64 ./build/build-v2.sh --build-type=release --build-target=agentos_b05
 - **下载大文件报 `curl: (18) transfer closed`**：OBS 大包并行过多易断连，用 `--download-jobs 1` 降低并发。
 - **中途中断后重试**：脚本每次构建先清空 `build/dist/`；残留的 `.part` 临时文件可手动删除。
 
-完整参数、OBS 路径规则与产物目录结构见 [build/README.md](../../../build/README.md) 与 [build/README-v2.md](../../../build/README-v2.md)。
+完整参数、OBS 路径规则与产物目录结构见 [build/README.zh.md](../../../build/README.zh.md) 与 [build/README-v2.zh.md](../../../build/README-v2.zh.md)。

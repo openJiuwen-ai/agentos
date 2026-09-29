@@ -23,12 +23,12 @@ deploy/
 ├── etcd.sh                   # etcd 独立启停脚本（init/deinit 委托给它）
 ├── check-ingress-master.sh   # ingress VIP 持有检查（agent-gateway systemd ExecStartPre）
 ├── config.yaml               # 集群拓扑配置（etcd_nodes/master_nodes/ingress_virtual_ip）
-├── README.md                 # 本文档
+├── README.zh.md                 # 本文档
 ├── moosefs/
 │   ├── module.sh             # moosefs 钩子函数
 │   ├── moosefs_deploy.sh     # moosefs 部署脚本（install/up/down/uninstall）
 │   ├── moosefs.conf          # moosefs 配置文件
-│   └── README.md             # moosefs RPM 依赖说明
+│   └── README.zh.md             # moosefs RPM 依赖说明
 ├── jiuwenbox/
 │   ├── module.sh             # jiuwenbox 钩子
 │   ├── jiuwenbox_deploy.sh   # up/down/restart
@@ -86,7 +86,7 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - **多网卡环境**：多网卡服务器需通过 `--ip` 显式指定本机使用的 IP 地址，避免自动探测不准导致 down/up 的 IP 对不上
 - **系统命令**：目标主机需预装 jiuwenbox 所需的命令：`bwrap`、`ip`、`iptables`（或 `iptables-nft` / `iptables-legacy`）；agent-gateway 需 `curl`
 - **集群配置**：`deploy/config.yaml` 需按实际拓扑配置 `etcd_nodes`、`master_nodes`、`ingress_virtual_ip`。三个字段均须为可达的真实 IP（单机也填本机局域网 IP），`ingress_virtual_ip` 作为统一外部入口，**不要用 `127.0.0.1`**（会导致 web/gateway 只能本机访问），详见下文「集群配置」
-- **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)
+- **MooseFS RPM**：MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.zh.md](moosefs/README.zh.md)
 - **Docker API**：运行 Docker 类型沙箱要求 Docker API 支持 `v1.45`。API 1.45 由 Docker Engine 26.0 引入，因此目标主机 Docker Engine 需 **≥ 26.0**；建议直装 **27.x ~ 28.x 稳定版**（如 27.5.1），最新 29.x 仍兼容（其最低支持 API 为 1.44），但 1.45 已处兼容窗口下沿。版本对照见 [Docker Engine API 文档](https://docs.docker.com/reference/api/engine/)
 
 ### 安装包获取
@@ -96,7 +96,7 @@ install  ↔  uninstall     装/卸 whl（最外层）
 - 下载地址示例：
   - x86：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/x86_64/AgentOS-Server.tgz`
   - arm：`https://openjiuwen-ci.obs.cn-north-4.myhuaweicloud.com/agent-os/package/release/dist/20260715/aarch64/AgentOS-Server.tgz`
-- 自行构建：见 [agentos/README.md](../README.md)
+- 自行构建：见 [agentos/README.zh.md](../README.zh.md)
 
 ### 集群配置
 
@@ -274,7 +274,7 @@ bash etcd.sh clean
 1. **systemd 模式**：各节点独立 `install` + `systemctl start`，通过 `MOOSEFS_MASTER_HOST`（或 `config.yaml` 的 `master_nodes` 第一个 IP）区分 master/agent 角色
 2. **单机跳过**：其他场景（使用本地文件系统，不部署 MooseFS）
 
-MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.md](moosefs/README.md)。支持 openEuler 22.03-LTS-SP1/SP4 和 24.03-LTS-SP1/SP4（x86_64 和 aarch64）。
+MooseFS RPM 包（moosefs-master、moosefs-chunkserver、moosefs-client）和 fuse3 依赖需由上游预装，详见 [moosefs/README.zh.md](moosefs/README.zh.md)。支持 openEuler 22.03-LTS-SP1/SP4 和 24.03-LTS-SP1/SP4（x86_64 和 aarch64）。
 
 #### jiuwenbox
 
