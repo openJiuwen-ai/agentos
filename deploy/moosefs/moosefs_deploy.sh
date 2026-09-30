@@ -164,6 +164,10 @@ _mfs_load_config() {
     local _env_chunk_dir="${MFS_CHUNK_DIR:-}"
     local _env_mount_point="${MFS_MOUNT_POINT:-}"
     local _env_goal="${MFS_GOAL:-}"
+    local _env_meta_cache="${MFS_META_CACHE:-}"
+    local _env_fsync_min_time="${MFS_FSYNC_MIN_TIME:-}"
+    local _env_write_cache_size="${MFS_WRITE_CACHE_SIZE:-}"
+    local _env_max_idle_threads="${MFS_MAX_IDLE_THREADS:-}"
     local _env_purge_data="${MOOSEFS_PURGE_DATA:-}"
 
     # 1. 读取 deploy/config.yaml 获取 master IP（最低优先级）
@@ -191,6 +195,10 @@ _mfs_load_config() {
     [ -n "${_env_chunk_dir}" ]    && MFS_CHUNK_DIR="${_env_chunk_dir}"
     [ -n "${_env_mount_point}" ]  && MFS_MOUNT_POINT="${_env_mount_point}"
     [ -n "${_env_goal}" ]         && MFS_GOAL="${_env_goal}"
+    [ -n "${_env_meta_cache}" ]   && MFS_META_CACHE="${_env_meta_cache}"
+    [ -n "${_env_fsync_min_time}" ]   && MFS_FSYNC_MIN_TIME="${_env_fsync_min_time}"
+    [ -n "${_env_write_cache_size}" ]  && MFS_WRITE_CACHE_SIZE="${_env_write_cache_size}"
+    [ -n "${_env_max_idle_threads}" ]  && MFS_MAX_IDLE_THREADS="${_env_max_idle_threads}"
     [ -n "${_env_purge_data}" ]   && MOOSEFS_PURGE_DATA="${_env_purge_data}"
 
     # 设置默认值
@@ -203,6 +211,10 @@ _mfs_load_config() {
     : "${MFS_CHUNK_DIR:="/data/mfschunks"}"
     : "${MFS_MOUNT_POINT:="/home/agentos/users"}"
     : "${MFS_GOAL:="2"}"
+    : "${MFS_META_CACHE:="yes"}"
+    : "${MFS_FSYNC_MIN_TIME:="5"}"
+    : "${MFS_WRITE_CACHE_SIZE:="512"}"
+    : "${MFS_MAX_IDLE_THREADS:="64"}"
     : "${MOOSEFS_PURGE_DATA:="no"}"
 }
 
@@ -436,6 +448,19 @@ EOF
     if _mfs_should_use_systemd; then
         info "systemd detected, generating unit files..."
 
+        # 构建挂载选项：nonempty 始终包含，按配置追加缓存和性能参数
+        local MFS_MOUNT_OPTS="nonempty"
+        if [ "${MFS_META_CACHE}" = "yes" ]; then
+            MFS_MOUNT_OPTS="${MFS_MOUNT_OPTS},mfsentrycacheto=0.5,mfsnegentrycacheto=0.5,mfsattrcacheto=0.5,mfsdirentrycacheto=1"
+        fi
+        # fsync 最小间隔：非空则追加（空值使用 MooseFS 默认行为）
+        [ -n "${MFS_FSYNC_MIN_TIME}" ] && MFS_MOUNT_OPTS="${MFS_MOUNT_OPTS},mfsfsyncmintime=${MFS_FSYNC_MIN_TIME}"
+        # 写缓存大小：非空则追加（空值使用默认 256MiB）
+        [ -n "${MFS_WRITE_CACHE_SIZE}" ] && MFS_MOUNT_OPTS="${MFS_MOUNT_OPTS},mfswritecachesize=${MFS_WRITE_CACHE_SIZE}"
+        # FUSE 空闲线程上限：非空则追加（空值由系统自动决定）
+        [ -n "${MFS_MAX_IDLE_THREADS}" ] && MFS_MOUNT_OPTS="${MFS_MOUNT_OPTS},max_idle_threads=${MFS_MAX_IDLE_THREADS}"
+        info "mount options: ${MFS_MOUNT_OPTS}"
+
         local systemd_dir="/etc/systemd/system"
 
         # Master 节点：生成 master + chunkserver + client unit
@@ -502,7 +527,7 @@ StartLimitBurst=999
 Type=simple
 # 清理 SIGKILL 残留的 dead 挂载（ENOTCONN 会导致 mount 失败循环）；- 使未挂载时不报错
 ExecStartPre=-/bin/umount -l ${MFS_MOUNT_POINT}
-ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o nonempty
+ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o ${MFS_MOUNT_OPTS}
 ExecStop=/bin/umount -l ${MFS_MOUNT_POINT}
 Restart=always
 RestartSec=5
@@ -540,7 +565,7 @@ StartLimitBurst=999
 Type=simple
 # 清理 SIGKILL 残留的 dead 挂载（ENOTCONN 会导致 mount 失败循环）
 ExecStartPre=-/bin/umount -l ${MFS_MOUNT_POINT}
-ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o nonempty
+ExecStart=${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${master_host} -P ${MFS_CLIENT_PORT} -f -o ${MFS_MOUNT_OPTS}
 ExecStop=/bin/umount -l ${MFS_MOUNT_POINT}
 Restart=always
 RestartSec=5
@@ -743,7 +768,14 @@ deploy_mfs_up() {
     ${MFS_BIN_CHUNKSERVER} start || error "Failed to start mfschunkserver"
 
     info "Mounting MooseFS..."
-    ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${local_ip} -P ${MFS_CLIENT_PORT} || error "Failed to mount MooseFS"
+    local _mount_opts="nonempty"
+    if [ "${MFS_META_CACHE}" = "yes" ]; then
+        _mount_opts="${_mount_opts},mfsentrycacheto=0.5,mfsnegentrycacheto=0.5,mfsattrcacheto=0.5,mfsdirentrycacheto=1"
+    fi
+    [ -n "${MFS_FSYNC_MIN_TIME}" ] && _mount_opts="${_mount_opts},mfsfsyncmintime=${MFS_FSYNC_MIN_TIME}"
+    [ -n "${MFS_WRITE_CACHE_SIZE}" ] && _mount_opts="${_mount_opts},mfswritecachesize=${MFS_WRITE_CACHE_SIZE}"
+    [ -n "${MFS_MAX_IDLE_THREADS}" ] && _mount_opts="${_mount_opts},max_idle_threads=${MFS_MAX_IDLE_THREADS}"
+    ${MFS_BIN_MOUNT} ${MFS_MOUNT_POINT} -H ${local_ip} -P ${MFS_CLIENT_PORT} -o ${_mount_opts} || error "Failed to mount MooseFS"
 
     info "Setting goal=${goal} on ${MFS_MOUNT_POINT}..."
     ${MFS_BIN_SETGOAL} -r ${goal} ${MFS_MOUNT_POINT} 2>/dev/null || warning "Failed to set goal on ${MFS_MOUNT_POINT}"
